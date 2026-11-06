@@ -168,7 +168,8 @@ services:
       dockerfile: apps/web/Dockerfile
     image: mypark/web:${VERSION:-dev}
     environment:
-      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8080}
+      # Pinned to the compose network: a host-shell API_INTERNAL_URL (localhost) would point the container at itself.
+      API_INTERNAL_URL: http://api:8080
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:
