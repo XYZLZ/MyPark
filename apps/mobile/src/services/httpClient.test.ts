@@ -1,4 +1,4 @@
-import { createHttpClient, getApiHealth } from './httpClient';
+import { DEFAULT_TIMEOUT_MS, createHttpClient, getApiHealth } from './httpClient';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -39,14 +39,43 @@ test('a non-JSON body resolves instead of rejecting and maps to unavailable', as
   expect(await getApiHealth(client)).toBe('unavailable');
 });
 
-test('a request that exceeds the timeout is aborted and maps to unavailable', async () => {
-  const hangingFetch = jest.fn(
+function hangingFetch() {
+  return jest.fn(
     (_url: string, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
       }),
   );
-  const client = createHttpClient('http://api.test', hangingFetch);
+}
+
+test('the production default timeout is 3000 ms', () => {
+  expect(DEFAULT_TIMEOUT_MS).toBe(3000);
+});
+
+test('a request that exceeds the timeout is aborted and maps to unavailable', async () => {
+  const client = createHttpClient('http://api.test', hangingFetch(), { timeoutMs: 10 });
+  await expect(client.get('/readyz')).rejects.toThrow('Aborted');
+  expect(await getApiHealth(client)).toBe('unavailable');
+});
+
+test('a per-request timeout overrides the client default', async () => {
+  const client = createHttpClient('http://api.test', hangingFetch(), { timeoutMs: 60_000 });
   await expect(client.get('/readyz', { timeoutMs: 10 })).rejects.toThrow('Aborted');
+});
+
+test('an abort during the body read rejects instead of resolving with an empty body', async () => {
+  // Headers arrive, then the body stalls until the timeout aborts the request.
+  const stalledBody = jest.fn(async (_url: string, init?: RequestInit) => {
+    const res = new Response(null, { status: 200 });
+    Object.defineProperty(res, 'json', {
+      value: () =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
+        }),
+    });
+    return res;
+  });
+  const client = createHttpClient('http://api.test', stalledBody, { timeoutMs: 10 });
+  await expect(client.get('/readyz')).rejects.toThrow('Aborted');
   expect(await getApiHealth(client)).toBe('unavailable');
 });
