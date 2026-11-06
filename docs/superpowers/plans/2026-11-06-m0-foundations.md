@@ -89,19 +89,36 @@ MyPark/
 
 ## Task T0: Pre-flight — commit docs and create the remote (manual, both)
 
-**Files:** Create `.github/pull_request_template.md`. Existing: `docs/**`, `.gitignore`.
+**Files:** Create `.github/pull_request_template.md`, `.gitattributes`. Existing: `docs/**`, `.gitignore` (already committed in `320205e`).
 
 **Interfaces:** Produces the `origin` remote at `github.com/XYZLZ/MyPark` and `main` with the docs. Every other task branches from here.
 
+- [x] **Step 0: Commit docs**: done in `320205e docs: add project spec, architecture, policies and M0 plan`.
 - [ ] **Step 1: Write the PR template** with three sections: *Summary* (with spec IDs), *Testing*, and a *Security checklist (sensitive paths: migrations, auth, payments, device signatures, capacity)* with these boxes: authz + ownership checks; input validated; idempotency keys; lock order + no network I/O in transactions; no secrets/PII in logs; migration is forward-only and safe; failure-path tests; automated risk review (`review-risk` / `/security-review`) linked.
-- [ ] **Step 2: Commit docs**
+- [ ] **Step 2: Write `.gitattributes`** so both developers (Windows + CI Linux) get LF line endings:
 
-```bash
-git add .gitignore docs .github/pull_request_template.md
-git commit -m "docs: add project spec, architecture, policies and M0 plan"
+```gitattributes
+* text=auto eol=lf
+*.{png,jpg,jpeg,gif,ico,webp,ttf,otf,woff,woff2,pdf,docx} binary
+*.{cmd,bat,ps1} text eol=crlf
 ```
 
-- [ ] **Step 3: Push to the existing remote** (the user runs this; `origin` already points to `https://github.com/XYZLZ/MyPark.git`)
+Then renormalize the files that are already committed and confirm that nothing but line endings changed:
+
+```bash
+git add --renormalize .
+git status --short        # expect only already-tracked files listed, or nothing
+git diff --cached --ignore-all-space --stat   # expect no content changes
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .gitattributes .github/pull_request_template.md
+git commit -m "chore: add gitattributes and PR template"
+```
+
+- [ ] **Step 4: Push to the existing remote** (the user runs this; `origin` already points to `https://github.com/XYZLZ/MyPark.git`)
 
 ```bash
 git remote -v   # expect origin https://github.com/XYZLZ/MyPark.git
