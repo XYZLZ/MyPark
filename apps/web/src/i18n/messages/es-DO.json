@@ -1,0 +1,10 @@
+{
+  "common": {
+    "appName": "MyPark · Banreservas Zona Colonial"
+  },
+  "health": {
+    "healthy": "API: operativa",
+    "not_ready": "API: iniciando",
+    "unavailable": "API: no disponible"
+  }
+}

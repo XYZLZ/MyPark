@@ -18,12 +18,24 @@ they share.
 
 npm is the only supported package manager. Do not use pnpm or yarn.
 
+Add dependencies by editing package.json, then run `npm install` (scoped overrides make `npm install <pkg>` fail).
+
 ## Quick start
 
-Run the whole backend stack (Postgres, migrations, seed, API, worker) with Docker:
+Run the whole stack (Postgres, migrations, seed, API, worker, web) with Docker:
 
 ```bash
 docker compose -f deploy/compose/docker-compose.yml up -d --build
+```
+
+The web app is then at <http://localhost:3000/es-DO>. Every published port except the API (8080)
+is bound to `127.0.0.1`; the API listens on all interfaces so a phone running Expo on the LAN can
+reach it.
+
+To run the web app outside Docker against the running API:
+
+```bash
+API_INTERNAL_URL=http://localhost:8080 npm run dev -w apps/web
 ```
 
 No `.env` file is needed: every variable has an inline dev-only default. Override values in

@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "test:scripts": "node --test \"scripts/**/*.test.*\"",
-    "gen:contracts": "npm run gen -w packages/contracts"
+    "gen:contracts": "npm run gen -w packages/contracts",
+    "check:i18n": "node scripts/check-i18n-parity.mjs"
   },
   "overrides": {
     "react": "19.3.0",
