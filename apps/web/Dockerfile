@@ -12,6 +12,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Workspace manifests first, so the dependency layer is cached until they change.
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
+COPY apps/mobile/package.json apps/mobile/
 COPY packages/contracts/package.json packages/contracts/
 RUN npm ci --no-audit --no-fund
 
