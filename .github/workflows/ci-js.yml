@@ -1,0 +1,113 @@
+name: ci-js
+
+# No paths filter: "contracts", "web" and "mobile" are required checks, and a
+# filtered-out run would never report, blocking the merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-js-${{ github.ref }}
+  cancel-in-progress: true
+
+# Job keys and names are required status checks in branch protection; keep
+# them identical so the check context names never drift.
+jobs:
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: OpenAPI types are up to date
+        run: |
+          npm run gen -w packages/contracts
+          git diff --exit-code -- packages/contracts/src
+
+      # The zod <-> OpenAPI drift checks are type-level; tests alone miss them.
+      - name: Typecheck
+        run: npm run typecheck -w packages/contracts
+
+      - name: Test
+        run: npm test -w packages/contracts
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Single React copy
+        run: npm run check:react
+
+      # Covers both the web and mobile locale files.
+      - name: i18n key parity
+        run: npm run check:i18n
+
+      - name: Repo script tests
+        run: npm run test:scripts
+
+      - name: Lint
+        run: npm run lint -w apps/web
+
+      - name: Typecheck
+        run: npm run typecheck -w apps/web
+
+      - name: Test
+        run: npm test -w apps/web
+
+      - name: Build
+        run: npm run build -w apps/web
+
+  mobile:
+    name: mobile
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Single React copy
+        run: npm run check:react
+
+      - name: Lint
+        run: npm run lint -w apps/mobile
+
+      - name: Typecheck
+        run: npm run typecheck -w apps/mobile
+
+      - name: Test
+        run: npm test -w apps/mobile
+
+      - name: Expo dependency versions
+        working-directory: apps/mobile
+        run: npx expo install --check
