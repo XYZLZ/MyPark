@@ -1,3 +1,4 @@
+import { fetch } from "expo/fetch";
 import { toHealthState, type ApiHealthState } from '@mypark/contracts';
 
 export const DEFAULT_TIMEOUT_MS = 3000;
