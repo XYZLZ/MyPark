@@ -3,6 +3,8 @@
 // clients translate the code and never show the error message to end users.
 package errcodes
 
+//go:generate go run ./gen -out ../../../../../packages/contracts/src/error-codes.ts
+
 import "slices"
 
 // Code is a stable, machine-readable API error code.
