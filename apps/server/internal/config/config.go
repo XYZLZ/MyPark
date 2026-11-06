@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -65,6 +66,28 @@ func (c Config) CORSAllowedOrigins() []string { return slices.Clone(c.corsAllowe
 
 // DBMaxConns returns the maximum size of the database pool.
 func (c Config) DBMaxConns() int32 { return c.dbMaxConns }
+
+// LogValue implements slog.LogValuer so a Config can be logged safely: the
+// database URL password is replaced with "xxxxx". A value that is not a URL
+// with a scheme is replaced entirely, since its credential cannot be located.
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("env", c.env),
+		slog.String("http_addr", c.httpAddr),
+		slog.String("database_url", redactURL(c.databaseURL)),
+		slog.String("log_level", c.logLevel.String()),
+		slog.Any("cors_allowed_origins", c.corsAllowedOrigins),
+		slog.Int("db_max_conns", int(c.dbMaxConns)),
+	)
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return "[redacted]"
+	}
+	return u.Redacted()
+}
 
 // rawEnv holds the environment values after defaults and normalization, just
 // before validation. The env tag is used as the field name in errors.

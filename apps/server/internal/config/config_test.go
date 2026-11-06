@@ -194,3 +194,24 @@ func TestConfig_CORSAllowedOriginsReturnsCopy(t *testing.T) {
 		t.Fatalf("CORSAllowedOrigins exposes internal slice: got %q", got)
 	}
 }
+
+func TestConfig_LogValueRedactsPassword(t *testing.T) {
+	c, err := config.Load(env(map[string]string{
+		"DATABASE_URL": "postgres://mypark:s3cret@db:5432/mypark?sslmode=disable",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var buf strings.Builder
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("start", "config", c)
+	out := buf.String()
+	if strings.Contains(out, "s3cret") {
+		t.Fatalf("log leaks the password: %s", out)
+	}
+	if !strings.Contains(out, "postgres://mypark:xxxxx@db:5432/mypark?sslmode=disable") {
+		t.Errorf("log = %s, want the redacted URL", out)
+	}
+	if !strings.Contains(out, "config.http_addr=:8080") || !strings.Contains(out, "config.env=development") {
+		t.Errorf("log = %s, want the other fields kept", out)
+	}
+}
