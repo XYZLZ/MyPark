@@ -16,6 +16,7 @@ const (
 	HTTPNotFound         Code = "http.not_found"
 	HTTPMethodNotAllowed Code = "http.method_not_allowed"
 	HealthNotReady       Code = "health.not_ready"
+	ValidationFailed     Code = "validation.failed"
 )
 
 var catalog = []Code{
@@ -23,6 +24,7 @@ var catalog = []Code{
 	HTTPNotFound,
 	HTTPMethodNotAllowed,
 	HealthNotReady,
+	ValidationFailed,
 }
 
 // All returns every known code, sorted ascending. The returned slice is a

@@ -25,23 +25,23 @@ func TestLoad_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.HTTPAddr != ":8080" {
-		t.Errorf("HTTPAddr = %q, want %q", c.HTTPAddr, ":8080")
+	if c.HTTPAddr() != ":8080" {
+		t.Errorf("HTTPAddr = %q, want %q", c.HTTPAddr(), ":8080")
 	}
-	if c.DBMaxConns != 10 {
-		t.Errorf("DBMaxConns = %d, want 10", c.DBMaxConns)
+	if c.DBMaxConns() != 10 {
+		t.Errorf("DBMaxConns = %d, want 10", c.DBMaxConns())
 	}
-	if c.LogLevel != slog.LevelInfo {
-		t.Errorf("LogLevel = %v, want %v", c.LogLevel, slog.LevelInfo)
+	if c.LogLevel() != slog.LevelInfo {
+		t.Errorf("LogLevel = %v, want %v", c.LogLevel(), slog.LevelInfo)
 	}
-	if c.Env != "development" {
-		t.Errorf("Env = %q, want %q", c.Env, "development")
+	if c.Env() != "development" {
+		t.Errorf("Env = %q, want %q", c.Env(), "development")
 	}
-	if c.DatabaseURL != "postgres://x" {
-		t.Errorf("DatabaseURL = %q, want %q", c.DatabaseURL, "postgres://x")
+	if c.DatabaseURL() != "postgres://x" {
+		t.Errorf("DatabaseURL = %q, want %q", c.DatabaseURL(), "postgres://x")
 	}
-	if len(c.CORSAllowedOrigins) != 0 {
-		t.Errorf("CORSAllowedOrigins = %v, want empty", c.CORSAllowedOrigins)
+	if len(c.CORSAllowedOrigins()) != 0 {
+		t.Errorf("CORSAllowedOrigins = %v, want empty", c.CORSAllowedOrigins())
 	}
 }
 
@@ -64,12 +64,12 @@ func TestLoad_CORSOriginsSplit(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := []string{"http://localhost:3000", "http://localhost:8081"}
-	if len(c.CORSAllowedOrigins) != len(want) {
-		t.Fatalf("CORSAllowedOrigins = %q, want %q", c.CORSAllowedOrigins, want)
+	if len(c.CORSAllowedOrigins()) != len(want) {
+		t.Fatalf("CORSAllowedOrigins = %q, want %q", c.CORSAllowedOrigins(), want)
 	}
 	for i := range want {
-		if c.CORSAllowedOrigins[i] != want[i] {
-			t.Errorf("CORSAllowedOrigins[%d] = %q, want %q", i, c.CORSAllowedOrigins[i], want[i])
+		if c.CORSAllowedOrigins()[i] != want[i] {
+			t.Errorf("CORSAllowedOrigins[%d] = %q, want %q", i, c.CORSAllowedOrigins()[i], want[i])
 		}
 	}
 }
@@ -90,8 +90,8 @@ func TestLoad_LogLevel(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if c.LogLevel != tt.want {
-				t.Errorf("LogLevel = %v, want %v", c.LogLevel, tt.want)
+			if c.LogLevel() != tt.want {
+				t.Errorf("LogLevel = %v, want %v", c.LogLevel(), tt.want)
 			}
 		})
 	}
@@ -126,7 +126,7 @@ func TestLoad_Overrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.Env != "production" || c.HTTPAddr != ":9000" || c.DatabaseURL != "postgres://y" || c.DBMaxConns != 25 {
+	if c.Env() != "production" || c.HTTPAddr() != ":9000" || c.DatabaseURL() != "postgres://y" || c.DBMaxConns() != 25 {
 		t.Errorf("overrides not applied: %+v", c)
 	}
 }
@@ -135,5 +135,62 @@ func TestLoad_NonPositiveMaxConns(t *testing.T) {
 	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "DB_MAX_CONNS": "0"}))
 	if err == nil || !strings.Contains(err.Error(), "DB_MAX_CONNS") {
 		t.Fatalf("want error naming DB_MAX_CONNS, got %v", err)
+	}
+}
+
+func TestLoad_MaxConnsAboveLimit(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "DB_MAX_CONNS": "1001"}))
+	if err == nil || !strings.Contains(err.Error(), "DB_MAX_CONNS") {
+		t.Fatalf("want error naming DB_MAX_CONNS, got %v", err)
+	}
+}
+
+func TestLoad_InvalidDatabaseURL(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "not a url"}))
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("want error naming DATABASE_URL, got %v", err)
+	}
+	if strings.Contains(err.Error(), "not a url") {
+		t.Errorf("error must not echo the DATABASE_URL value: %v", err)
+	}
+}
+
+func TestLoad_InvalidAppEnv(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "APP_ENV": "staging"}))
+	if err == nil || !strings.Contains(err.Error(), "APP_ENV") {
+		t.Fatalf("want error naming APP_ENV, got %v", err)
+	}
+}
+
+func TestLoad_HTTPAddr(t *testing.T) {
+	for _, addr := range []string{":8080", "127.0.0.1:0", "localhost:8080", "[::1]:8080", "0.0.0.0:80"} {
+		t.Run("valid "+addr, func(t *testing.T) {
+			c, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "HTTP_ADDR": addr}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if c.HTTPAddr() != addr {
+				t.Errorf("HTTPAddr = %q, want %q", c.HTTPAddr(), addr)
+			}
+		})
+	}
+	for _, addr := range []string{"8080", "host:", ":http", ":70000", "bad host:80"} {
+		t.Run("invalid "+addr, func(t *testing.T) {
+			_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "HTTP_ADDR": addr}))
+			if err == nil || !strings.Contains(err.Error(), "HTTP_ADDR") {
+				t.Fatalf("want error naming HTTP_ADDR, got %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_CORSAllowedOriginsReturnsCopy(t *testing.T) {
+	c, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "CORS_ALLOWED_ORIGINS": "http://a"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c.CORSAllowedOrigins()[0] = "mutated"
+	if got := c.CORSAllowedOrigins()[0]; got != "http://a" {
+		t.Fatalf("CORSAllowedOrigins exposes internal slice: got %q", got)
 	}
 }

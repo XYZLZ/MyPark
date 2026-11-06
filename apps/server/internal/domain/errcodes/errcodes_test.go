@@ -12,6 +12,7 @@ func TestAll_SortedAndComplete(t *testing.T) {
 		"http.method_not_allowed",
 		"http.not_found",
 		"internal.unexpected",
+		"validation.failed",
 	}
 	all := errcodes.All()
 	if len(all) != len(want) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 )
 
@@ -92,5 +93,47 @@ func TestJSON_WritesBody(t *testing.T) {
 	}
 	if body["status"] != "ok" {
 		t.Errorf("status field = %q, want %q", body["status"], "ok")
+	}
+}
+
+func TestValidationError_WritesEnvelope(t *testing.T) {
+	rec := httptest.NewRecorder()
+	response.ValidationError(rec, httptest.NewRequest(http.MethodPost, "/x", nil), &validation.Error{
+		Fields: []validation.FieldError{{Field: "plate", Rule: "required"}, {Field: "seats", Rule: "min", Param: "1"}},
+	})
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	var body envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	if body.Error.Code != "validation.failed" {
+		t.Errorf("code = %q, want validation.failed", body.Error.Code)
+	}
+	fields, ok := body.Error.Details["fields"].([]any)
+	if !ok || len(fields) != 2 {
+		t.Fatalf("details.fields = %v, want 2 entries", body.Error.Details["fields"])
+	}
+	first, _ := fields[0].(map[string]any)
+	if first["field"] != "plate" || first["rule"] != "required" || first["param"] != "" {
+		t.Errorf("fields[0] = %v, want field=plate rule=required param=\"\"", first)
+	}
+	second, _ := fields[1].(map[string]any)
+	if second["param"] != "1" {
+		t.Errorf("fields[1].param = %v, want 1", second["param"])
+	}
+}
+
+func TestValidationError_NilErrorWritesEmptyFields(t *testing.T) {
+	rec := httptest.NewRecorder()
+	response.ValidationError(rec, httptest.NewRequest(http.MethodPost, "/x", nil), nil)
+	var body envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	if fields, ok := body.Error.Details["fields"].([]any); !ok || len(fields) != 0 {
+		t.Fatalf("details.fields = %#v, want empty array", body.Error.Details["fields"])
 	}
 }

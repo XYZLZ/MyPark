@@ -6,6 +6,7 @@ export const ERROR_CODES = [
   "http.method_not_allowed",
   "http.not_found",
   "internal.unexpected",
+  "validation.failed",
 ] as const;
 
 export type ErrorCode = typeof ERROR_CODES[number];

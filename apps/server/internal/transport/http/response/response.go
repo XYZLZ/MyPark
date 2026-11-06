@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 )
 
 // RequestIDFunc extracts the request ID from a request context. It is a
@@ -53,4 +54,16 @@ func Error(w http.ResponseWriter, r *http.Request, status int, code errcodes.Cod
 		Details:   details,
 		RequestID: RequestIDFunc(r.Context()),
 	}})
+}
+
+// ValidationError writes a 422 validation.failed envelope whose details carry
+// the failed fields: {"fields":[{"field","rule","param"}]}. A nil err writes
+// an empty fields array.
+func ValidationError(w http.ResponseWriter, r *http.Request, err *validation.Error) {
+	fields := []validation.FieldError{}
+	if err != nil && len(err.Fields) > 0 {
+		fields = err.Fields
+	}
+	Error(w, r, http.StatusUnprocessableEntity, errcodes.ValidationFailed,
+		"request validation failed", map[string]any{"fields": fields})
 }
