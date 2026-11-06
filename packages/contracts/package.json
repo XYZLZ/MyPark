@@ -1,0 +1,24 @@
+{
+  "name": "@mypark/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared API contracts for MyPark: OpenAPI-generated types, error codes and zod schemas.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "gen": "npx --yes -p openapi-typescript@7.13.0 -p typescript@5.9.3 openapi-typescript ../../apps/server/api/openapi.yaml -o src/openapi.d.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.1.0"
+  }
+}
