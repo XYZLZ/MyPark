@@ -10,7 +10,7 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "gen": "npx --yes -p openapi-typescript@7.13.0 -p typescript@5.9.3 openapi-typescript ../../apps/server/api/openapi.yaml -o src/openapi.d.ts",
+    "gen": "openapi-typescript ../../apps/server/api/openapi.yaml -o src/openapi.d.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -18,6 +18,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "openapi-typescript": "7.13.0",
     "typescript": "6.0.3",
     "vitest": "5.1.0"
   }
