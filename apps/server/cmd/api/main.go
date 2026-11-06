@@ -14,8 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 )
@@ -49,13 +52,19 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	log := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: cfg.LogLevel()}))
 	slog.SetDefault(log)
 
-	// TODO(A4): replace notWiredDB with database.NewPool(ctx, cfg) as the
-	// Pinger and the migration runner as the MigrationStatus. Until then
-	// /readyz always returns 503.
-	db := notWiredDB{}
+	// The pool connects lazily: an unreachable database does not stop the
+	// API from booting, /readyz reports it as 503 instead.
+	pool, err := database.NewPool(ctx, cfg.DatabaseURL(), cfg.DBMaxConns())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	defer sqlDB.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr(),
-		Handler:           newHandler(log, health.NewHandler(serviceName, version, db, db)),
+		Handler:           newHandler(log, health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -110,16 +119,3 @@ func newHandler(log *slog.Logger, h *health.Handler) http.Handler {
 		),
 	)
 }
-
-// errDBNotWired is returned by the readiness stub until A4 lands.
-var errDBNotWired = errors.New("database not wired yet")
-
-// notWiredDB is a temporary health.Pinger and health.MigrationStatus that
-// always fails, so /readyz reports not ready.
-//
-// TODO(A4): delete once the Postgres pool and migration status are wired.
-type notWiredDB struct{}
-
-func (notWiredDB) Ping(context.Context) error { return errDBNotWired }
-
-func (notWiredDB) Status(context.Context) (int64, int64, error) { return 0, 0, errDBNotWired }

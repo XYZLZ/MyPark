@@ -175,7 +175,7 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid configuration: %w", err)
 		}
 		for _, fe := range verrs {
-			errs = append(errs, envError(fe))
+			errs = append(errs, envError(fe.Field(), secretVars[fe.Field()], fe))
 		}
 	}
 
@@ -197,10 +197,28 @@ func Load(getenv func(string) string) (Config, error) {
 	}, nil
 }
 
-// envError turns a validator field error into a message that names the
-// environment variable. Secret values are never included.
-func envError(fe validator.FieldError) error {
-	name := fe.Field()
+// DatabaseURLFrom reads the database URL held in the environment variable
+// name, for commands that need a connection URL other than DATABASE_URL
+// (cmd/migrate uses MIGRATOR_DATABASE_URL). It applies the same rules as
+// Load (required, url), names the variable in errors and never echoes the
+// value, which carries credentials.
+func DatabaseURLFrom(getenv func(string) string, name string) (string, error) {
+	raw := strings.TrimSpace(getenv(name))
+	err := envValidator().Var(raw, "required,url")
+	if err == nil {
+		return raw, nil
+	}
+	verrs, ok := errors.AsType[validator.ValidationErrors](err)
+	if !ok || len(verrs) == 0 {
+		return "", fmt.Errorf("invalid configuration: %w", err)
+	}
+	return "", fmt.Errorf("invalid configuration: %w", envError(name, true, verrs[0]))
+}
+
+// envError turns a validator field error on the environment variable name
+// into a message that names it. Values of secret variables are never
+// included.
+func envError(name string, secret bool, fe validator.FieldError) error {
 	var msg string
 	switch fe.Tag() {
 	case "required":
@@ -218,7 +236,7 @@ func envError(fe validator.FieldError) error {
 	default:
 		msg = "failed rule " + fe.Tag()
 	}
-	if secretVars[name] {
+	if secret {
 		return fmt.Errorf("%s %s", name, msg)
 	}
 	return fmt.Errorf("%s %s, got %q", name, msg, fmt.Sprint(fe.Value()))

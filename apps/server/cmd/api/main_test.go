@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 )
 
@@ -103,10 +104,76 @@ func TestHealthz_ThroughFullChain(t *testing.T) {
 	}
 }
 
-func TestReadyz_StubIsNotReady(t *testing.T) {
-	h := health.NewHandler("api", "test", notWiredDB{}, notWiredDB{})
-	rec, body := doRequest(t, h, http.MethodGet, "/readyz")
-	assertEnvelope(t, rec, body, http.StatusServiceUnavailable, "health.not_ready")
+// startRun starts run with env and returns the base URL it listens on. run
+// is stopped and must return nil when the test ends.
+func startRun(t *testing.T, env map[string]string) string {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	var out syncBuffer
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, func(k string) string { return env[k] }, &out) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("run returned %v, want nil after shutdown", err)
+		}
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for line := range strings.Lines(out.String()) {
+			var entry struct {
+				Msg  string `json:"msg"`
+				Addr string `json:"addr"`
+			}
+			if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "api listening" {
+				return "http://" + entry.Addr
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server did not start; output: %s", out.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func getReadyz(t *testing.T, baseURL string) (int, map[string]any) {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /readyz body: %v", err)
+	}
+	return resp.StatusCode, body
+}
+
+// TestRun_ReadyzReady_Integration checks run wires the real pool and
+// migration status: a reachable, migrated database makes /readyz 200.
+func TestRun_ReadyzReady_Integration(t *testing.T) {
+	base := startRun(t, map[string]string{"HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": testsupport.NewDBURL(t)})
+	status, body := getReadyz(t, base)
+	if status != http.StatusOK || body["status"] != "ready" {
+		t.Fatalf("/readyz = %d %v, want 200 ready", status, body)
+	}
+}
+
+// TestRun_ReadyzDBDown checks an unreachable database does not stop the API
+// from booting; /readyz reports it as 503 with database=fail instead.
+func TestRun_ReadyzDBDown(t *testing.T) {
+	base := startRun(t, map[string]string{
+		"HTTP_ADDR":    "127.0.0.1:0",
+		"DATABASE_URL": "postgres://mypark:x@127.0.0.1:1/mypark?connect_timeout=1",
+	})
+	status, body := getReadyz(t, base)
+	errObj, _ := body["error"].(map[string]any)
+	details, _ := errObj["details"].(map[string]any)
+	if status != http.StatusServiceUnavailable || errObj["code"] != "health.not_ready" || details["database"] != "fail" {
+		t.Fatalf("/readyz = %d %v, want 503 health.not_ready database=fail", status, body)
+	}
 }
 
 func TestRun_InvalidConfig(t *testing.T) {

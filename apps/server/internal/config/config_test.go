@@ -254,3 +254,37 @@ func TestConfig_LogValueRedactsPassword(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseURLFrom(t *testing.T) {
+	const name = "MIGRATOR_DATABASE_URL"
+	tests := []struct {
+		desc    string
+		value   string
+		wantErr string
+	}{
+		{desc: "missing", value: "", wantErr: name + " is required"},
+		{desc: "blank", value: "   ", wantErr: name + " is required"},
+		{desc: "not a URL", value: "s3cret-not-a-url", wantErr: name + " must be a valid URL"},
+		{desc: "valid", value: " postgres://m:s3cret@db:5432/mypark "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got, err := config.DatabaseURLFrom(env(map[string]string{name: tt.value}), name)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+				if want := strings.TrimSpace(tt.value); got != want {
+					t.Errorf("url = %q, want %q", got, want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
+			}
+			if strings.Contains(err.Error(), "s3cret") {
+				t.Errorf("error echoes the secret value: %v", err)
+			}
+		})
+	}
+}
