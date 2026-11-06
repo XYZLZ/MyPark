@@ -34,10 +34,21 @@ func NewHandler(service, version string, p Pinger, m MigrationStatus) *Handler {
 
 // Register adds GET /healthz and GET /readyz to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", h.healthz)
+	RegisterLiveness(mux, h.service, h.version)
 	mux.HandleFunc("GET /readyz", h.readyz)
 }
 
+// RegisterLiveness adds only GET /healthz to mux, for a service with no
+// dependencies to check (cmd/simulator). It needs no Pinger or
+// MigrationStatus, so there is no /readyz to call them.
+func RegisterLiveness(mux *http.ServeMux, service, version string) {
+	body := healthBody{Status: "ok", Service: service, Version: version}
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		response.JSON(w, http.StatusOK, body)
+	})
+}
+
+// healthBody is the /healthz answer. Liveness never checks dependencies.
 type healthBody struct {
 	Status  string `json:"status"`
 	Service string `json:"service"`
@@ -52,11 +63,6 @@ type readinessChecks struct {
 type readinessBody struct {
 	Status string          `json:"status"`
 	Checks readinessChecks `json:"checks"`
-}
-
-// healthz is the liveness probe: it never checks dependencies.
-func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
-	response.JSON(w, http.StatusOK, healthBody{Status: "ok", Service: h.service, Version: h.version})
 }
 
 // readyz returns 200 only when the database answers and migrations are

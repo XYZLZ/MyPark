@@ -1,0 +1,169 @@
+# MyPark local development stack.
+#
+#   docker compose -f deploy/compose/docker-compose.yml up -d --build
+#
+# Works with no .env file: every variable has an inline dev-only default
+# (${VAR:-default}). Override any of them in deploy/compose/.env or in the
+# shell environment. Never reuse these credentials outside local development.
+#
+# Boot order: postgres (healthy) -> migrate (exits 0) -> seed (exits 0) ->
+# api, worker. postgres creates the mypark_migrator and mypark_app roles on
+# first start from ./postgres/init/01-roles.sh.
+
+name: mypark
+
+x-server-build: &server-build
+  context: ../../apps/server
+  dockerfile: Dockerfile
+
+x-migrator-url: &migrator-url postgres://mypark_migrator:${MYPARK_MIGRATOR_PASSWORD:-dev_migrator}@postgres:5432/${POSTGRES_DB:-mypark}?sslmode=disable
+x-app-url: &app-url postgres://mypark_app:${MYPARK_APP_PASSWORD:-dev_app}@postgres:5432/${POSTGRES_DB:-mypark}?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-mypark}
+      # Read by ./postgres/init/01-roles.sh on first start only.
+      MYPARK_MIGRATOR_PASSWORD: ${MYPARK_MIGRATOR_PASSWORD:-dev_migrator}
+      MYPARK_APP_PASSWORD: ${MYPARK_APP_PASSWORD:-dev_app}
+    volumes:
+      # postgres:18 keeps its data under /var/lib/postgresql/18/docker.
+      - pgdata:/var/lib/postgresql
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      # -h 127.0.0.1 forces TCP. While init scripts run, the entrypoint's
+      # temporary server listens on the unix socket only, so a socket check
+      # would report ready before the roles exist.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    restart: unless-stopped
+
+  migrate:
+    build:
+      <<: *server-build
+      args:
+        CMD: migrate
+        VERSION: ${VERSION:-dev}
+    image: mypark/migrate:${VERSION:-dev}
+    environment:
+      MIGRATOR_DATABASE_URL: *migrator-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    build:
+      <<: *server-build
+      args:
+        CMD: seed
+        VERSION: ${VERSION:-dev}
+    image: mypark/seed:${VERSION:-dev}
+    environment:
+      DATABASE_URL: *app-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # The seed writes to tables the migrations create.
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      <<: *server-build
+      args:
+        CMD: api
+        VERSION: ${VERSION:-dev}
+    image: mypark/api:${VERSION:-dev}
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: *app-url
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      # distroless has no curl: the binary probes its own /readyz.
+      test: ["CMD", "/app/api", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  worker:
+    build:
+      <<: *server-build
+      args:
+        CMD: worker
+        VERSION: ${VERSION:-dev}
+    image: mypark/worker:${VERSION:-dev}
+    environment:
+      WORKER_HEALTH_ADDR: ":8091"
+      DATABASE_URL: *app-url
+    ports:
+      - "${WORKER_HEALTH_PORT:-8091}:8091"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/worker", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  simulator:
+    build:
+      <<: *server-build
+      args:
+        CMD: simulator
+        VERSION: ${VERSION:-dev}
+    image: mypark/simulator:${VERSION:-dev}
+    environment:
+      SIMULATOR_ADDR: ":8090"
+    # Reached by the other services on the internal network as
+    # http://simulator:8090; the port is published for local development only.
+    ports:
+      - "${SIMULATOR_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "/app/simulator", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # web: added in B3 (port 3000, API_INTERNAL_URL=http://api:8080), once
+  # apps/web exists; adding it now would make `up --build` fail.
+
+networks:
+  default:
+    name: mypark-internal
+
+volumes:
+  pgdata:

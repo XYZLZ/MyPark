@@ -23,3 +23,32 @@ func TestRun_InvalidMigratorDatabaseURL(t *testing.T) {
 		t.Errorf("error echoes the secret value: %v", err)
 	}
 }
+
+func TestConnConfig_RuntimeParams(t *testing.T) {
+	cfg, err := connConfig("postgres://mypark_migrator:x@localhost:5432/mypark")
+	if err != nil {
+		t.Fatalf("connConfig: %v", err)
+	}
+	if got := cfg.RuntimeParams["lock_timeout"]; got != "10s" {
+		t.Errorf("lock_timeout = %q, want 10s", got)
+	}
+	if got := cfg.RuntimeParams["application_name"]; got != "mypark-migrate" {
+		t.Errorf("application_name = %q, want mypark-migrate", got)
+	}
+	if _, ok := cfg.RuntimeParams["statement_timeout"]; ok {
+		t.Error("statement_timeout is set, want it unset: migrations may run long")
+	}
+}
+
+func TestConnConfig_URLParamsWin(t *testing.T) {
+	cfg, err := connConfig("postgres://mypark_migrator:x@localhost:5432/mypark?lock_timeout=30s&application_name=ops")
+	if err != nil {
+		t.Fatalf("connConfig: %v", err)
+	}
+	if got := cfg.RuntimeParams["lock_timeout"]; got != "30s" {
+		t.Errorf("lock_timeout = %q, want 30s from the URL", got)
+	}
+	if got := cfg.RuntimeParams["application_name"]; got != "ops" {
+		t.Errorf("application_name = %q, want ops from the URL", got)
+	}
+}

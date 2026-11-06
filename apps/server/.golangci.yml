@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  # The default set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  settings:
+    staticcheck:
+      # The staticcheck defaults, plus QF1001: De Morgan rewrites of
+      # character-class checks (middleware/requestid.go) read worse.
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1001
+  exclusions:
+    presets:
+      # Unchecked errors from deferred Close/Flush and fmt.Fprint* calls.
+      - std-error-handling

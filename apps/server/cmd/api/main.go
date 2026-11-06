@@ -1,49 +1,69 @@
 // Command api is the MyPark HTTP API server.
+//
+// With -healthcheck it does not serve: it probes GET /readyz on the local
+// HTTP_ADDR port and exits 0 only on a 2xx answer. The distroless image has
+// no curl, so the Docker healthcheck runs "/app/api -healthcheck".
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
-	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
-	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
 )
 
 // version is the build version reported by /healthz. Release builds set it
 // with -ldflags "-X main.version=...".
 var version = "dev"
 
-const (
-	serviceName     = "api"
-	shutdownTimeout = 10 * time.Second
-)
+const serviceName = "api"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Getenv, os.Stdout); err != nil {
+	if err := execute(ctx, os.Args[1:], os.Getenv, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "api:", err)
 		stop()
 		os.Exit(1)
 	}
 }
 
+// execute parses the command-line flags, then either runs the -healthcheck
+// probe or serves the API.
+func execute(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
+	fs := flag.NewFlagSet(serviceName, flag.ContinueOnError)
+	healthcheck := fs.Bool("healthcheck", false, "probe GET /readyz on the local HTTP_ADDR port and exit")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments: %v", fs.Args())
+	}
+	if *healthcheck {
+		return healthprobe.Local(getenv, config.EnvHTTPAddr, config.DefaultHTTPAddr, "/readyz")
+	}
+	return run(ctx, getenv, stdout)
+}
+
 // run loads the configuration, serves HTTP until ctx is canceled, then shuts
-// down gracefully within shutdownTimeout.
+// down gracefully within httpserver.ShutdownTimeout.
 func run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
 	cfg, err := config.Load(getenv)
 	if err != nil {
@@ -62,60 +82,17 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr(),
-		Handler:           newHandler(log, health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB))),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelError),
-	}
-
-	ln, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", srv.Addr, err)
-	}
+	h := health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB))
+	srv := httpserver.New(cfg.HTTPAddr(), newHandler(log, h), log)
 	// The config is logged only through Config.LogValue, which redacts the
 	// database password.
-	log.Info("api listening", "addr", ln.Addr().String(), "version", version, "config", cfg)
-
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(ln) }()
-
-	select {
-	case err := <-serveErr:
-		return fmt.Errorf("serve: %w", err)
-	case <-ctx.Done():
-	}
-
-	log.Info("api shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
-	}
-	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve: %w", err)
-	}
-	log.Info("api stopped")
-	return nil
+	return httpserver.Serve(ctx, log, srv, serviceName, "version", version, "config", cfg)
 }
 
-// newHandler builds the full HTTP chain: recover -> request ID -> access log
-// -> router (mux with JSON 404/405). It also points response.RequestIDFunc at
-// the request ID middleware so every error envelope carries request_id.
+// newHandler builds the API router and wraps it in the shared middleware
+// chain (see httpserver.NewHandler).
 func newHandler(log *slog.Logger, h *health.Handler) http.Handler {
-	response.RequestIDFunc = middleware.RequestIDFrom
-
 	mux := http.NewServeMux()
 	h.Register(mux)
-
-	return middleware.Recover(log)(
-		middleware.RequestID(
-			middleware.AccessLog(log)(
-				middleware.JSONErrors(mux),
-			),
-		),
-	)
+	return httpserver.NewHandler(log, mux)
 }

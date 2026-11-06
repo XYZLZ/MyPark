@@ -288,3 +288,26 @@ func TestDatabaseURLFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestListenAddrFrom(t *testing.T) {
+	const name = "WORKER_HEALTH_ADDR"
+	for _, tc := range []struct {
+		value, want string
+	}{
+		{"", ":8091"},
+		{"  ", ":8091"},
+		{"127.0.0.1:0", "127.0.0.1:0"},
+		{":9000", ":9000"},
+	} {
+		got, err := config.ListenAddrFrom(env(map[string]string{name: tc.value}), name, ":8091")
+		if err != nil || got != tc.want {
+			t.Errorf("ListenAddrFrom(%q) = %q, %v; want %q", tc.value, got, err, tc.want)
+		}
+	}
+	for _, value := range []string{"nope", ":99999", "host :80"} {
+		_, err := config.ListenAddrFrom(env(map[string]string{name: value}), name, ":8091")
+		if err == nil || !strings.Contains(err.Error(), name+" must be host:port or :port") {
+			t.Errorf("ListenAddrFrom(%q) error = %v, want one naming %s", value, err, name)
+		}
+	}
+}

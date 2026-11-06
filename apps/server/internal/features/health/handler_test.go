@@ -128,3 +128,26 @@ func TestReadyz_MigrationStatusError(t *testing.T) {
 		t.Errorf("details = %v, want database=ok migrations=fail", details)
 	}
 }
+
+// TestRegisterLiveness checks a service without dependencies gets /healthz
+// but no /readyz.
+func TestRegisterLiveness(t *testing.T) {
+	mux := http.NewServeMux()
+	health.RegisterLiveness(mux, "simulator", "test")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	if rec.Code != http.StatusOK || body["status"] != "ok" || body["service"] != "simulator" || body["version"] != "test" {
+		t.Fatalf("/healthz = %d %v, want 200 ok simulator test", rec.Code, body)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/readyz status = %d, want 404", rec.Code)
+	}
+}

@@ -1,0 +1,16 @@
+# Only what `go build` needs reaches the build context.
+.git
+.gitignore
+.codegraph
+.dockerignore
+Dockerfile
+**/*.md
+**/*.out
+**/*.test
+**/coverage*
+bin/
+dist/
+tmp/
+.env
+.env.*
+.golangci.yml

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,24 +24,6 @@ func (okPinger) Ping(context.Context) error { return nil }
 type okMigrations struct{}
 
 func (okMigrations) Status(context.Context) (int64, int64, error) { return 1, 1, nil }
-
-// syncBuffer is a goroutine-safe writer for capturing run's log output.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
 
 func doRequest(t *testing.T, h *health.Handler, method, path string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
@@ -108,33 +88,7 @@ func TestHealthz_ThroughFullChain(t *testing.T) {
 // is stopped and must return nil when the test ends.
 func startRun(t *testing.T, env map[string]string) string {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
-	var out syncBuffer
-	done := make(chan error, 1)
-	go func() { done <- run(ctx, func(k string) string { return env[k] }, &out) }()
-	t.Cleanup(func() {
-		cancel()
-		if err := <-done; err != nil {
-			t.Errorf("run returned %v, want nil after shutdown", err)
-		}
-	})
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		for line := range strings.Lines(out.String()) {
-			var entry struct {
-				Msg  string `json:"msg"`
-				Addr string `json:"addr"`
-			}
-			if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "api listening" {
-				return "http://" + entry.Addr
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("server did not start; output: %s", out.String())
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return testsupport.StartServer(t, run, env, "api listening")
 }
 
 func getReadyz(t *testing.T, baseURL string) (int, map[string]any) {
@@ -204,7 +158,7 @@ func TestRun_ShutsDownOnCancel(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	var out syncBuffer
+	var out testsupport.SyncBuffer
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, func(k string) string { return env[k] }, &out) }()
 
@@ -235,7 +189,7 @@ func TestRun_ShutsDownOnCancel(t *testing.T) {
 }
 
 func TestAccessLog_RouteThroughFullChain(t *testing.T) {
-	var logs syncBuffer
+	var logs testsupport.SyncBuffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
 	h := newHandler(log, readyHealth())
 	for path, route := range map[string]string{"/healthz": "GET /healthz", "/nope": "unmatched"} {
@@ -243,5 +197,37 @@ func TestAccessLog_RouteThroughFullChain(t *testing.T) {
 		if want := `"route":"` + route + `"`; !strings.Contains(logs.String(), want) {
 			t.Errorf("%s: access log missing %s: %s", path, want, logs.String())
 		}
+	}
+}
+
+// TestAPI_HealthcheckFlag checks -healthcheck probes /readyz on the local
+// HTTP_ADDR and exits nil only on a 2xx answer. It must not need
+// DATABASE_URL: the probe only talks to the running API.
+func TestAPI_HealthcheckFlag(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		wantErr bool
+	}{{http.StatusOK, false}, {http.StatusServiceUnavailable, true}} {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			w.WriteHeader(tc.status)
+		}))
+		env := map[string]string{"HTTP_ADDR": strings.TrimPrefix(srv.URL, "http://")}
+		err := execute(t.Context(), []string{"-healthcheck"}, func(k string) string { return env[k] }, io.Discard)
+		srv.Close()
+		if (err != nil) != tc.wantErr {
+			t.Errorf("status %d: execute error = %v, wantErr %v", tc.status, err, tc.wantErr)
+		}
+		if gotPath != "/readyz" {
+			t.Errorf("status %d: probed %q, want /readyz", tc.status, gotPath)
+		}
+	}
+}
+
+func TestAPI_UnknownFlag(t *testing.T) {
+	err := execute(t.Context(), []string{"-nope"}, func(string) string { return "" }, io.Discard)
+	if err == nil {
+		t.Fatal("execute with an unknown flag returned nil, want an error")
 	}
 }

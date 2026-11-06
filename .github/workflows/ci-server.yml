@@ -1,0 +1,91 @@
+name: ci-server
+
+# No paths filter: "server" is a required check, and a filtered-out run
+# would never report, blocking the merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-server-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  POSTGRES_DB: mypark
+  MYPARK_MIGRATOR_PASSWORD: ci_migrator
+  MYPARK_APP_PASSWORD: ci_app
+
+jobs:
+  # The job name "server" is a required status check in branch protection.
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/server
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mypark
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d mypark"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/server/go.mod
+          cache-dependency-path: apps/server/go.sum
+
+      # The roles script needs psql 15+ (\getenv). Running it inside the
+      # postgres:18 service container uses that image's psql 18, whatever the
+      # runner has installed, and connects as the superuser over the local
+      # socket, as the image's init does in compose.
+      - name: Create database roles
+        working-directory: .
+        run: >-
+          docker exec -i
+          -e POSTGRES_DB -e MYPARK_MIGRATOR_PASSWORD -e MYPARK_APP_PASSWORD
+          "${{ job.services.postgres.id }}"
+          sh < deploy/compose/postgres/init/01-roles.sh
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          working-directory: apps/server
+
+      - name: sqlc diff
+        run: go tool sqlc diff -f internal/infrastructure/database/sqlc.yaml
+
+      - name: Error codes contract is up to date
+        run: |
+          go generate ./internal/domain/errcodes/...
+          git diff --exit-code -- ../../packages/contracts/src/error-codes.ts
+
+      - name: Migrate
+        env:
+          MIGRATOR_DATABASE_URL: postgres://mypark_migrator:${{ env.MYPARK_MIGRATOR_PASSWORD }}@localhost:5432/mypark?sslmode=disable
+        run: go run ./cmd/migrate
+
+      - name: Test
+        env:
+          CI: "true"
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -race ./...

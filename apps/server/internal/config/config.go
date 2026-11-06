@@ -215,6 +215,24 @@ func DatabaseURLFrom(getenv func(string) string, name string) (string, error) {
 	return "", fmt.Errorf("invalid configuration: %w", envError(name, true, verrs[0]))
 }
 
+// ListenAddrFrom reads the listen address held in the environment variable
+// name, falling back to def when it is unset or blank, for commands that
+// listen on an address other than HTTP_ADDR (cmd/worker, cmd/simulator) and
+// for the -healthcheck probes. It applies the same rule as HTTP_ADDR in
+// Load: "host:port" or ":port", port 0-65535.
+func ListenAddrFrom(getenv func(string) string, name, def string) (string, error) {
+	addr := valueOr(getenv(name), def)
+	err := envValidator().Var(addr, "listen_addr")
+	if err == nil {
+		return addr, nil
+	}
+	verrs, ok := errors.AsType[validator.ValidationErrors](err)
+	if !ok || len(verrs) == 0 {
+		return "", fmt.Errorf("invalid configuration: %w", err)
+	}
+	return "", fmt.Errorf("invalid configuration: %w", envError(name, false, verrs[0]))
+}
+
 // envError turns a validator field error on the environment variable name
 // into a message that names it. Values of secret variables are never
 // included.

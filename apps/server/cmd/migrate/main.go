@@ -23,7 +23,14 @@ import (
 // EnvMigratorDatabaseURL names the connection URL of the migrator role.
 const EnvMigratorDatabaseURL = "MIGRATOR_DATABASE_URL"
 
-const applicationName = "mypark-migrate"
+const (
+	applicationName = "mypark-migrate"
+	// lockTimeout makes a migration that waits on a lock held by the
+	// running app (e.g. an ALTER TABLE behind a long transaction) fail fast
+	// instead of hanging the deploy and blocking every query queued behind
+	// it.
+	lockTimeout = "10s"
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -43,13 +50,10 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	log := slog.New(slog.NewJSONHandler(stdout, nil))
 
-	connCfg, err := pgx.ParseConfig(url)
+	connCfg, err := connConfig(url)
 	if err != nil {
-		return fmt.Errorf("parse %s: %w", EnvMigratorDatabaseURL, err)
+		return err
 	}
-	// No statement_timeout here, unlike the app pool: a migration may
-	// legitimately run longer than an API query.
-	connCfg.RuntimeParams["application_name"] = cmp.Or(connCfg.RuntimeParams["application_name"], applicationName)
 	db := stdlib.OpenDB(*connCfg)
 	defer db.Close()
 
@@ -62,4 +66,20 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	log.Info("migrations applied", "current_version", current, "expected_version", expected)
 	return nil
+}
+
+// connConfig parses url and sets the migrator's runtime parameters
+// application_name and lock_timeout (values given in the URL win). It sets
+// no statement_timeout, unlike the app pool: a migration may legitimately
+// run longer than an API query.
+func connConfig(url string) (*pgx.ConnConfig, error) {
+	cfg, err := pgx.ParseConfig(url)
+	if err != nil {
+		// pgx redacts the password in parse errors.
+		return nil, fmt.Errorf("parse %s: %w", EnvMigratorDatabaseURL, err)
+	}
+	params := cfg.RuntimeParams
+	params["application_name"] = cmp.Or(params["application_name"], applicationName)
+	params["lock_timeout"] = cmp.Or(params["lock_timeout"], lockTimeout)
+	return cfg, nil
 }
