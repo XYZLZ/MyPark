@@ -1,0 +1,22 @@
+{
+  "name": "mypark",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MyPark monorepo: Go API, Next.js web app, Expo mobile app and shared contracts.",
+  "workspaces": [
+    "apps/web",
+    "apps/mobile",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "test:scripts": "node --test \"scripts/**/*.test.*\"",
+    "gen:contracts": "npm run gen -w packages/contracts"
+  },
+  "overrides": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

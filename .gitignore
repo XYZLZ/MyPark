@@ -1,2 +1,16 @@
 .agents
 .claude
+.atl/
+.superpowers/
+
+# Dependencies and build output
+node_modules/
+.next/
+.expo/
+dist/
+coverage/
+
+# Environment files (keep the committed example)
+.env
+.env.*
+!.env.example
