@@ -1,7 +1,9 @@
 import 'server-only';
 import { toHealthState, type ApiHealthState, type HealthProbeResult } from '@mypark/contracts';
 
-const HEALTH_TIMEOUT_MS = 2000;
+// Longer than the API's 2s /readyz dependency check, so a hung database
+// surfaces as a 503 ("starting") instead of a client-side timeout.
+const HEALTH_TIMEOUT_MS = 3000;
 
 async function probeReadyz(baseUrl: string): Promise<HealthProbeResult> {
   try {

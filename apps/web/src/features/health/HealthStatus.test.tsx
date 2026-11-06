@@ -56,16 +56,23 @@ describe('getApiHealth', () => {
   });
 
   test('returns healthy for a 200 readiness body, fetched without cache and with a timeout', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({ status: 'ready', checks: { database: 'ok', migrations: 'ok' } }),
     );
     stubApi(fetchMock);
 
-    expect(await getApiHealth()).toBe('healthy');
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.test/readyz',
-      expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) }),
-    );
+    try {
+      expect(await getApiHealth()).toBe('healthy');
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://api.test/readyz',
+        expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) }),
+      );
+      // Must exceed the API's 2s readiness check timeout.
+      expect(timeoutSpy).toHaveBeenCalledWith(3000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   test('returns not_ready for a 503 health.not_ready envelope', async () => {
