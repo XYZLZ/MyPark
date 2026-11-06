@@ -110,7 +110,7 @@ func TestReadyz_StubIsNotReady(t *testing.T) {
 }
 
 func TestRun_InvalidConfig(t *testing.T) {
-	err := run(context.Background(), func(string) string { return "" }, io.Discard)
+	err := run(t.Context(), func(string) string { return "" }, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Fatalf("run error = %v, want one naming DATABASE_URL", err)
 	}
@@ -124,7 +124,7 @@ func TestRun_ListenError(t *testing.T) {
 	}
 	defer busy.Close()
 	env := map[string]string{"HTTP_ADDR": busy.Addr().String(), "DATABASE_URL": "postgres://x"}
-	err = run(context.Background(), func(k string) string { return env[k] }, io.Discard)
+	err = run(t.Context(), func(k string) string { return env[k] }, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Fatalf("run error = %v, want a listen error", err)
 	}
@@ -135,7 +135,7 @@ func TestRun_ShutsDownOnCancel(t *testing.T) {
 		"HTTP_ADDR":    "127.0.0.1:0",
 		"DATABASE_URL": "postgres://mypark:s3cret@localhost:5432/mypark",
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var out syncBuffer
 	done := make(chan error, 1)

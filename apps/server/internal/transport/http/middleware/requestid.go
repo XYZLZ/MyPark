@@ -48,7 +48,7 @@ func validRequestID(id string) bool {
 	if id == "" || len(id) > maxRequestIDLen {
 		return false
 	}
-	for i := 0; i < len(id); i++ {
+	for i := range len(id) {
 		c := id[i]
 		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '-') {
 			return false

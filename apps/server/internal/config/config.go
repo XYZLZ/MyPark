@@ -170,8 +170,8 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	if err := envValidator().Struct(raw); err != nil {
-		var verrs validator.ValidationErrors
-		if !errors.As(err, &verrs) {
+		verrs, ok := errors.AsType[validator.ValidationErrors](err)
+		if !ok {
 			return Config{}, fmt.Errorf("invalid configuration: %w", err)
 		}
 		for _, fe := range verrs {

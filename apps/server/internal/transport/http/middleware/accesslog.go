@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"cmp"
 	"log/slog"
 	"net/http"
 	"time"
@@ -21,10 +22,7 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			sw := &statusWriter{ResponseWriter: w}
 			next.ServeHTTP(sw, r)
 
-			route := r.Pattern
-			if route == "" {
-				route = routeUnmatched
-			}
+			route := cmp.Or(r.Pattern, routeUnmatched)
 			log.LogAttrs(r.Context(), slog.LevelInfo, "http request",
 				slog.String("request_id", RequestIDFrom(r.Context())),
 				slog.String("method", r.Method),

@@ -20,8 +20,8 @@ type owner struct {
 func TestStruct_ReportsJSONFieldNames(t *testing.T) {
 	err := validation.New().Struct(createVehicle{Seats: 0, Owner: owner{Email: "nope"}})
 
-	var verr *validation.Error
-	if !errors.As(err, &verr) {
+	verr, ok := errors.AsType[*validation.Error](err)
+	if !ok {
 		t.Fatalf("err = %T %v, want *validation.Error", err, err)
 	}
 	want := []validation.FieldError{
@@ -54,8 +54,7 @@ func TestStruct_NonStructIsNotAValidationError(t *testing.T) {
 	if err == nil {
 		t.Fatal("err = nil, want an error for a non-struct value")
 	}
-	var verr *validation.Error
-	if errors.As(err, &verr) {
+	if _, ok := errors.AsType[*validation.Error](err); ok {
 		t.Fatalf("non-struct input reported as field errors: %v", err)
 	}
 }

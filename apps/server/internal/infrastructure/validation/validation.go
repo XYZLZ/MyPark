@@ -65,8 +65,8 @@ func (v *Validator) Struct(s any) error {
 	if err == nil {
 		return nil
 	}
-	var verrs validator.ValidationErrors
-	if !errors.As(err, &verrs) {
+	verrs, ok := errors.AsType[validator.ValidationErrors](err)
+	if !ok {
 		return fmt.Errorf("validation: %w", err)
 	}
 	out := &Error{Fields: make([]FieldError, len(verrs))}
