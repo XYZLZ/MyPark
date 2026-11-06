@@ -196,22 +196,61 @@ func TestConfig_CORSAllowedOriginsReturnsCopy(t *testing.T) {
 }
 
 func TestConfig_LogValueRedactsPassword(t *testing.T) {
-	c, err := config.Load(env(map[string]string{
-		"DATABASE_URL": "postgres://mypark:s3cret@db:5432/mypark?sslmode=disable",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name   string
+		url    string
+		leaked string // must not appear in the log
+		want   string // redacted URL that must appear
+	}{
+		{
+			name:   "userinfo password",
+			url:    "postgres://mypark:s3cret@db:5432/mypark?sslmode=disable",
+			leaked: "s3cret",
+			want:   "postgres://mypark:xxxxx@db:5432/mypark?sslmode=disable",
+		},
+		{
+			name:   "password query param",
+			url:    "postgres://mypark@db:5432/mypark?password=s3cret",
+			leaked: "s3cret",
+			want:   "postgres://mypark@db:5432/mypark?password=xxxxx",
+		},
+		{
+			name:   "uppercase key keeps other params and order",
+			url:    "postgres://mypark@db/mypark?PASSWORD=s3cret&sslmode=disable",
+			leaked: "s3cret",
+			want:   "postgres://mypark@db/mypark?PASSWORD=xxxxx&sslmode=disable",
+		},
+		{
+			name:   "sslpassword query param",
+			url:    "postgres://mypark@db/mypark?sslmode=verify-full&sslpassword=k",
+			leaked: "sslpassword=k",
+			want:   "postgres://mypark@db/mypark?sslmode=verify-full&sslpassword=xxxxx",
+		},
+		{
+			name:   "both userinfo and query password",
+			url:    "postgres://mypark:s3cret@db/mypark?password=s3cret2",
+			leaked: "s3cret",
+			want:   "postgres://mypark:xxxxx@db/mypark?password=xxxxx",
+		},
 	}
-	var buf strings.Builder
-	slog.New(slog.NewTextHandler(&buf, nil)).Info("start", "config", c)
-	out := buf.String()
-	if strings.Contains(out, "s3cret") {
-		t.Fatalf("log leaks the password: %s", out)
-	}
-	if !strings.Contains(out, "postgres://mypark:xxxxx@db:5432/mypark?sslmode=disable") {
-		t.Errorf("log = %s, want the redacted URL", out)
-	}
-	if !strings.Contains(out, "config.http_addr=:8080") || !strings.Contains(out, "config.env=development") {
-		t.Errorf("log = %s, want the other fields kept", out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := config.Load(env(map[string]string{"DATABASE_URL": tt.url}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var buf strings.Builder
+			slog.New(slog.NewTextHandler(&buf, nil)).Info("start", "config", c)
+			out := buf.String()
+			if strings.Contains(out, tt.leaked) {
+				t.Fatalf("log leaks %q: %s", tt.leaked, out)
+			}
+			if !strings.Contains(out, `config.database_url="`+tt.want+`"`) {
+				t.Errorf("log = %s, want database_url=%s", out, tt.want)
+			}
+			if !strings.Contains(out, "config.http_addr=:8080") || !strings.Contains(out, "config.env=development") {
+				t.Errorf("log = %s, want the other fields kept", out)
+			}
+		})
 	}
 }

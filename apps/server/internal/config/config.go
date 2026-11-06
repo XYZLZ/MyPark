@@ -86,7 +86,30 @@ func redactURL(raw string) string {
 	if err != nil || u.Scheme == "" {
 		return "[redacted]"
 	}
+	u.RawQuery = redactQuery(u.RawQuery)
 	return u.Redacted()
+}
+
+// secretQueryKeys are connection parameters that carry credentials in the
+// query string (libpq and pgx accept both), matched case-insensitively.
+var secretQueryKeys = []string{"password", "sslpassword"}
+
+// redactQuery replaces the values of secret query parameters with "xxxxx".
+// It edits the raw query in place so other parameters keep their order and
+// encoding. A key that cannot be unescaped is redacted as a precaution.
+func redactQuery(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	parts := strings.Split(raw, "&")
+	for i, part := range parts {
+		rawKey, _, _ := strings.Cut(part, "=")
+		key, err := url.QueryUnescape(rawKey)
+		if err != nil || slices.ContainsFunc(secretQueryKeys, func(s string) bool { return strings.EqualFold(s, key) }) {
+			parts[i] = rawKey + "=xxxxx"
+		}
+	}
+	return strings.Join(parts, "&")
 }
 
 // rawEnv holds the environment values after defaults and normalization, just
