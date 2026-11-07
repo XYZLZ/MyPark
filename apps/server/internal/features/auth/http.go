@@ -38,6 +38,7 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/auth/verify/resend", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.resend)
 	r.Handle("POST /v1/auth/password/forgot", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.forgot)
 	r.Handle("POST /v1/auth/password/reset", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.reset)
+	r.Handle("POST /v1/auth/invitations/accept", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.acceptInvitation)
 	r.Handle("POST /v1/auth/login", router.Policy{Public: true}, h.login)
 	r.Handle("POST /v1/auth/refresh", router.Policy{Public: true, Limit: &ratelimit.RefreshIP}, h.refresh)
 	// Logout stays open to a driver who still owes a legal re-acceptance.
@@ -70,6 +71,11 @@ type (
 		Code        secret.String `json:"code" validate:"required,code6"`
 		NewPassword secret.String `json:"new_password" validate:"required,min=10,max=128,password_common"`
 	}
+	acceptInvitationRequest struct {
+		Email    string        `json:"email" validate:"required,email,max=254"`
+		Code     secret.String `json:"code" validate:"required,code6"`
+		Password secret.String `json:"password" validate:"required,min=10,max=128,password_common"`
+	}
 	resendRequest struct {
 		Email string `json:"email" validate:"required,email,max=254"`
 	}
@@ -94,8 +100,11 @@ func (q *registerRequest) normalize() {
 	q.Phone = strings.TrimSpace(q.Phone)
 }
 
-func (q *verifyRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
-func (q *resendRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
+func (q *verifyRequest) normalize() { q.Email = NormalizeEmail(q.Email) }
+func (q *resendRequest) normalize() { q.Email = NormalizeEmail(q.Email) }
+func (q *acceptInvitationRequest) normalize() {
+	q.Email = NormalizeEmail(q.Email)
+}
 func (q *forgotRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
 func (q *resetRequest) normalize()   { q.Email = NormalizeEmail(q.Email) }
 func (q *loginRequest) normalize()   { q.Email = NormalizeEmail(q.Email) }
@@ -164,6 +173,18 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 	req, err := decode[verifyRequest](h, r)
 	if err == nil {
 		err = h.svc.Verify(r.Context(), req.Email, req.Code)
+	}
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.NoContent(w)
+}
+
+func (h *Handler) acceptInvitation(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[acceptInvitationRequest](h, r)
+	if err == nil {
+		err = h.svc.AcceptInvitation(r.Context(), req.Email, req.Code, req.Password)
 	}
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)

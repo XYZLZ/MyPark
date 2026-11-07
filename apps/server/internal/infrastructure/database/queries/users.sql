@@ -38,3 +38,14 @@ set first_name = 'deleted',
     phone = null,
     updated_at = @now
 where id = @id and deleted_at is null;
+
+-- name: ListAdmins :many
+-- Keyset page of admin users, newest first. A null cursor_at starts at the
+-- top; otherwise rows strictly after (cursor_at, cursor_id) in the order.
+select id, public_id, email, first_name, last_name, status, locale, created_at
+from users
+where role = 'admin' and deleted_at is null
+  and (sqlc.narg('cursor_at')::timestamptz is null
+       or (created_at, id) < (sqlc.narg('cursor_at')::timestamptz, sqlc.narg('cursor_id')::bigint))
+order by created_at desc, id desc
+limit @page_size;

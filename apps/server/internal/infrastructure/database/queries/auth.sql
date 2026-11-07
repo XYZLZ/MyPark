@@ -40,9 +40,11 @@ set password_hash = @password_hash,
 where id = @id and role = 'driver' and status = 'pending_verification' and deleted_at is null;
 
 -- name: ActivateUser :exec
+-- Public email verification: drivers only (OC-38). An admin invitee activates
+-- through ActivateInvitedAdmin and nothing else.
 update users
 set status = 'active', email_verified_at = @now, updated_at = @now
-where id = @id and status = 'pending_verification';
+where id = @id and role = 'driver' and status = 'pending_verification';
 
 -- name: ConsumeLiveAuthCodes :exec
 update auth_codes
@@ -177,3 +179,71 @@ set email = 'deleted+' || public_id::text || '@deleted.invalid',
     deleted_at = @now,
     updated_at = @now
 where id = @id and deleted_at is null;
+
+-- name: LockPendingAdminByEmail :one
+-- Only an admin invitee that has not accepted yet. A driver, an active
+-- account and an unknown address all return no row (OC-38).
+select id, public_id, locale
+from users
+where email = @email and deleted_at is null
+  and role = 'admin' and status = 'pending_verification'
+for update;
+
+-- name: InsertInvitedAdmin :one
+-- An admin invitee: pending, no password, no legal versions (admins are
+-- exempt). The role is a literal, never a parameter.
+insert into users (email, first_name, last_name, locale, role, status, created_at, updated_at)
+values (@email, @first_name, @last_name, @locale, 'admin', 'pending_verification', @now, @now)
+returning id, public_id;
+
+-- name: TakeOverPendingDriver :execrows
+-- OC-39: an invite takes over a never-verified driver row. Credentials,
+-- phone and legal acceptance of the unproven registrant are cleared.
+update users
+set role = 'admin',
+    password_hash = null,
+    password_changed_at = null,
+    first_name = @first_name,
+    last_name = @last_name,
+    locale = @locale,
+    phone = null,
+    terms_version = null,
+    terms_accepted_at = null,
+    privacy_version = null,
+    privacy_accepted_at = null,
+    updated_at = @now
+where id = @id and role = 'driver' and status = 'pending_verification' and deleted_at is null;
+
+-- name: ActivateInvitedAdmin :execrows
+-- The only way an invitee becomes active (OC-38): admin rows that are still
+-- pending, setting the password chosen at acceptance.
+update users
+set password_hash = @password_hash,
+    password_changed_at = @now,
+    status = 'active',
+    email_verified_at = @now,
+    updated_at = @now
+where id = @id and role = 'admin' and status = 'pending_verification' and deleted_at is null;
+
+-- name: GetUserViewByID :one
+select id, public_id, email, first_name, last_name, phone, role, status, locale,
+       email_verified_at, terms_version, terms_accepted_at, privacy_version,
+       privacy_accepted_at, created_at
+from users
+where id = @id and deleted_at is null;
+
+-- name: LockAdminSeed :exec
+-- Serializes concurrent seed runs for the life of the transaction.
+select pg_advisory_xact_lock(@key::bigint);
+
+-- name: AdminExists :one
+select exists (select 1 from users where role = 'admin' and deleted_at is null);
+
+-- name: InsertSeedAdmin :one
+-- The first admin: active and verified, no legal versions. A live account
+-- that already holds the email returns no row.
+insert into users (email, password_hash, password_changed_at, first_name, last_name, role, status,
+                   email_verified_at, locale, created_at, updated_at)
+values (@email, @password_hash, @now, @first_name, @last_name, 'admin', 'active', @now, 'es-DO', @now, @now)
+on conflict (email) where deleted_at is null do nothing
+returning id, public_id;

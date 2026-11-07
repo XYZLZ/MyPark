@@ -86,6 +86,64 @@ func (q *Queries) GetUserProfileByID(ctx context.Context, id int64) (GetUserProf
 	return i, err
 }
 
+const listAdmins = `-- name: ListAdmins :many
+select id, public_id, email, first_name, last_name, status, locale, created_at
+from users
+where role = 'admin' and deleted_at is null
+  and ($1::timestamptz is null
+       or (created_at, id) < ($1::timestamptz, $2::bigint))
+order by created_at desc, id desc
+limit $3
+`
+
+type ListAdminsParams struct {
+	CursorAt pgtype.Timestamptz
+	CursorID pgtype.Int8
+	PageSize int32
+}
+
+type ListAdminsRow struct {
+	ID        int64
+	PublicID  uuid.UUID
+	Email     string
+	FirstName string
+	LastName  string
+	Status    string
+	Locale    string
+	CreatedAt pgtype.Timestamptz
+}
+
+// Keyset page of admin users, newest first. A null cursor_at starts at the
+// top; otherwise rows strictly after (cursor_at, cursor_id) in the order.
+func (q *Queries) ListAdmins(ctx context.Context, arg ListAdminsParams) ([]ListAdminsRow, error) {
+	rows, err := q.db.Query(ctx, listAdmins, arg.CursorAt, arg.CursorID, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAdminsRow{}
+	for rows.Next() {
+		var i ListAdminsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.Status,
+			&i.Locale,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateUserLegalAcceptance = `-- name: UpdateUserLegalAcceptance :exec
 update users
 set terms_version = $1,

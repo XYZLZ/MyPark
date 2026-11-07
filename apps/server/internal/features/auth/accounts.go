@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
@@ -24,6 +25,12 @@ type Accounts interface {
 	// hash, status, deleted_at), revokes its sessions with account_deleted
 	// and consumes its live codes. It must run inside a transaction.
 	Erase(ctx context.Context, userID int64) error
+	// CreateInvitedAdmin invites in.Email as an admin on behalf of actor, in
+	// one transaction (OC-19, OC-39): a new invitee, a re-issued invitation
+	// to a pending invitee, or a takeover of a never-verified driver. An
+	// active or suspended account is user.email_taken. Created is false when
+	// the invitation was re-issued.
+	CreateInvitedAdmin(ctx context.Context, actor authz.Principal, in InviteInput) (InviteResult, error)
 }
 
 // ErrUserGone is returned by Accounts.Erase when the user does not exist or

@@ -146,3 +146,24 @@ func safeError(op string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", op, err)
 }
+
+// ListAdmins implements users.Repo.
+func (r *Repo) ListAdmins(ctx context.Context, limit int, after *users.AdminCursor) ([]users.AdminUser, error) {
+	arg := dbgen.ListAdminsParams{PageSize: int32(limit)}
+	if after != nil {
+		arg.CursorAt = ts(after.At)
+		arg.CursorID = pgtype.Int8{Int64: after.ID, Valid: true}
+	}
+	rows, err := r.q(ctx).ListAdmins(ctx, arg)
+	if err != nil {
+		return nil, safeError("users: list admins", err)
+	}
+	out := make([]users.AdminUser, len(rows))
+	for i, a := range rows {
+		out[i] = users.AdminUser{
+			ID: a.ID, PublicID: a.PublicID, Email: a.Email, FirstName: a.FirstName, LastName: a.LastName,
+			Status: a.Status, Locale: a.Locale, CreatedAt: a.CreatedAt.Time,
+		}
+	}
+	return out, nil
+}

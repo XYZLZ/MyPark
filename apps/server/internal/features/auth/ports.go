@@ -12,6 +12,7 @@ import (
 // Role and status values as stored in users.role and users.status.
 const (
 	RoleDriver = "driver"
+	RoleAdmin  = "admin"
 
 	StatusPending = "pending_verification"
 )
@@ -37,6 +38,12 @@ type NewDriver struct {
 	Now                                              time.Time
 }
 
+// NewAdmin holds the values of an admin invitee.
+type NewAdmin struct {
+	Email, FirstName, LastName, Locale string
+	Now                                time.Time
+}
+
 // CodeAttempt is the live code after one attempt was counted.
 type CodeAttempt struct {
 	ID       int64
@@ -60,8 +67,23 @@ type Repo interface {
 	InsertPendingDriver(ctx context.Context, d NewDriver) (UserRow, error)
 	// OverwritePendingDriver replaces the credentials and profile of a pending driver.
 	OverwritePendingDriver(ctx context.Context, id int64, d NewDriver) error
-	// ActivateUser marks a pending user active and verified.
+	// ActivateUser marks a pending driver active and verified. It never
+	// touches an admin row (OC-38).
 	ActivateUser(ctx context.Context, id int64, now time.Time) error
+	// LockPendingAdminByEmail returns the non-deleted admin invitee in
+	// pending_verification with this email, locked. Drivers are never returned.
+	LockPendingAdminByEmail(ctx context.Context, email string) (UserRow, bool, error)
+	// InsertInvitedAdmin creates a pending admin with no password, or
+	// returns ErrEmailTaken.
+	InsertInvitedAdmin(ctx context.Context, a NewAdmin) (UserRow, error)
+	// TakeOverPendingDriver turns a never-verified driver into a pending
+	// admin invitee (OC-39). It reports false when the row is no longer one.
+	TakeOverPendingDriver(ctx context.Context, id int64, a NewAdmin) (bool, error)
+	// ActivateInvitedAdmin sets the password of a pending admin invitee and
+	// activates it. It reports false when the row is not one.
+	ActivateInvitedAdmin(ctx context.Context, id int64, hash string, now time.Time) (bool, error)
+	// GetUserView returns the live user as the API shows it.
+	GetUserView(ctx context.Context, id int64) (UserView, error)
 	// SetPassword replaces the hash of an active user and stamps
 	// password_changed_at.
 	SetPassword(ctx context.Context, userID int64, hash string, now time.Time) error

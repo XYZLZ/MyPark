@@ -13,10 +13,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activateInvitedAdmin = `-- name: ActivateInvitedAdmin :execrows
+update users
+set password_hash = $1,
+    password_changed_at = $2,
+    status = 'active',
+    email_verified_at = $2,
+    updated_at = $2
+where id = $3 and role = 'admin' and status = 'pending_verification' and deleted_at is null
+`
+
+type ActivateInvitedAdminParams struct {
+	PasswordHash pgtype.Text
+	Now          pgtype.Timestamptz
+	ID           int64
+}
+
+// The only way an invitee becomes active (OC-38): admin rows that are still
+// pending, setting the password chosen at acceptance.
+func (q *Queries) ActivateInvitedAdmin(ctx context.Context, arg ActivateInvitedAdminParams) (int64, error) {
+	result, err := q.db.Exec(ctx, activateInvitedAdmin, arg.PasswordHash, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const activateUser = `-- name: ActivateUser :exec
 update users
 set status = 'active', email_verified_at = $1, updated_at = $1
-where id = $2 and status = 'pending_verification'
+where id = $2 and role = 'driver' and status = 'pending_verification'
 `
 
 type ActivateUserParams struct {
@@ -24,9 +50,22 @@ type ActivateUserParams struct {
 	ID  int64
 }
 
+// Public email verification: drivers only (OC-38). An admin invitee activates
+// through ActivateInvitedAdmin and nothing else.
 func (q *Queries) ActivateUser(ctx context.Context, arg ActivateUserParams) error {
 	_, err := q.db.Exec(ctx, activateUser, arg.Now, arg.ID)
 	return err
+}
+
+const adminExists = `-- name: AdminExists :one
+select exists (select 1 from users where role = 'admin' and deleted_at is null)
+`
+
+func (q *Queries) AdminExists(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, adminExists)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const attemptAuthCode = `-- name: AttemptAuthCode :one
@@ -231,6 +270,55 @@ func (q *Queries) GetSessionPrincipal(ctx context.Context, arg GetSessionPrincip
 	return i, err
 }
 
+const getUserViewByID = `-- name: GetUserViewByID :one
+select id, public_id, email, first_name, last_name, phone, role, status, locale,
+       email_verified_at, terms_version, terms_accepted_at, privacy_version,
+       privacy_accepted_at, created_at
+from users
+where id = $1 and deleted_at is null
+`
+
+type GetUserViewByIDRow struct {
+	ID                int64
+	PublicID          uuid.UUID
+	Email             string
+	FirstName         string
+	LastName          string
+	Phone             pgtype.Text
+	Role              string
+	Status            string
+	Locale            string
+	EmailVerifiedAt   pgtype.Timestamptz
+	TermsVersion      pgtype.Text
+	TermsAcceptedAt   pgtype.Timestamptz
+	PrivacyVersion    pgtype.Text
+	PrivacyAcceptedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) GetUserViewByID(ctx context.Context, id int64) (GetUserViewByIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserViewByID, id)
+	var i GetUserViewByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.Role,
+		&i.Status,
+		&i.Locale,
+		&i.EmailVerifiedAt,
+		&i.TermsVersion,
+		&i.TermsAcceptedAt,
+		&i.PrivacyVersion,
+		&i.PrivacyAcceptedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertAuthCode = `-- name: InsertAuthCode :one
 insert into auth_codes (user_id, purpose, code_hash, expires_at, created_at)
 values ($1, $2, $3, $4, $5)
@@ -290,6 +378,40 @@ func (q *Queries) InsertAuthSession(ctx context.Context, arg InsertAuthSessionPa
 		arg.UserAgent,
 	)
 	var i InsertAuthSessionRow
+	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
+}
+
+const insertInvitedAdmin = `-- name: InsertInvitedAdmin :one
+insert into users (email, first_name, last_name, locale, role, status, created_at, updated_at)
+values ($1, $2, $3, $4, 'admin', 'pending_verification', $5, $5)
+returning id, public_id
+`
+
+type InsertInvitedAdminParams struct {
+	Email     string
+	FirstName string
+	LastName  string
+	Locale    string
+	Now       pgtype.Timestamptz
+}
+
+type InsertInvitedAdminRow struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+// An admin invitee: pending, no password, no legal versions (admins are
+// exempt). The role is a literal, never a parameter.
+func (q *Queries) InsertInvitedAdmin(ctx context.Context, arg InsertInvitedAdminParams) (InsertInvitedAdminRow, error) {
+	row := q.db.QueryRow(ctx, insertInvitedAdmin,
+		arg.Email,
+		arg.FirstName,
+		arg.LastName,
+		arg.Locale,
+		arg.Now,
+	)
+	var i InsertInvitedAdminRow
 	err := row.Scan(&i.ID, &i.PublicID)
 	return i, err
 }
@@ -357,6 +479,75 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const insertSeedAdmin = `-- name: InsertSeedAdmin :one
+insert into users (email, password_hash, password_changed_at, first_name, last_name, role, status,
+                   email_verified_at, locale, created_at, updated_at)
+values ($1, $2, $3, $4, $5, 'admin', 'active', $3, 'es-DO', $3, $3)
+on conflict (email) where deleted_at is null do nothing
+returning id, public_id
+`
+
+type InsertSeedAdminParams struct {
+	Email        string
+	PasswordHash pgtype.Text
+	Now          pgtype.Timestamptz
+	FirstName    string
+	LastName     string
+}
+
+type InsertSeedAdminRow struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+// The first admin: active and verified, no legal versions. A live account
+// that already holds the email returns no row.
+func (q *Queries) InsertSeedAdmin(ctx context.Context, arg InsertSeedAdminParams) (InsertSeedAdminRow, error) {
+	row := q.db.QueryRow(ctx, insertSeedAdmin,
+		arg.Email,
+		arg.PasswordHash,
+		arg.Now,
+		arg.FirstName,
+		arg.LastName,
+	)
+	var i InsertSeedAdminRow
+	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
+}
+
+const lockAdminSeed = `-- name: LockAdminSeed :exec
+select pg_advisory_xact_lock($1::bigint)
+`
+
+// Serializes concurrent seed runs for the life of the transaction.
+func (q *Queries) LockAdminSeed(ctx context.Context, key int64) error {
+	_, err := q.db.Exec(ctx, lockAdminSeed, key)
+	return err
+}
+
+const lockPendingAdminByEmail = `-- name: LockPendingAdminByEmail :one
+select id, public_id, locale
+from users
+where email = $1 and deleted_at is null
+  and role = 'admin' and status = 'pending_verification'
+for update
+`
+
+type LockPendingAdminByEmailRow struct {
+	ID       int64
+	PublicID uuid.UUID
+	Locale   string
+}
+
+// Only an admin invitee that has not accepted yet. A driver, an active
+// account and an unknown address all return no row (OC-38).
+func (q *Queries) LockPendingAdminByEmail(ctx context.Context, email string) (LockPendingAdminByEmailRow, error) {
+	row := q.db.QueryRow(ctx, lockPendingAdminByEmail, email)
+	var i LockPendingAdminByEmailRow
+	err := row.Scan(&i.ID, &i.PublicID, &i.Locale)
+	return i, err
 }
 
 const lockPendingDriverByEmail = `-- name: LockPendingDriverByEmail :one
@@ -670,6 +861,47 @@ type SetPasswordParams struct {
 func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error {
 	_, err := q.db.Exec(ctx, setPassword, arg.PasswordHash, arg.Now, arg.ID)
 	return err
+}
+
+const takeOverPendingDriver = `-- name: TakeOverPendingDriver :execrows
+update users
+set role = 'admin',
+    password_hash = null,
+    password_changed_at = null,
+    first_name = $1,
+    last_name = $2,
+    locale = $3,
+    phone = null,
+    terms_version = null,
+    terms_accepted_at = null,
+    privacy_version = null,
+    privacy_accepted_at = null,
+    updated_at = $4
+where id = $5 and role = 'driver' and status = 'pending_verification' and deleted_at is null
+`
+
+type TakeOverPendingDriverParams struct {
+	FirstName string
+	LastName  string
+	Locale    string
+	Now       pgtype.Timestamptz
+	ID        int64
+}
+
+// OC-39: an invite takes over a never-verified driver row. Credentials,
+// phone and legal acceptance of the unproven registrant are cleared.
+func (q *Queries) TakeOverPendingDriver(ctx context.Context, arg TakeOverPendingDriverParams) (int64, error) {
+	result, err := q.db.Exec(ctx, takeOverPendingDriver,
+		arg.FirstName,
+		arg.LastName,
+		arg.Locale,
+		arg.Now,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchAuthSession = `-- name: TouchAuthSession :exec

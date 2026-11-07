@@ -37,6 +37,7 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("PATCH /v1/me", router.Policy{Roles: router.AnyRole}, h.patch)
 	r.Handle("DELETE /v1/me", router.Policy{Roles: router.DriverOnly, LegalExempt: true}, h.delete)
 	r.Handle("POST /v1/me/legal-acceptance", router.Policy{Roles: router.DriverOnly, LegalExempt: true}, h.acceptLegal)
+	h.registerAdmin(r)
 }
 
 // patchRequest tells an absent field from an explicit null for the phone.

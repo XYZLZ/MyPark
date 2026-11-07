@@ -334,3 +334,66 @@ func (r *Repo) TouchSession(ctx context.Context, sessionID int64, now time.Time)
 	err := r.q(ctx).TouchAuthSession(ctx, dbgen.TouchAuthSessionParams{ID: sessionID, Now: ts(now)})
 	return safeError("auth: touch session", err)
 }
+
+// LockPendingAdminByEmail implements auth.Repo.
+func (r *Repo) LockPendingAdminByEmail(ctx context.Context, email string) (auth.UserRow, bool, error) {
+	row, err := r.q(ctx).LockPendingAdminByEmail(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.UserRow{}, false, nil
+	}
+	if err != nil {
+		return auth.UserRow{}, false, safeError("auth: lock pending admin", err)
+	}
+	return auth.UserRow{ID: row.ID, PublicID: row.PublicID, Role: auth.RoleAdmin, Status: auth.StatusPending, Locale: row.Locale}, true, nil
+}
+
+// InsertInvitedAdmin implements auth.Repo.
+func (r *Repo) InsertInvitedAdmin(ctx context.Context, a auth.NewAdmin) (auth.UserRow, error) {
+	row, err := r.q(ctx).InsertInvitedAdmin(ctx, dbgen.InsertInvitedAdminParams{
+		Email: a.Email, FirstName: a.FirstName, LastName: a.LastName, Locale: a.Locale, Now: ts(a.Now),
+	})
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == "23505" && pgErr.ConstraintName == emailActiveKey {
+		return auth.UserRow{}, auth.ErrEmailTaken
+	}
+	if err != nil {
+		return auth.UserRow{}, safeError("auth: insert invited admin", err)
+	}
+	return auth.UserRow{ID: row.ID, PublicID: row.PublicID, Role: auth.RoleAdmin, Status: auth.StatusPending, Locale: a.Locale}, nil
+}
+
+// TakeOverPendingDriver implements auth.Repo.
+func (r *Repo) TakeOverPendingDriver(ctx context.Context, id int64, a auth.NewAdmin) (bool, error) {
+	n, err := r.q(ctx).TakeOverPendingDriver(ctx, dbgen.TakeOverPendingDriverParams{
+		ID: id, FirstName: a.FirstName, LastName: a.LastName, Locale: a.Locale, Now: ts(a.Now),
+	})
+	if err != nil {
+		return false, safeError("auth: take over pending driver", err)
+	}
+	return n > 0, nil
+}
+
+// ActivateInvitedAdmin implements auth.Repo.
+func (r *Repo) ActivateInvitedAdmin(ctx context.Context, id int64, hash string, now time.Time) (bool, error) {
+	n, err := r.q(ctx).ActivateInvitedAdmin(ctx, dbgen.ActivateInvitedAdminParams{ID: id, PasswordHash: text(hash), Now: ts(now)})
+	if err != nil {
+		return false, safeError("auth: activate invited admin", err)
+	}
+	return n > 0, nil
+}
+
+// GetUserView implements auth.Repo.
+func (r *Repo) GetUserView(ctx context.Context, id int64) (auth.UserView, error) {
+	row, err := r.q(ctx).GetUserViewByID(ctx, id)
+	if err != nil {
+		return auth.UserView{}, safeError("auth: get user view", err)
+	}
+	role, _ := authz.ParseRole(row.Role)
+	return auth.UserView{
+		PublicID: row.PublicID, Email: row.Email, FirstName: row.FirstName, LastName: row.LastName,
+		Phone: strPtr(row.Phone), Role: role, Status: row.Status, Locale: row.Locale,
+		EmailVerifiedAt: timePtr(row.EmailVerifiedAt),
+		TermsVersion:    strPtr(row.TermsVersion), TermsAcceptedAt: timePtr(row.TermsAcceptedAt),
+		PrivacyVersion: strPtr(row.PrivacyVersion), PrivacyAcceptedAt: timePtr(row.PrivacyAcceptedAt),
+		CreatedAt: row.CreatedAt.Time,
+	}, nil
+}
