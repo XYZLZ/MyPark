@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuditLog struct {
+	ID          int64
+	OccurredAt  pgtype.Timestamptz
+	ActorKind   string
+	ActorUserID pgtype.Int8
+	Action      string
+	EntityType  pgtype.Text
+	EntityID    pgtype.Text
+	Before      []byte
+	After       []byte
+	Ip          *netip.Addr
+	RequestID   pgtype.Text
+}
+
 type AuthCode struct {
 	ID         int64
 	UserID     int64
@@ -66,6 +80,23 @@ type LotOccupancy struct {
 	Occupied  int32
 	Version   int64
 	UpdatedAt pgtype.Timestamptz
+}
+
+type OutboxMessage struct {
+	ID          int64
+	Kind        string
+	Template    string
+	Locale      string
+	ToAddress   string
+	UserID      pgtype.Int8
+	Payload     []byte
+	DedupeKey   string
+	Status      string
+	Attempts    int16
+	LastError   pgtype.Text
+	AvailableAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	SentAt      pgtype.Timestamptz
 }
 
 type RefreshToken struct {

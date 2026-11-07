@@ -14,6 +14,8 @@ import (
 const (
 	sqlStateCheckViolation  = "23514"
 	sqlStateUniqueViolation = "23505"
+
+	sqlStateInsufficientPrivilege = "42501"
 )
 
 func TestGrants_AppDMLOnIdentityTables(t *testing.T) {
@@ -159,6 +161,78 @@ func TestAuthSessions_RevokedReasonPairing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := execCode(t, pool, ins, uid, tc.kind, tc.at, tc.reason); got != tc.wantCode {
 				t.Errorf("SQLSTATE = %q, want %q", got, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestGrants_AuditLogAppendOnly(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	// Catalog check, one privilege per call (a list is true when ANY is held).
+	for priv, want := range map[string]bool{
+		"SELECT": true, "INSERT": true, "UPDATE": false, "DELETE": false, "TRUNCATE": false,
+	} {
+		var got bool
+		if err := db.Super.QueryRow(t.Context(),
+			"select has_table_privilege('mypark_app', 'audit_log', $1)", priv).Scan(&got); err != nil {
+			t.Fatalf("has_table_privilege(%s): %v", priv, err)
+		}
+		if got != want {
+			t.Errorf("mypark_app %s on audit_log = %v, want %v", priv, got, want)
+		}
+	}
+	// Behavioral check as the application role.
+	if got := execCode(t, db.App, `insert into audit_log (actor_kind, action) values ('system', 'admin.seeded')`); got != "" {
+		t.Fatalf("insert SQLSTATE = %q, want success", got)
+	}
+	var n int
+	if err := db.App.QueryRow(t.Context(), `select count(*) from audit_log`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("select as app: n=%d err=%v", n, err)
+	}
+	for _, stmt := range []string{
+		`update audit_log set action = 'x'`,
+		`delete from audit_log`,
+		`truncate audit_log`,
+	} {
+		if got := execCode(t, db.App, stmt); got != sqlStateInsufficientPrivilege {
+			t.Errorf("%q SQLSTATE = %q, want %s", stmt, got, sqlStateInsufficientPrivilege)
+		}
+	}
+}
+
+func TestGrants_AuditLogChecks(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	if got := execCode(t, db.App, `insert into audit_log (actor_kind, action) values ('root', 'x')`); got != sqlStateCheckViolation {
+		t.Errorf("bad actor_kind SQLSTATE = %q, want %s", got, sqlStateCheckViolation)
+	}
+}
+
+func TestGrants_AppDMLOnOutbox(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+		var ok bool
+		if err := db.Super.QueryRow(t.Context(),
+			"select has_table_privilege('mypark_app', 'outbox_messages', $1)", priv).Scan(&ok); err != nil {
+			t.Fatalf("has_table_privilege(%s): %v", priv, err)
+		}
+		if !ok {
+			t.Errorf("mypark_app lacks %s on outbox_messages", priv)
+		}
+	}
+	const ins = `insert into outbox_messages (kind, template, locale, to_address, payload, dedupe_key)
+		values ('email', $1, $2, 'a@x.do', '{}', $3)`
+	cases := []struct {
+		name, tpl, locale, key, want string
+	}{
+		{"valid", "verify_email", "es-DO", "k1", ""},
+		{"duplicate dedupe key", "verify_email", "es-DO", "k1", sqlStateUniqueViolation},
+		{"unknown template", "newsletter", "es-DO", "k2", sqlStateCheckViolation},
+		{"unknown locale", "verify_email", "fr", "k3", sqlStateCheckViolation},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := execCode(t, db.App, ins, tc.tpl, tc.locale, tc.key); got != tc.want {
+				t.Errorf("SQLSTATE = %q, want %q", got, tc.want)
 			}
 		})
 	}
