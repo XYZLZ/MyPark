@@ -22,16 +22,31 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			sw := &statusWriter{ResponseWriter: w}
+			panicked := true
+			defer func() {
+				// A panic is re-raised after logging so Recover (outer) can
+				// answer it. Status is 500 unless headers already went out.
+				status := sw.status()
+				if panicked && !sw.wroteHeader {
+					status = http.StatusInternalServerError
+				}
+				attrs := []slog.Attr{
+					slog.String("request_id", reqctx.RequestID(r.Context())),
+					slog.String("method", r.Method),
+					slog.String("route", cmp.Or(r.Pattern, routeUnmatched)),
+					slog.Int("status", status),
+					slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
+				}
+				if f := reqctx.Fields(r.Context()); f != nil && f.UserPublicID != "" {
+					attrs = append(attrs, slog.String("user_id", f.UserPublicID))
+				}
+				if panicked {
+					attrs = append(attrs, slog.Bool("panicked", true))
+				}
+				log.LogAttrs(r.Context(), slog.LevelInfo, "http request", attrs...)
+			}()
 			next.ServeHTTP(sw, r)
-
-			route := cmp.Or(r.Pattern, routeUnmatched)
-			log.LogAttrs(r.Context(), slog.LevelInfo, "http request",
-				slog.String("request_id", reqctx.RequestID(r.Context())),
-				slog.String("method", r.Method),
-				slog.String("route", route),
-				slog.Int("status", sw.status()),
-				slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
-			)
+			panicked = false
 		})
 	}
 }

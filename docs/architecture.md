@@ -146,7 +146,8 @@ Rules: dependencies point inward; composition happens only in `cmd/*/main.go`; f
 ### 4.2 HTTP
 
 - Go 1.22+ `ServeMux` method+path patterns (`POST /v1/reservations`) **(our call: no third-party router)**.
-- Middleware chain: recover → request ID → slog access log → CORS (allow-list) → rate limit → auth (bearer) → handler. The CORS middleware is not implemented yet (planned for M1); `CORS_ALLOWED_ORIGINS` is already parsed.
+- Global middleware chain (every route, OC-2): recover → request ID → slog access log → secure headers → CORS (exact-match allow-list from `CORS_ALLOWED_ORIGINS`, answers preflights itself) → JSON 404/405 router. Recover drops stale response headers and re-applies `X-Request-Id` and the security headers before writing the 500 envelope. The access log runs in a `defer` (so panicked requests are logged with `panicked=true`) and adds `user_id` when a handler sets it.
+- Per-route wrappers, added where a route needs them: client IP (`middleware.ClientIP`, trusts `X-Forwarded-For` only from trusted proxy CIDRs and reads the rightmost untrusted hop), rate limit, auth (bearer), handler.
 - Connection parameters (values in the URL win):
   - App pool: `statement_timeout=5s`, `application_name=mypark`.
   - Migrator: `lock_timeout=10s`, `application_name=mypark-migrate`, no `statement_timeout`.

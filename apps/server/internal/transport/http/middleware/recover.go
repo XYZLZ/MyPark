@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -24,7 +25,7 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 				if v == nil {
 					return
 				}
-				if v == http.ErrAbortHandler {
+				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(v)
 				}
 				id := w.Header().Get(HeaderRequestID)
@@ -38,6 +39,13 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 				if sw.wroteHeader {
 					return
 				}
+				// Drop everything the handler set before it panicked (stale
+				// Content-Length, Location, Cache-Control...), then restore
+				// only what every response carries.
+				h := w.Header()
+				clear(h)
+				h.Set(HeaderRequestID, id)
+				applySecurityHeaders(h)
 				r = r.WithContext(reqctx.WithRequestID(r.Context(), id))
 				response.Error(w, r, http.StatusInternalServerError, errcodes.InternalUnexpected,
 					"internal server error", nil)

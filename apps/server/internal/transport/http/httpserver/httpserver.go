@@ -19,12 +19,17 @@ import (
 const ShutdownTimeout = 10 * time.Second
 
 // NewHandler wraps mux in the full HTTP chain: recover -> request ID ->
-// access log -> router (mux with JSON 404/405).
-func NewHandler(log *slog.Logger, mux *http.ServeMux) http.Handler {
+// access log -> secure headers -> CORS -> router (mux with JSON 404/405).
+// corsOrigins is the exact-match allow-list; nil disables cross-origin access.
+func NewHandler(log *slog.Logger, mux *http.ServeMux, corsOrigins []string) http.Handler {
 	return middleware.Recover(log)(
 		middleware.RequestID(
 			middleware.AccessLog(log)(
-				middleware.JSONErrors(mux),
+				middleware.SecureHeaders(
+					middleware.CORS(corsOrigins)(
+						middleware.JSONErrors(mux),
+					),
+				),
 			),
 		),
 	)

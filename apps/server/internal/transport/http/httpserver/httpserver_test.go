@@ -22,7 +22,7 @@ func TestEnvelope_ParallelHandlersNoRace(t *testing.T) {
 	mux.HandleFunc("GET /x", func(w http.ResponseWriter, r *http.Request) {
 		response.OK(w, r, http.StatusOK, map[string]string{"k": "v"})
 	})
-	h := httpserver.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), mux)
+	h := httpserver.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), mux, nil)
 
 	var wg sync.WaitGroup
 	for i := range 50 {

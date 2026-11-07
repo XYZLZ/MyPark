@@ -78,6 +78,6 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 
 	mux := http.NewServeMux()
 	health.RegisterLiveness(mux, serviceName, version)
-	srv := httpserver.New(addr, httpserver.NewHandler(log, mux), log)
+	srv := httpserver.New(addr, httpserver.NewHandler(log, mux, nil), log)
 	return httpserver.Serve(ctx, log, srv, serviceName, "version", version)
 }

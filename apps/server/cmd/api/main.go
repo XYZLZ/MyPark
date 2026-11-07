@@ -83,7 +83,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	defer sqlDB.Close()
 
 	h := health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB))
-	srv := httpserver.New(cfg.HTTPAddr(), newHandler(log, h), log)
+	srv := httpserver.New(cfg.HTTPAddr(), newHandler(log, h, cfg.CORSAllowedOrigins()), log)
 	// The config is logged only through Config.LogValue, which redacts the
 	// database password.
 	return httpserver.Serve(ctx, log, srv, serviceName, "version", version, "config", cfg)
@@ -91,8 +91,8 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 
 // newHandler builds the API router and wraps it in the shared middleware
 // chain (see httpserver.NewHandler).
-func newHandler(log *slog.Logger, h *health.Handler) http.Handler {
+func newHandler(log *slog.Logger, h *health.Handler, corsOrigins []string) http.Handler {
 	mux := http.NewServeMux()
 	h.Register(mux)
-	return httpserver.NewHandler(log, mux)
+	return httpserver.NewHandler(log, mux, corsOrigins)
 }

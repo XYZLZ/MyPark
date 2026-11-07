@@ -29,7 +29,7 @@ func doRequest(t *testing.T, h *health.Handler, method, path string) (*httptest.
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	rec := httptest.NewRecorder()
-	newHandler(log, h).ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	newHandler(log, h, nil).ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
@@ -197,7 +197,7 @@ func TestRun_ShutsDownOnCancel(t *testing.T) {
 func TestAccessLog_RouteThroughFullChain(t *testing.T) {
 	var logs testsupport.SyncBuffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
-	h := newHandler(log, readyHealth())
+	h := newHandler(log, readyHealth(), nil)
 	for path, route := range map[string]string{"/healthz": "GET /healthz", "/nope": "unmatched"} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
 		if want := `"route":"` + route + `"`; !strings.Contains(logs.String(), want) {

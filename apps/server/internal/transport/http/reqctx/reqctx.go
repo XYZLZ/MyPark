@@ -2,7 +2,10 @@
 // a context.Context without making response or middleware import each other.
 package reqctx
 
-import "context"
+import (
+	"context"
+	"net/netip"
+)
 
 type (
 	requestIDKey struct{}
@@ -38,4 +41,17 @@ func WithLogFields(ctx context.Context) (context.Context, *LogFields) {
 func Fields(ctx context.Context) *LogFields {
 	f, _ := ctx.Value(logFieldsKey{}).(*LogFields)
 	return f
+}
+
+type clientIPKey struct{}
+
+// WithClientIP returns ctx carrying the resolved client IP.
+func WithClientIP(ctx context.Context, ip netip.Addr) context.Context {
+	return context.WithValue(ctx, clientIPKey{}, ip)
+}
+
+// ClientIP returns the IP stored by WithClientIP, or the zero Addr.
+func ClientIP(ctx context.Context) netip.Addr {
+	ip, _ := ctx.Value(clientIPKey{}).(netip.Addr)
+	return ip
 }
