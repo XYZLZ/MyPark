@@ -5,7 +5,7 @@ Driver app for MyPark · Banreservas Zona Colonial. Expo Router, Uniwind (Tailwi
 ## Expo docs are pinned to SDK 58. Do not trust your training data.
 
 - Versioned docs root: https://docs.expo.dev/versions/v58.0.0/
-- Every SDK package has an LLM-friendly page at `https://docs.expo.dev/versions/v58.0.0/sdk/<package>/index.md`, where `<package>` is the name without the `expo-` prefix. Examples:
+- Every SDK package has an LLM-friendly page at `https://docs.expo.dev/versions/v58.0.0/sdk/<package>/index.md`, where `<package>` is usually the package name without the `expo-` prefix. Some packages also drop their hyphens (`expo-secure-store` → `securestore`), so check the docs index when unsure. Examples:
   - expo-localization: https://docs.expo.dev/versions/v58.0.0/sdk/localization/index.md
   - expo-router: https://docs.expo.dev/versions/v58.0.0/sdk/router/index.md
   - expo-secure-store: https://docs.expo.dev/versions/v58.0.0/sdk/securestore/index.md

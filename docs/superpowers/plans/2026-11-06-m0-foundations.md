@@ -6,14 +6,14 @@
 
 **Architecture:** Monorepo `github.com/XYZLZ/MyPark`. Go module `apps/server` (stdlib `net/http`, pgx/v5, sqlc, goose, slog). npm workspaces for `apps/web` (Next.js 16), `apps/mobile` (Expo SDK 58) and `packages/contracts` (TS types generated from `apps/server/api/openapi.yaml`). Two tracks run in parallel. Track B depends on Track A only through the OpenAPI health contract (Task A2).
 
-**Tech Stack:** Go 1.25, pgx/v5, sqlc, goose, PostgreSQL 18, Docker Compose, Mailpit; Next.js 16.4.5, React/React DOM 19.3.0, Tailwind CSS 4.3.5, next-intl, TanStack Query 5, zustand 5, zod 4, vitest; Expo ~58.0.23, expo-router ~58.0.30, react-native 0.88.1, Uniwind 1.13.2, i18next + react-i18next + expo-localization, jest-expo; openapi-typescript; GitHub Actions.
+**Tech Stack:** Go 1.27, pgx/v5, sqlc, goose, PostgreSQL 18, Docker Compose, Mailpit; Next.js 16.4.5, React/React DOM 19.3.0, Tailwind CSS 4.3.5, next-intl, TanStack Query 5, zustand 5, zod 4, vitest; Expo ~58.0.23, expo-router ~58.0.30, react-native 0.88.1, Uniwind 1.13.2, i18next + react-i18next + expo-localization, jest-expo; openapi-typescript; GitHub Actions.
 
 **Spec:** `docs/spec.md` §8 M0 (scope items 0–8 + exit criteria); `docs/architecture.md` §1, §2.1, §3, §4.2–4.3, §11.3, §12–§16; `docs/policies.md` §2.
 
 ## Global Constraints
 
 - Package manager **npm** with workspaces (`apps/web`, `apps/mobile`, `packages/contracts`). One root `package-lock.json`. Never pnpm/yarn.
-- Exact pins: `next` 16.4.5; `react`/`react-dom` **19.3.0** in both apps (root `overrides` too); `expo` ~58.0.23; `expo-router` ~58.0.30; `react-native` 0.88.1; `uniwind` 1.13.2; `tailwindcss` 4.3.5; `zustand` 5.1.0; `@tanstack/react-query` 5.106.1; Go 1.25; image `postgres:18`.
+- Exact pins: `next` 16.4.5; `react`/`react-dom` **19.3.0** in both apps (root `overrides` too); `expo` ~58.0.23; `expo-router` ~58.0.30; `react-native` 0.88.1; `uniwind` 1.13.2; `tailwindcss` 4.3.5; `zustand` 5.1.0; `@tanstack/react-query` 5.106.1; Go 1.27; image `postgres:18`.
 - Other Expo packages are installed with `npx expo install <pkg>`, never with a hand-picked version.
 - TypeScript: **the same version in both apps**, chosen by Task B1 Step 1. Do not assume 7.x.
 - Go module path: `github.com/XYZLZ/MyPark/apps/server`.
@@ -51,7 +51,6 @@ MyPark/
 │     workflows/ci-js.yml            # B5: jobs "web", "mobile", "contracts"
 ├─ deploy/compose/
 │  ├─ docker-compose.yml             # A5
-│  ├─ .env.example                   # A5
 │  └─ postgres/init/01-roles.sh      # A4: creates mypark_migrator / mypark_app
 ├─ apps/server/
 │  ├─ go.mod                         # A1 (tool deps: sqlc)
@@ -68,18 +67,18 @@ MyPark/
 │  ├─ internal/infrastructure/database/dbgen/   # sqlc output (committed)
 │  ├─ internal/features/lots/seed.go
 │  ├─ internal/testsupport/pgtest.go
-│  ├─ Dockerfile  .env.example
+│  ├─ Dockerfile
 ├─ packages/contracts/
 │  ├─ package.json  tsconfig.json
 │  ├─ src/{index.ts,openapi.d.ts(generated),error-codes.ts(generated),health.ts}
 │  └─ src/health.test.ts
 ├─ apps/web/                         # B3 (cognifield client layout)
-│  ├─ package.json next.config.ts tsconfig.json vitest.config.ts postcss.config.mjs .env.example
+│  ├─ package.json next.config.ts tsconfig.json vitest.config.ts postcss.config.mjs
 │  └─ src/{app/[locale]/{(public),(driver),(admin)}, app/layout.tsx, components/, design/tokens.css,
 │          features/health/, i18n/{routing.ts,request.ts,messages/{es-DO,en}.json}, lib/api/server.ts,
 │          providers/query-provider.tsx, store/ui.ts, proxy.ts}
 └─ apps/mobile/                      # B4 (nexVial-app layout)
-   ├─ package.json app.json metro.config.js tsconfig.json eslint.config.js eas.json AGENTS.md .env.example
+   ├─ package.json app.json metro.config.js tsconfig.json eslint.config.js eas.json AGENTS.md
    └─ src/{app/{_layout.tsx,index.tsx,(auth)/_layout.tsx}, components/, design/tokens.ts, global.css,
            features/health/, lib/i18n/{index.ts,locales/{es-DO,en}.json}, services/httpClient.ts,
            store/settings.ts, types/}
@@ -99,8 +98,23 @@ MyPark/
 
 ```gitattributes
 * text=auto eol=lf
-*.{png,jpg,jpeg,gif,ico,webp,ttf,otf,woff,woff2,pdf,docx} binary
-*.{cmd,bat,ps1} text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.docx binary
+
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
 ```
 
 Then renormalize the files that are already committed and confirm that nothing but line endings changed:
@@ -132,7 +146,7 @@ Expected: `https://github.com/XYZLZ/MyPark` shows `docs/` on `main`. Branch prot
 ## Task A1: Go module, config, error codes, response envelope — Track A
 
 **Files:**
-- Create: `apps/server/go.mod`, `apps/server/internal/config/config.go`, `apps/server/internal/domain/errcodes/errcodes.go`, `apps/server/internal/transport/http/response/response.go`, `apps/server/.env.example`
+- Create: `apps/server/go.mod`, `apps/server/internal/config/config.go`, `apps/server/internal/domain/errcodes/errcodes.go`, `apps/server/internal/transport/http/response/response.go`
 - Test: `apps/server/internal/config/config_test.go`, `apps/server/internal/transport/http/response/response_test.go`
 
 **Interfaces:**
@@ -143,8 +157,8 @@ Expected: `https://github.com/XYZLZ/MyPark` shows `docs/` on `main`. Branch prot
 
 - [ ] **Step 1: Init the module**
 
-Run: `cd apps/server && go mod init github.com/XYZLZ/MyPark/apps/server && go mod edit -go=1.25`
-Expected: `go.mod` with `module github.com/XYZLZ/MyPark/apps/server` and `go 1.25`.
+Run: `cd apps/server && go mod init github.com/XYZLZ/MyPark/apps/server && go mod edit -go=1.27`
+Expected: `go.mod` with `module github.com/XYZLZ/MyPark/apps/server` and `go 1.27`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -334,7 +348,7 @@ git commit -m "feat(server): add baseline schema, db roles, migrations and lot s
 ## Task A5: Worker/simulator stubs, Dockerfile, compose, server CI — Track A
 
 **Files:**
-- Create: `apps/server/cmd/worker/main.go`, `apps/server/cmd/simulator/main.go`, `apps/server/Dockerfile`, `apps/server/.dockerignore`, `deploy/compose/docker-compose.yml`, `deploy/compose/.env.example`, `.github/workflows/ci-server.yml`
+- Create: `apps/server/cmd/worker/main.go`, `apps/server/cmd/simulator/main.go`, `apps/server/Dockerfile`, `apps/server/.dockerignore`, `deploy/compose/docker-compose.yml`, `.github/workflows/ci-server.yml`
 - Test: `apps/server/cmd/worker/main_test.go`, `apps/server/cmd/simulator/main_test.go`
 
 **Interfaces:**
@@ -342,9 +356,9 @@ git commit -m "feat(server): add baseline schema, db roles, migrations and lot s
 - Produces:
   - `cmd/worker`: `run(ctx, getenv, stdout) error`. Serves `/healthz` + `/readyz` on `WORKER_HEALTH_ADDR` (default `:8091`). No jobs yet.
   - `cmd/simulator`: `run(ctx, getenv, stdout) error`. Serves `/healthz` on `SIMULATOR_ADDR` (default `:8090`) with `service:"simulator"`. No scenarios yet.
-  - Dockerfile: multi-stage `golang:1.25` → `gcr.io/distroless/static-debian12:nonroot`. `ARG CMD` selects the binary (`api|worker|simulator|migrate|seed`). `CGO_ENABLED=0`. Version is injected via `-ldflags "-X main.version=$VERSION"`.
+  - Dockerfile: multi-stage `golang:1.27` → `gcr.io/distroless/static-debian12:nonroot`. `ARG CMD` selects the binary (`api|worker|simulator|migrate|seed`). `CGO_ENABLED=0`. Version is injected via `-ldflags "-X main.version=$VERSION"`.
   - Compose services: `postgres` (postgres:18, init dir mounted, healthcheck `pg_isready`, volume `pgdata`); `mailpit` (axllent/mailpit, 1025/8025); `migrate` and `seed` (one-shot, `depends_on: postgres: service_healthy`, `restart: "no"`); `api` (8080, `depends_on` migrate+seed `service_completed_successfully`, healthcheck on `/readyz` using the binary's `-healthcheck` flag, since distroless has no curl); `worker` (8091); `simulator` (8090, internal network + published port for dev); `web` (built in B3, port 3000, `API_INTERNAL_URL=http://api:8080`).
-  - CI job **`server`** (name is used by branch protection): `services.postgres: postgres:18`; steps: checkout → setup-go 1.25 (cache) → run `deploy/compose/postgres/init/01-roles.sh` via psql → `go vet ./...` → golangci-lint (official action, pinned major) → `go tool sqlc diff` → `go generate ./internal/domain/errcodes/...` + `git diff --exit-code packages/contracts/src/error-codes.ts` → `go run ./cmd/migrate` → `go test -race ./...` with `TEST_DATABASE_URL` and `CI=true`.
+  - CI job **`server`** (name is used by branch protection): `services.postgres: postgres:18`; steps: checkout → setup-go with `go-version-file: apps/server/go.mod` (cache) → run `deploy/compose/postgres/init/01-roles.sh` via psql → `go vet ./...` → golangci-lint (official action, pinned major) → `go tool sqlc diff` → `go generate ./internal/domain/errcodes/...` + `git diff --exit-code packages/contracts/src/error-codes.ts` → `go run ./cmd/migrate` → `go test -race ./...` with `TEST_DATABASE_URL` and `CI=true`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -359,7 +373,7 @@ func TestAPI_HealthcheckFlag(t *testing.T)     // run with args ["-healthcheck"]
 - [ ] **Step 4: Verify tests** — `go test ./cmd/...` → PASS.
 - [ ] **Step 5: Verify compose (Track A services only)**
 
-Run: `cp deploy/compose/.env.example deploy/compose/.env && docker compose -f deploy/compose/docker-compose.yml up -d --build postgres mailpit migrate seed api worker simulator && curl -s localhost:8080/readyz`
+Run: `docker compose -f deploy/compose/docker-compose.yml down -v && docker compose -f deploy/compose/docker-compose.yml up -d --build postgres mailpit migrate seed api worker simulator && curl -s localhost:8080/readyz` (no `.env` file: compose carries inline dev defaults)
 Expected: `{"status":"ready","checks":{"database":"ok","migrations":"ok"}}`. `docker compose ps` shows api, worker and simulator `healthy`, and migrate and seed `exited (0)`.
 
 - [ ] **Step 6: Commit**
@@ -458,7 +472,7 @@ git commit -m "feat(contracts): add generated api types and health state mapping
 - Produces:
   - `src/i18n/routing.ts`: `locales = ['es-DO','en'] as const`, `defaultLocale = 'es-DO'`, `resolveLocale(input: string | undefined): Locale`, next-intl `defineRouting({ locales, defaultLocale, localePrefix: 'always' })`.
   - `src/proxy.ts` (Next 16): next-intl middleware only (session refresh comes in M1).
-  - `src/lib/api/server.ts`: `getApiHealth(): Promise<ApiHealthState>` (server-only; `fetch(`${process.env.API_INTERNAL_URL}/readyz`, { cache: 'no-store', signal: AbortSignal.timeout(2000) })`).
+  - `src/lib/api/server.ts`: `getApiHealth(): Promise<ApiHealthState>` (server-only; `fetch(`${process.env.API_INTERNAL_URL}/readyz`, { cache: 'no-store', signal: AbortSignal.timeout(3000) })`; 3 s, longer than the API's 2 s readiness check).
   - `src/features/health/HealthStatus.tsx`: presentational `HealthStatus({ state }: { state: ApiHealthState })` with `role="status"`. The container is the `[locale]/(public)/page.tsx` server component.
   - `src/providers/query-provider.tsx`: `QueryProvider` (TanStack Query client per browser session). `src/store/ui.ts`: `createUiStore()` zustand vanilla store factory `{ theme: 'system'|'light'|'dark'; setTheme }`, provided via context (per-request, as architecture §12 requires).
   - `src/design/tokens.css`: Tailwind 4 `@theme` with `--color-brand-primary`, `--color-brand-primary-contrast`, `--color-brand-accent`, `--color-brand-accent-contrast`, each with `/* TODO(brand): replace with official Banreservas value */`.
@@ -602,7 +616,7 @@ JSON
 Expected: JSON echo containing `"required_approving_review_count": 1` and the four contexts.
 
 - [ ] **Step 2: Verify that direct pushes are rejected** — `git commit --allow-empty -m "chore: verify protection" && git push origin main`. Expected: `remote: error: GH006: Protected branch update failed`. Then `git reset --hard HEAD~1`.
-- [ ] **Step 3: Clean-clone check** — in a fresh folder, clone, then `cp deploy/compose/.env.example deploy/compose/.env && docker compose -f deploy/compose/docker-compose.yml up -d --build`. Expected: all services healthy; `curl -s localhost:8080/readyz` returns ready; `localhost:3000/es-DO` shows "API: operativa" with the header "MyPark · Banreservas Zona Colonial"; Mailpit UI at `localhost:8025`.
+- [ ] **Step 3: Clean-clone check** — in a fresh folder, clone, then `docker compose -f deploy/compose/docker-compose.yml down -v && docker compose -f deploy/compose/docker-compose.yml up -d --build` (no `.env` file). Compose pins `name: mypark`, so a second clone on the same machine reuses the `mypark_pgdata` volume: a truly clean run needs `down -v` first, or a different machine. Expected: all services healthy; `curl -s localhost:8080/readyz` returns ready; `localhost:3000/es-DO` shows "API: operativa" with the header "MyPark · Banreservas Zona Colonial"; Mailpit UI at `localhost:8025`.
 - [ ] **Step 4: Tick the spec M0 exit criteria** (spec §8 M0). If something deviated (e.g. the worker port moved to 8091, or CI split into two workflow files), update `docs/architecture.md` §2.1 and spec §8 in a `docs:` PR.
 
 ---

@@ -28,7 +28,16 @@ Run the whole stack (Postgres, migrations, seed, API, worker, web) with Docker:
 docker compose -f deploy/compose/docker-compose.yml up -d --build
 ```
 
-The web app is then at <http://localhost:3000/es-DO>. Every published port except the API (8080)
+Services published on the host:
+
+| Service | URL |
+|---|---|
+| Web | <http://localhost:3000/es-DO> |
+| API | <http://localhost:8080> |
+| Simulator | <http://localhost:8090> |
+| Mailpit UI | <http://localhost:8025> |
+
+Every published port except the API (8080)
 is bound to `127.0.0.1`; the API listens on all interfaces so a phone running Expo on the LAN can
 reach it.
 
@@ -36,6 +45,17 @@ To run the web app outside Docker against the running API:
 
 ```bash
 API_INTERNAL_URL=http://localhost:8080 npm run dev -w apps/web
+```
+
+To run the mobile app, point `EXPO_PUBLIC_API_URL` at the API as the device sees it:
+
+| Target | `EXPO_PUBLIC_API_URL` |
+|---|---|
+| Physical device (Expo Go / dev client) | `http://<LAN-IP>:8080` |
+| Android emulator | `http://10.0.2.2:8080` |
+
+```bash
+(cd apps/mobile && EXPO_PUBLIC_API_URL=http://<LAN-IP>:8080 npx expo start)
 ```
 
 No `.env` file is needed: every variable has an inline dev-only default. Override values in

@@ -122,7 +122,7 @@ The facility belongs to Banreservas. The product is **MyPark**, shown as "MyPark
 | Default branch | `main` is protected and always deployable. Branch protection requires the CI checks to pass and 1 approval, and **no direct pushes** (admins included) |
 | Team | Two developers who review each other's work |
 | Branch names | `<type>/<short-kebab-topic>`, e.g. `feat/reservation-cap`, `fix/sse-reconnect`, `chore/ci-cache` |
-| Commits | **Conventional Commits**: `type(scope): summary` with types `feat, fix, refactor, perf, test, docs, build, ci, chore`. Scopes: `server, web, mobile, contracts, deploy, docs` |
+| Commits | **Conventional Commits**: `type(scope): summary` with types `feat, fix, refactor, perf, test, docs, build, ci, chore`. Scopes: `server, web, mobile, contracts, deploy, docs, ci`. Unscoped `build:` / `ci:` are allowed for repo-wide changes |
 | Attribution | **No AI attribution** in commits or PRs: no `Co-Authored-By` trailers or "generated with" lines |
 | History | Squash-merge PRs into `main`. The PR title becomes the conventional commit |
 | Work units | Each commit is a coherent, reviewable unit that includes its tests and docs |
@@ -160,8 +160,8 @@ The facility belongs to Banreservas. The product is **MyPark**, shown as "MyPark
 
 ### 2.5 Secrets and configuration
 
-- Secrets are **never committed**. Only `.env.example` files with placeholder values are committed.
-- Local secrets live in untracked `.env` files. CI secrets live in the CI secret store.
+- Secrets are **never committed**.
+- No `.env` files are committed or required (owner permission constraint), not even `.env.example`. Compose uses inline `${VAR:-dev-default}` defaults that are for local development only; override them through the shell environment. CI secrets live in the CI secret store.
 - Keys are rotatable: JWT signing key (supports `kid`), QR HMAC key, secretbox key, device secrets.
 - Logs never contain secrets, tokens, passwords, codes, full card numbers or full emails/plates.
 
@@ -175,6 +175,7 @@ The facility belongs to Banreservas. The product is **MyPark**, shown as "MyPark
 | Expo alignment | `npx expo install --check` must pass. Expo packages are upgraded only together with an SDK upgrade |
 | Go modules | `go mod tidy` must be clean. Prefer the standard library. A new dependency needs a one-line justification in the PR |
 | Audit | `npm audit --omit=dev` and `govulncheck` run in CI. High/critical findings block release |
+| CI status | `npm audit --omit=dev`, `govulncheck` and the `go mod tidy` check are not in CI yet (planned for M1) |
 | Licenses | Only OSI-approved permissive licenses (MIT, Apache-2.0, BSD, ISC) without approval |
 
 ### 2.7 Security baseline (OWASP ASVS Level 1)

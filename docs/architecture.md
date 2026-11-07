@@ -16,7 +16,7 @@ MyPark has three apps: a **Go API**, a **Next.js web** app and an **Expo mobile*
 |---|---|
 | Repo | Monorepo `github.com/XYZLZ/MyPark`. npm workspaces for JS (`apps/web`, `apps/mobile`, `packages/contracts`). Go module `github.com/XYZLZ/MyPark/apps/server` (not part of the workspaces) |
 | Branding | Banreservas name, logo and colors (deep blue + orange accent), shown as "MyPark · Banreservas Zona Colonial". Brand tokens are placeholders (`TODO(brand)`) until official assets arrive |
-| Backend | Go 1.25, stdlib `net/http` ServeMux routing, `pgx/v5` pool, `sqlc`, `goose` migrations, `slog` |
+| Backend | Go 1.27, stdlib `net/http` ServeMux routing, `pgx/v5` pool, `sqlc`, `goose` migrations, `slog` |
 | Backend style | Feature-sliced hexagonal: `internal/features/<feature>` owns domain + ports + use cases. Adapters live in `postgres/` subpackages and `internal/infrastructure` |
 | Database | PostgreSQL 18 (built-in `uuidv7()`), plain Postgres, no Supabase services **(our call: version)** |
 | Auth | Go-owned. argon2id passwords, 15-min JWT access tokens, rotating opaque refresh tokens with reuse detection |
@@ -28,6 +28,7 @@ MyPark has three apps: a **Go API**, a **Next.js web** app and an **Expo mobile*
 | Payments | `PaymentGateway` port (Charge/Refund, idempotent). Phase 1 uses a `simulated` adapter |
 | Web | Next.js 16.4 + React 19.3.0 + Tailwind 4.3, next-intl, TanStack Query, zustand, zod, vitest, Playwright |
 | Mobile | Expo SDK 58 (RN 0.88.1, React 19.3.0), expo-router, Uniwind 1.13, i18next + expo-localization, TanStack Query, zustand, zod, jest-expo |
+| JS toolchain | TypeScript 6.0.3 (Expo SDK 58 pin) and eslint 9.39.5 in every workspace. A scoped root override `{"openapi-typescript":{"typescript":"6.0.3"}}` satisfies openapi-typescript's peer range. `npm install <pkg>` fails with ERESOLVE, so add a dependency by editing `package.json`, then run `npm install` |
 | Contracts | OpenAPI 3.1 written in `apps/server/api/openapi.yaml`, TS types generated into `packages/contracts` **(our call)** |
 | Deploy | Docker Compose locally. VPS-ready: same images + Caddy TLS edge (Phase 2) |
 
@@ -56,14 +57,16 @@ flowchart LR
 | Container | Image / runtime | Responsibility | Port (dev) |
 |---|---|---|---|
 | `api` | `apps/server` → `cmd/api` | REST `/v1`, SSE, device API, auth | 8080 |
-| `worker` | `apps/server` → `cmd/worker` | Expiries, snapshots, outbox email, refunds, reconciliation | — (health 8081) |
-| `simulator` | `apps/server` → `cmd/simulator` | Simulated devices + control API (internal network only) | 8090 |
+| `worker` | `apps/server` → `cmd/worker` | Expiries, snapshots, outbox email, refunds, reconciliation | — (health 8091; 8081 is Metro's) |
+| `simulator` | `apps/server` → `cmd/simulator` | Simulated devices + control API | 8090 (published on 127.0.0.1 for dev) |
 | `web` | `apps/web` | Public, driver and admin UIs; BFF route handlers | 3000 |
 | `postgres` | `postgres:18` | System of record + LISTEN/NOTIFY | 5432 |
 | `mailpit` | `axllent/mailpit` | Dev SMTP sink + UI | 1025 / 8025 |
 | mobile | Expo on the host machine | Driver app (dev client / Expo Go, EAS preview APK) | — |
 
-`cmd/migrate` and `cmd/seed` run as one-off compose services (`profiles: [tools]`) before `api` starts.
+`cmd/migrate` and `cmd/seed` are one-shot compose services that run on every `up`, with no profile. Start order: `postgres` → `migrate` → `seed` → `api` / `worker` → `web`.
+
+Every published port binds to `127.0.0.1` except the `api`, which listens on all interfaces so Expo on a LAN device can reach it.
 
 ---
 
@@ -97,12 +100,13 @@ MyPark/
 │  │  │  │  └─ health/
 │  │  │  ├─ infrastructure/
 │  │  │  │  ├─ database/{migrations/,queries/,sqlc.yaml}
+│  │  │  │  ├─ validation/        # go-playground/validator wrapper
 │  │  │  │  ├─ jwt/  hashing/  secretbox/  email/  ratelimit/
 │  │  │  │  ├─ payment/{simulated/}
 │  │  │  │  ├─ pubsub/            # LISTEN/NOTIFY hub
 │  │  │  │  └─ clock/
 │  │  │  ├─ simulator/            # scenario engine (used by cmd/simulator)
-│  │  │  ├─ transport/http/{middleware/,response/,sse/,devicesig/}
+│  │  │  ├─ transport/http/{healthprobe/,httpserver/,middleware/,response/,sse/,devicesig/}
 │  │  │  └─ testsupport/          # pg test DB, fixtures, fake clock
 │  │  ├─ Dockerfile  go.mod  go.sum
 │  ├─ web/                        # Next.js (layout mirrors cognifield apps/client)
@@ -110,9 +114,10 @@ MyPark/
 │  └─ mobile/                     # Expo (layout mirrors nexVial-app)
 │     └─ src/{app,components,constants,design,features,hooks,lib,services,store,types}
 ├─ packages/contracts/            # generated API types + error-code catalog
-├─ deploy/{compose/docker-compose.yml, edge/Caddyfile (Phase 2)}
+├─ deploy/{compose/{docker-compose.yml,postgres/init/01-roles.sh}, edge/Caddyfile (Phase 2)}
 ├─ docs/{spec.md,architecture.md,policies.md}
-├─ .github/workflows/ci.yml
+├─ scripts/{check-single-react.mjs,check-i18n-parity.mjs}
+├─ .github/workflows/{ci-server.yml (job server), ci-js.yml (jobs contracts, web, mobile)}
 └─ package.json                   # npm workspaces, root scripts
 ```
 
@@ -141,8 +146,11 @@ Rules: dependencies point inward; composition happens only in `cmd/*/main.go`; f
 ### 4.2 HTTP
 
 - Go 1.22+ `ServeMux` method+path patterns (`POST /v1/reservations`) **(our call: no third-party router)**.
-- Middleware chain: recover → request ID → slog access log → CORS (allow-list) → rate limit → auth (bearer) → handler.
-- `statement_timeout` is set per pool connection (5 s app, 60 s migrator). The request context sets the deadline.
+- Middleware chain: recover → request ID → slog access log → CORS (allow-list) → rate limit → auth (bearer) → handler. The CORS middleware is not implemented yet (planned for M1); `CORS_ALLOWED_ORIGINS` is already parsed.
+- Connection parameters (values in the URL win):
+  - App pool: `statement_timeout=5s`, `application_name=mypark`.
+  - Migrator: `lock_timeout=10s`, `application_name=mypark-migrate`, no `statement_timeout`.
+- The request context sets the deadline.
 
 ### 4.3 Error envelope (stable codes for i18n)
 
@@ -152,7 +160,9 @@ Rules: dependencies point inward; composition happens only in `cmd/*/main.go`; f
 ```
 
 - `code` is `<domain>.<reason>` in snake_case and is the **contract**. Clients translate the code and never show `message` to end users.
-- The code catalog lives in `apps/server/internal/domain/errcodes.go`. It is exported to `packages/contracts/src/error-codes.ts` by `go generate`, and CI fails on drift.
+- The code catalog lives in `apps/server/internal/domain/errcodes/errcodes.go`. It is exported to `packages/contracts/src/error-codes.ts` by `go generate`, and CI fails on drift.
+- Input validation failures return `validation.failed` (422) with `details.fields[{field, rule, param}]`.
+- Unknown routes and wrong methods return JSON envelopes too: `http.not_found` (404) and `http.method_not_allowed` (405).
 - HTTP status mapping: validation 422, auth 401, forbidden 403, not found 404, conflict/state 409, rate limit 429.
 
 ### 4.4 API surface (v1 overview)
@@ -170,6 +180,14 @@ Rules: dependencies point inward; composition happens only in `cmd/*/main.go`; f
 | Admin | `/v1/admin/{dashboard,stream,reservations,stays,tariffs,policies,lot,spaces,devices,employee-cards,users,admins,analytics/*,reconciliation,audit,refunds}`; `POST /v1/admin/lot/close` (cancels + refunds overlapping reservations, `facility_closed`) and `/open` | admin |
 
 Pagination is **keyset**: `?limit=50&cursor=<opaque>`, where the cursor encodes `(sort_key, id)`. There is no OFFSET on large tables. Public IDs in URLs are UUIDv7 (`public_id`) and never the internal bigint.
+
+### 4.5 Configuration
+
+- `internal/config` exposes accessors over unexported fields (`cfg.DatabaseURL()`, `cfg.DBMaxConns()`, ...). Env vars and client input are both validated with `go-playground/validator/v10`.
+- Defaults apply only to optional vars. Required vars such as `DATABASE_URL` have none, and `DATABASE_URL` must be in URL form.
+- Errors are aggregated and each names its env var.
+- `Config.LogValue()` redacts passwords, including `?password=` and `?sslpassword=` query parameters.
+- `/readyz` reads `goose_db_version` directly; the baseline migration grants `select` on it to `mypark_app`.
 
 ---
 
@@ -384,12 +402,13 @@ Conventions (from supabase-postgres-best-practices):
 
 | Role | Privileges |
 |---|---|
-| `mypark_migrator` | Owns the schema, runs goose. Used only by `cmd/migrate` |
-| `mypark_app` | `select/insert/update/delete` on mutable tables, `select/insert` only on append-only tables; no DDL |
+| `mypark_migrator` | Owns the database, runs goose. Used only by `cmd/migrate` |
+| `mypark_app` | DML only: `select/insert/update/delete` on mutable tables, `select/insert` only on append-only tables; no DDL |
 | `mypark_readonly` | `select` for analytics/debug (optional) |
 
+- The roles are created by the postgres init script `deploy/compose/postgres/init/01-roles.sh`, not by a migration, because creating roles needs a superuser.
 - `revoke all on schema public from public`.
-- pgxpool `max_conns = 10` per API instance, 5 for the worker (sized by `(cores × 2)`). Transactions are kept short: no network I/O inside a transaction.
+- pgxpool `max_conns = 10` per API instance (`DB_MAX_CONNS`), 4 for the worker (a constant in `cmd/worker`, enough for the readiness checks; raised with the jobs). Transactions are kept short: no network I/O inside a transaction.
 
 ---
 
@@ -434,6 +453,7 @@ src/
 - **Brand tokens** are the same names on web and mobile (`brand-primary`, `brand-primary-contrast`, `brand-accent`, `brand-accent-contrast`). Phase 1 ships placeholder values marked `TODO(brand)` in `src/global.css` `@theme` and `src/design/tokens.ts`. They are replaced from official Banreservas assets supplied by the team, and an AA contrast check runs on replacement. The app display name is "MyPark · Banreservas Zona Colonial".
 - `metro.config.js` uses `withUniwindConfig(config, { cssEntryFile: './src/global.css', dtsFile: './src/types/uniwind-types.d.ts' })`.
 - The QR is rendered locally from the token (`react-native-qrcode-svg` or similar) and the last active QR is cached in secure storage for offline display.
+- HTTP: the default transport is `expo/fetch` **(owner decision)**. The per-request timeout defaults to 3 s and is configurable per client and per request.
 - Expo docs are pinned in `apps/mobile/AGENTS.md` → `https://docs.expo.dev/versions/v58.0.0/`.
 - Monorepo: Expo SDK 58 auto-detects npm workspaces. React is pinned to **19.3.0** in both web and mobile so a single copy is hoisted. CI checks `npm ls react` (exactly one version) and `npx expo install --check`.
 
@@ -443,11 +463,11 @@ src/
 
 | Concern | Design |
 |---|---|
-| Logs | `slog` JSON. Fields: `ts, level, msg, request_id, user_id?, device_id?, route, status, duration_ms`. PII is not logged (emails and plates are masked) |
+| Logs | `slog` JSON. Fields: `time, level, msg, request_id, user_id?, device_id?, route, status, duration_ms`. PII is not logged (emails and plates are masked) |
 | Request ID | Accepts `X-Request-Id` or generates a UUIDv7; echoed in responses and error envelopes |
 | Health | `/healthz` (process alive), `/readyz` (DB reachable, migrations at the expected version, listener connected) |
 | Metrics | Phase 1: counters exposed at `/metrics` (Prometheus text) for events/s, SSE clients and notify latency **(our call)** |
-| Config | 12-factor env vars, validated at startup (fails fast). `.env.example` per app. Secrets: `JWT_PRIVATE_KEY`, `SECRETBOX_KEY`, `QR_HMAC_KEY`, `DATABASE_URL`, `SMTP_*` |
+| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_PRIVATE_KEY`, `SECRETBOX_KEY`, `QR_HMAC_KEY`, `DATABASE_URL`, `SMTP_*` |
 
 ---
 

@@ -479,14 +479,14 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 
 **Scope**
 0. Repository `github.com/XYZLZ/MyPark` with branch protection on `main` (required CI checks + 1 approval, no direct pushes). Go module path `github.com/XYZLZ/MyPark/apps/server`. A PR template with the security checklist (`policies.md` §2.2).
-1. Monorepo scaffold per architecture §3: root `package.json` with npm workspaces (`apps/web`, `apps/mobile`, `packages/contracts`), `.gitignore`, `.editorconfig`, root `README.md`, `.env.example` for each app.
-2. `apps/server`: Go 1.25 module; `cmd/api`, `cmd/worker`, `cmd/migrate`, `cmd/simulator`, `cmd/seed` stubs; `internal/config` (env parsing with validation); slog JSON logger; request-ID middleware; `/healthz` + `/readyz` (DB ping); response/error envelope package.
-3. Database: goose migration baseline (extensions `citext`, `btree_gist`; roles `mypark_migrator` / `mypark_app`; `lots` + `spaces` tables), sqlc config, seed of the lot and 280 spaces.
+1. Monorepo scaffold per architecture §3: root `package.json` with npm workspaces (`apps/web`, `apps/mobile`, `packages/contracts`), `.gitignore`, `.editorconfig`, root `README.md`. No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults.
+2. `apps/server`: Go 1.27 module; `cmd/api`, `cmd/worker`, `cmd/migrate`, `cmd/simulator`, `cmd/seed` stubs; `internal/config` (env parsing with validation); slog JSON logger; request-ID middleware; `/healthz` + `/readyz` (DB ping); response/error envelope package.
+3. Database: goose migration baseline (extensions `citext`, `btree_gist`; `lots` + `spaces` tables; roles `mypark_migrator` / `mypark_app` are created by the postgres init script `deploy/compose/postgres/init/01-roles.sh`, not by a migration), sqlc config, seed of the lot and 280 spaces.
 4. `deploy/compose/docker-compose.yml`: `postgres:18`, `mailpit`, `api`, `worker`, `simulator`, `web` (mobile runs on the host with Expo). Healthchecks and named volumes.
 5. `apps/web`: Next.js 16 + Tailwind 4 + TypeScript; route groups `(public)`, `(driver)`, `(admin)`; next-intl with `es-DO`/`en` message files; design tokens; vitest set up; a page showing API health.
 6. `apps/mobile`: Expo SDK 58 + expo-router + Uniwind; `src/` layout per architecture §13; i18next + expo-localization; design tokens in `global.css` `@theme` (Banreservas brand placeholders, see FR-BRAND); an HTTP client pointing at the API; a screen showing API health.
 7. `packages/contracts`: error code catalog + OpenAPI-generated TS types (pipeline only, generated from `apps/server/api/openapi.yaml`).
-8. CI (`.github/workflows/ci.yml`): Go vet/test/lint (golangci-lint), sqlc diff check, migrations up on an ephemeral Postgres, web lint/typecheck/test/build, mobile lint/typecheck/test, `npm ls react` single-version check, `npx expo install --check`.
+8. CI (`.github/workflows/ci-server.yml` job `server`; `.github/workflows/ci-js.yml` jobs `contracts`, `web`, `mobile`): Go vet/test/lint (golangci-lint), sqlc diff check, migrations up on an ephemeral Postgres, web lint/typecheck/test/build, mobile lint/typecheck/test, `npm ls react` single-version check, `npx expo install --check`.
 
 **Exit criteria**
 - [ ] `docker compose up` on a clean machine brings everything up healthy, and `GET /readyz` returns 200.
@@ -575,7 +575,7 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 
 ### 10.1 Decided by the product owner
 
-Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arrival grace; flat upfront reservation fee, refundable if cancelled before arrival, forfeited on no-show; simulated gateway designed for a real swap; web for admin + drivers, mobile for drivers; plain Postgres with Go owning auth and real time; ~6-week deadline with the full driver experience + admin; ES + EN; **two developers who review each other's PRs**; repository `github.com/XYZLZ/MyPark` with protected `main` (required CI + 1 approval, no direct pushes); **Banreservas branding** (name, logo, brand colors; product name "MyPark", shown as "MyPark · Banreservas Zona Colonial"); employees count toward capacity and pay nothing; first hour RD$50; placeholder tariffs approved and configurable; 30% / 7 days / 1 active; local Compose now, VPS-ready later; npm (not pnpm); Go, Next.js + Tailwind, Expo + Uniwind (latest).
+Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arrival grace; flat upfront reservation fee, refundable if cancelled before arrival, forfeited on no-show; simulated gateway designed for a real swap; web for admin + drivers, mobile for drivers; plain Postgres with Go owning auth and real time; ~6-week deadline with the full driver experience + admin; ES + EN; **two developers who review each other's PRs**; repository `github.com/XYZLZ/MyPark` with protected `main` (required CI + 1 approval, no direct pushes); **Banreservas branding** (name, logo, brand colors; product name "MyPark", shown as "MyPark · Banreservas Zona Colonial"); employees count toward capacity and pay nothing; first hour RD$50; placeholder tariffs approved and configurable; 30% / 7 days / 1 active; local Compose now, VPS-ready later; npm (not pnpm); Go, Next.js + Tailwind, Expo + Uniwind (latest); Go 1.27; server config through accessors + `go-playground/validator/v10`; `expo/fetch` as the mobile HTTP transport; no `.env` files in the repo (owner permission constraint).
 
 ### 10.2 Our calls (review these)
 
@@ -613,6 +613,7 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
 32. Two parallel tracks (A backend+simulator, B web+mobile) with contract-first OpenAPI handoffs (§8).
 33. Sensitive PRs get a security checklist + automated risk review instead of a second human review (`policies.md` §2.2).
 34. Architecture-level calls (Postgres 18, BFF cookies, SSE + LISTEN/NOTIFY, slot-load cap, OpenAPI contract, stdlib router, TanStack Query, next-intl/i18next) are listed in `architecture.md` §1 and §17.
+35. TypeScript 6.0.3 in every JS workspace, pinned by Expo SDK 58.
 
 ### 10.3 Open questions
 

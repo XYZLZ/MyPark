@@ -2,7 +2,7 @@
 
 <!-- What does this PR change and why? -->
 
-Spec IDs: <!-- e.g. REQ-001, REQ-002 -->
+Spec IDs: <!-- e.g. FR-RES-4, FR-AUTH-10 -->
 
 ## Testing
 
