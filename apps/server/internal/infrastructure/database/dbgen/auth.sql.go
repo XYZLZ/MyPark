@@ -148,6 +148,50 @@ func (q *Queries) FindUserForLogin(ctx context.Context, email string) (FindUserF
 	return i, err
 }
 
+const getSessionPrincipal = `-- name: GetSessionPrincipal :one
+select s.id as session_id, s.revoked_at, (s.absolute_expires_at <= $1) as expired,
+       u.id as user_id, u.role, u.status, u.terms_version, u.privacy_version
+from auth_sessions s
+join users u on u.id = s.user_id
+where s.public_id = $2 and u.public_id = $3
+`
+
+type GetSessionPrincipalParams struct {
+	Now             pgtype.Timestamptz
+	SessionPublicID uuid.UUID
+	UserPublicID    uuid.UUID
+}
+
+type GetSessionPrincipalRow struct {
+	SessionID      int64
+	RevokedAt      pgtype.Timestamptz
+	Expired        bool
+	UserID         int64
+	Role           string
+	Status         string
+	TermsVersion   pgtype.Text
+	PrivacyVersion pgtype.Text
+}
+
+// The per-request session check (spec 7.3): the session and its user in one
+// indexed lookup. Both public ids must match, so a token that names another
+// user's session finds nothing. Expiry is judged against @now, not now().
+func (q *Queries) GetSessionPrincipal(ctx context.Context, arg GetSessionPrincipalParams) (GetSessionPrincipalRow, error) {
+	row := q.db.QueryRow(ctx, getSessionPrincipal, arg.Now, arg.SessionPublicID, arg.UserPublicID)
+	var i GetSessionPrincipalRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.RevokedAt,
+		&i.Expired,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
+		&i.TermsVersion,
+		&i.PrivacyVersion,
+	)
+	return i, err
+}
+
 const insertAuthCode = `-- name: InsertAuthCode :one
 insert into auth_codes (user_id, purpose, code_hash, expires_at, created_at)
 values ($1, $2, $3, $4, $5)
@@ -396,4 +440,47 @@ func (q *Queries) RehashPassword(ctx context.Context, arg RehashPasswordParams) 
 		arg.OldHash,
 	)
 	return err
+}
+
+const revokeSession = `-- name: RevokeSession :execrows
+update auth_sessions
+set revoked_at = $1, revoked_reason = $2
+where id = $3 and revoked_at is null
+`
+
+type RevokeSessionParams struct {
+	Now    pgtype.Timestamptz
+	Reason pgtype.Text
+	ID     int64
+}
+
+// Idempotent: an already revoked session keeps its original reason and time.
+func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeSession, arg.Now, arg.Reason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeUserSessions = `-- name: RevokeUserSessions :execrows
+update auth_sessions
+set revoked_at = $1, revoked_reason = $2
+where user_id = $3 and revoked_at is null
+`
+
+type RevokeUserSessionsParams struct {
+	Now    pgtype.Timestamptz
+	Reason pgtype.Text
+	UserID int64
+}
+
+// Revokes every live session of a user and keeps the reason of the ones that
+// were already revoked.
+func (q *Queries) RevokeUserSessions(ctx context.Context, arg RevokeUserSessionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeUserSessions, arg.Now, arg.Reason, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

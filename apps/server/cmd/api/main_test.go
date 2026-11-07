@@ -342,3 +342,23 @@ func TestAuthRoutes_WiredInProductionHandler(t *testing.T) {
 		t.Fatalf("resend = %d %s, want 202", rec.Code, rec.Body)
 	}
 }
+
+// The authentication gates are wired: protected routes answer 401 with the
+// envelope before any database access (the pool is nil here).
+func TestNewHandler_ProtectedRoutesRequireBearer(t *testing.T) {
+	for _, path := range []string{"/v1/auth/logout", "/v1/auth/logout-all"} {
+		for _, header := range []string{"", "Bearer not-a-jwt"} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			if header != "" {
+				req.Header.Set("Authorization", header)
+			}
+			newHandler(testDeps(readyHealth(), nil)).ServeHTTP(rec, req)
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+			}
+			assertEnvelope(t, rec, body, http.StatusUnauthorized, "auth.unauthenticated")
+		}
+	}
+}

@@ -47,6 +47,7 @@ type CodeAttempt struct {
 // transaction carried by ctx when there is one.
 type Repo interface {
 	LoginRepo
+	SessionRepo
 
 	// LockUserByEmail returns the non-deleted user with this email, locked.
 	LockUserByEmail(ctx context.Context, email string) (UserRow, bool, error)
@@ -108,4 +109,36 @@ type LoginRepo interface {
 	InsertSession(ctx context.Context, s NewSession) (SessionRow, error)
 	// InsertRefreshToken stores the SHA-256 of a refresh token.
 	InsertRefreshToken(ctx context.Context, sessionID int64, hash []byte, expiresAt, now time.Time) error
+}
+
+// Revocation reasons, as stored in auth_sessions.revoked_reason.
+const (
+	ReasonLogout         = "logout"
+	ReasonLogoutAll      = "logout_all"
+	ReasonPasswordReset  = "password_reset"
+	ReasonReuseDetected  = "reuse_detected"
+	ReasonAccountDeleted = "account_deleted"
+)
+
+// SessionPrincipal is a session and its user, as the per-request check reads
+// them. Expired is judged by the database against the caller's clock.
+type SessionPrincipal struct {
+	SessionID                    int64
+	Revoked, Expired             bool
+	UserID                       int64
+	Role, Status                 string
+	TermsVersion, PrivacyVersion *string
+}
+
+// SessionRepo is the part of the persistence port used by the session check
+// and by logout.
+type SessionRepo interface {
+	// GetSessionPrincipal returns the session with this public id and the user
+	// with this public id, only when the session belongs to the user.
+	GetSessionPrincipal(ctx context.Context, sessionPublicID, userPublicID uuid.UUID, now time.Time) (SessionPrincipal, bool, error)
+	// RevokeSession revokes a live session and reports whether it did.
+	RevokeSession(ctx context.Context, sessionID int64, reason string, now time.Time) (bool, error)
+	// RevokeUserSessions revokes every live session of a user and returns how
+	// many it revoked.
+	RevokeUserSessions(ctx context.Context, userID int64, reason string, now time.Time) (int, error)
 }

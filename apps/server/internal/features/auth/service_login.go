@@ -183,9 +183,7 @@ func (s *Service) legalPending(ctx context.Context, u LoginUser) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	v := u.View
-	return v.TermsVersion == nil || *v.TermsVersion != cur.Terms.Version ||
-		v.PrivacyVersion == nil || *v.PrivacyVersion != cur.Privacy.Version, nil
+	return legalOutdated(u.View.TermsVersion, u.View.PrivacyVersion, cur), nil
 }
 
 func truncate(s string, n int) string {

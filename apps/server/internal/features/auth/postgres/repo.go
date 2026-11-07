@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -134,6 +135,49 @@ func (r *Repo) AttemptCode(ctx context.Context, userID int64, p auth.Purpose, no
 // ConsumeCode implements auth.Repo.
 func (r *Repo) ConsumeCode(ctx context.Context, id int64, now time.Time) error {
 	return safeError("auth: consume code", r.q(ctx).ConsumeAuthCode(ctx, dbgen.ConsumeAuthCodeParams{ID: id, Now: ts(now)}))
+}
+
+// GetSessionPrincipal implements auth.Repo.
+func (r *Repo) GetSessionPrincipal(ctx context.Context, sessionPublicID, userPublicID uuid.UUID, now time.Time) (auth.SessionPrincipal, bool, error) {
+	row, err := r.q(ctx).GetSessionPrincipal(ctx, dbgen.GetSessionPrincipalParams{
+		Now: ts(now), SessionPublicID: sessionPublicID, UserPublicID: userPublicID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.SessionPrincipal{}, false, nil
+	}
+	if err != nil {
+		return auth.SessionPrincipal{}, false, safeError("auth: get session principal", err)
+	}
+	return auth.SessionPrincipal{
+		SessionID: row.SessionID, Revoked: row.RevokedAt.Valid, Expired: row.Expired,
+		UserID: row.UserID, Role: row.Role, Status: row.Status,
+		TermsVersion: textPtr(row.TermsVersion), PrivacyVersion: textPtr(row.PrivacyVersion),
+	}, true, nil
+}
+
+// RevokeSession implements auth.Repo.
+func (r *Repo) RevokeSession(ctx context.Context, sessionID int64, reason string, now time.Time) (bool, error) {
+	n, err := r.q(ctx).RevokeSession(ctx, dbgen.RevokeSessionParams{ID: sessionID, Reason: text(reason), Now: ts(now)})
+	if err != nil {
+		return false, safeError("auth: revoke session", err)
+	}
+	return n > 0, nil
+}
+
+// RevokeUserSessions implements auth.Repo.
+func (r *Repo) RevokeUserSessions(ctx context.Context, userID int64, reason string, now time.Time) (int, error) {
+	n, err := r.q(ctx).RevokeUserSessions(ctx, dbgen.RevokeUserSessionsParams{UserID: userID, Reason: text(reason), Now: ts(now)})
+	if err != nil {
+		return 0, safeError("auth: revoke user sessions", err)
+	}
+	return int(n), nil
+}
+
+func textPtr(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	return &t.String
 }
 
 // safeError drops the server message and detail of a Postgres error: a

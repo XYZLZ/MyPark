@@ -3,6 +3,7 @@ package auth_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -29,10 +30,13 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/authn"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
+
+const pathProbe = "/v1/test/probe"
 
 var fastParams = hashing.Params{Memory: 1024, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
@@ -106,6 +110,10 @@ type env struct {
 	svc     *auth.Service
 	h       http.Handler
 	signer  *jwt.Signer
+	// verifier trusts the test signer's key. authenticator runs over it.
+	verifier      *jwt.Verifier
+	legal         legal.Current
+	authenticator *auth.Authenticator
 }
 
 // jwtSeed is the Ed25519 seed of the test signer.
@@ -145,13 +153,23 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 	lim := &fakeLimiter{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
+	verifier := jwt.NewVerifier(map[string]ed25519.PublicKey{
+		"test": ed25519.NewKeyFromSeed(jwtSeed).Public().(ed25519.PublicKey),
+	}, clk)
+	authenticator := auth.NewAuthenticator(verifier, d.Repo, d.Legal, clk)
+	g := authn.New(authenticator, log, authn.WithLegal(d.Legal))
 	r := router.New(mux, router.Middlewares{
 		ClientIP:  middleware.ClientIP(nil),
 		RateLimit: router.PassthroughRateLimit,
+		Authn:     g.Authn, Roles: g.Roles, Legal: g.Legal,
 	})
 	auth.NewHandler(svc, validation.New(), lim, log).Register(r)
+	// A gated probe route: 200 for any role that passes the legal gate.
+	r.Handle("GET "+pathProbe, router.Policy{Roles: router.AnyRole}, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	return &env{t: t, db: db, clock: clk, hasher: hasher, codes: codes, limiter: lim, svc: svc, signer: signer,
-		h: httpserver.NewHandler(log, mux, nil)}
+		verifier: verifier, legal: d.Legal, authenticator: authenticator, h: httpserver.NewHandler(log, mux, nil)}
 }
 
 type resp struct {
@@ -309,4 +327,39 @@ func wrongCode(code string) string {
 		return "654321"
 	}
 	return "123456"
+}
+
+// loginAccess logs email in with the default test password and returns the
+// access token.
+func (e *env) loginAccess(email string) string {
+	e.t.Helper()
+	rec := e.post(pathLogin, loginBody(email, loginPassword))
+	if rec.Code != http.StatusOK {
+		e.t.Fatalf("login %s: status %d, body %s", email, rec.Code, rec.Body)
+	}
+	data, _ := rec.json()["data"].(map[string]any)
+	tok, _ := data["access_token"].(string)
+	return tok
+}
+
+// do sends method path with an optional bearer token and no body.
+func (e *env) do(method, path, token string) resp {
+	e.t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return resp{rec}
+}
+
+// claims verifies a token the test itself obtained.
+func (e *env) claims(token string) jwt.Claims {
+	e.t.Helper()
+	c, err := e.verifier.Verify(token)
+	if err != nil {
+		e.t.Fatalf("verify own token: %v", err)
+	}
+	return c
 }

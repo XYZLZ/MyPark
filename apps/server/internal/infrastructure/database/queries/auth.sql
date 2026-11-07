@@ -92,3 +92,26 @@ returning id, public_id;
 -- name: InsertRefreshToken :exec
 insert into refresh_tokens (session_id, token_hash, created_at, expires_at)
 values (@session_id, @token_hash, @now, @expires_at);
+
+-- name: GetSessionPrincipal :one
+-- The per-request session check (spec 7.3): the session and its user in one
+-- indexed lookup. Both public ids must match, so a token that names another
+-- user's session finds nothing. Expiry is judged against @now, not now().
+select s.id as session_id, s.revoked_at, (s.absolute_expires_at <= @now) as expired,
+       u.id as user_id, u.role, u.status, u.terms_version, u.privacy_version
+from auth_sessions s
+join users u on u.id = s.user_id
+where s.public_id = @session_public_id and u.public_id = @user_public_id;
+
+-- name: RevokeSession :execrows
+-- Idempotent: an already revoked session keeps its original reason and time.
+update auth_sessions
+set revoked_at = @now, revoked_reason = @reason
+where id = @id and revoked_at is null;
+
+-- name: RevokeUserSessions :execrows
+-- Revokes every live session of a user and keeps the reason of the ones that
+-- were already revoked.
+update auth_sessions
+set revoked_at = @now, revoked_reason = @reason
+where user_id = @user_id and revoked_at is null;

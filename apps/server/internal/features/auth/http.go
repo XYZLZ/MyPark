@@ -1,11 +1,13 @@
 package auth
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
@@ -35,6 +37,10 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/auth/verify", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.verify)
 	r.Handle("POST /v1/auth/verify/resend", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.resend)
 	r.Handle("POST /v1/auth/login", router.Policy{Public: true}, h.login)
+	// Logout stays open to a driver who still owes a legal re-acceptance.
+	signedIn := router.Policy{Roles: router.AnyRole, LegalExempt: true}
+	r.Handle("POST /v1/auth/logout", signedIn, h.logout)
+	r.Handle("POST /v1/auth/logout-all", signedIn, h.logoutAll)
 }
 
 // Request bodies. Secret fields are secret.String so they never print.
@@ -184,4 +190,30 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, r, http.StatusOK, newTokenResponse(pair))
+}
+
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	h.revoke(w, r, func(p authz.Principal) error { return h.svc.Logout(r.Context(), p) })
+}
+
+func (h *Handler) logoutAll(w http.ResponseWriter, r *http.Request) {
+	h.revoke(w, r, func(p authz.Principal) error {
+		_, err := h.svc.LogoutAll(r.Context(), p)
+		return err
+	})
+}
+
+// revoke runs a logout use case for the authenticated principal.
+func (h *Handler) revoke(w http.ResponseWriter, r *http.Request, run func(authz.Principal) error) {
+	p, ok := authz.PrincipalFrom(r.Context())
+	if !ok {
+		// The router mounts these routes behind Authn; reaching here is a wiring bug.
+		httpx.WriteError(w, r, h.log, errors.New("auth: logout without a principal"))
+		return
+	}
+	if err := run(p); err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.NoContent(w)
 }

@@ -3,9 +3,11 @@ package auth_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
@@ -13,11 +15,17 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
 
+// passthrough is a gate that lets every request through, for tests that only
+// inspect the registered policies.
+func passthrough(next http.Handler) http.Handler { return next }
+
 func TestHandler_RoutesAndPolicies(t *testing.T) {
 	mux := http.NewServeMux()
 	r := router.New(mux, router.Middlewares{
 		ClientIP:  middleware.ClientIP(nil),
 		RateLimit: router.PassthroughRateLimit,
+		Authn:     passthrough, Legal: passthrough,
+		Roles: func([]authz.Role) func(http.Handler) http.Handler { return passthrough },
 	})
 	auth.NewHandler(auth.NewService(auth.Deps{}), validation.New(), ratelimit.Noop{}, nil).Register(r)
 	want := map[string]string{
@@ -27,9 +35,22 @@ func TestHandler_RoutesAndPolicies(t *testing.T) {
 		// Login limits per ip+email and per email in the handler, so the
 		// route itself carries no rule.
 		"POST /v1/auth/login": "",
+		// Logout is authenticated, for any role, and open to a driver with a
+		// pending legal re-acceptance.
+		"POST /v1/auth/logout":     "",
+		"POST /v1/auth/logout-all": "",
 	}
+	signedIn := map[string]bool{"POST /v1/auth/logout": true, "POST /v1/auth/logout-all": true}
 	got := map[string]string{}
 	for _, rt := range r.Routes() {
+		if signedIn[rt.Pattern] {
+			pol := rt.Policy
+			if pol.Public || !slices.Equal(pol.Roles, router.AnyRole) || !pol.LegalExempt || pol.Limit != nil {
+				t.Errorf("%s: policy = %+v, want AnyRole and LegalExempt", rt.Pattern, pol)
+			}
+			got[rt.Pattern] = ""
+			continue
+		}
 		if !rt.Policy.Public {
 			t.Errorf("%s: policy = %+v, want public", rt.Pattern, rt.Policy)
 			continue
@@ -50,7 +71,11 @@ func TestHandler_RoutesAndPolicies(t *testing.T) {
 // Requests that fail before the service is reached need no database.
 func TestHandler_RejectsBadInputBeforeService(t *testing.T) {
 	mux := http.NewServeMux()
-	r := router.New(mux, router.Middlewares{ClientIP: middleware.ClientIP(nil), RateLimit: router.PassthroughRateLimit})
+	r := router.New(mux, router.Middlewares{
+		ClientIP: middleware.ClientIP(nil), RateLimit: router.PassthroughRateLimit,
+		Authn: passthrough, Legal: passthrough,
+		Roles: func([]authz.Role) func(http.Handler) http.Handler { return passthrough },
+	})
 	auth.NewHandler(auth.NewService(auth.Deps{}), validation.New(), ratelimit.Noop{}, nil).Register(r)
 
 	tests := []struct {

@@ -35,6 +35,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/authn"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
@@ -150,18 +151,23 @@ func newHandler(d deps) http.Handler {
 	mux := http.NewServeMux()
 	d.health.Register(mux)
 
-	// Routes registered so far are all public: the authentication, role and
-	// legal middlewares are wired with the features that need them.
+	// The router composes the gates per route, so they are built first.
+	legalSvc := legal.NewService(legalpg.NewRepo(d.pool), d.clock, legalCacheTTL)
+	authRepo := authpg.NewRepo(d.pool)
+	verifier := jwt.NewVerifier(d.cfg.JWTVerifyKeys(), d.clock)
+	gates := authn.New(auth.NewAuthenticator(verifier, authRepo, legalSvc, d.clock), d.log, authn.WithLegal(legalSvc))
 	r := router.New(mux, router.Middlewares{
 		ClientIP:  middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
 		RateLimit: router.PassthroughRateLimit,
+		Authn:     gates.Authn,
+		Roles:     gates.Roles,
+		Legal:     gates.Legal,
 	})
-	legalSvc := legal.NewService(legalpg.NewRepo(d.pool), d.clock, legalCacheTTL)
 	legal.NewHandler(legalSvc, d.log).Register(r)
 
 	authSvc := auth.NewService(auth.Deps{
 		Tx:     database.NewTxRunner(d.pool),
-		Repo:   authpg.NewRepo(d.pool),
+		Repo:   authRepo,
 		Hasher: d.hasher,
 		Codes:  d.codes,
 		Legal:  legalSvc,
