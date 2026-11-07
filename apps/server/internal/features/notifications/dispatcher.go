@@ -19,7 +19,11 @@ import (
 
 // Dispatch tuning (spec 11.3).
 const (
-	batchSize   = 10
+	// batchSize is how many messages one Tick delivers at most. Each is
+	// claimed on its own, right before its send, so its lease starts when the
+	// send starts.
+	batchSize = 10
+	// leaseTTL must stay above the SMTP exchange timeout (30 s) with margin.
 	leaseTTL    = time.Minute
 	maxAttempts = 8
 
@@ -61,17 +65,20 @@ func NewDispatcher(pool *pgxpool.Pool, s email.Sender, c clock.Clock, from strin
 // marked dead after the 8th attempt; that is not an error of Tick. When ctx
 // is canceled the in-flight message keeps its lease and is retried later.
 func (d *Dispatcher) Tick(ctx context.Context) (sent int, err error) {
-	now := d.clock.Now()
-	rows, err := dbgen.New(d.pool).ClaimOutboxBatch(ctx, dbgen.ClaimOutboxBatchParams{
-		Now:        pgtype.Timestamptz{Time: now, Valid: true},
-		LeaseUntil: pgtype.Timestamptz{Time: now.Add(leaseTTL), Valid: true},
-		Batch:      batchSize,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("notifications: claim outbox: %w", err)
-	}
-	for _, row := range rows {
-		ok, err := d.deliver(ctx, row)
+	for range batchSize {
+		now := d.clock.Now()
+		rows, err := dbgen.New(d.pool).ClaimOutboxBatch(ctx, dbgen.ClaimOutboxBatchParams{
+			Now:        pgtype.Timestamptz{Time: now, Valid: true},
+			LeaseUntil: pgtype.Timestamptz{Time: now.Add(leaseTTL), Valid: true},
+			Batch:      1,
+		})
+		if err != nil {
+			return sent, fmt.Errorf("notifications: claim outbox: %w", err)
+		}
+		if len(rows) == 0 {
+			return sent, nil
+		}
+		ok, err := d.deliver(ctx, rows[0])
 		if err != nil {
 			return sent, err
 		}
@@ -92,10 +99,15 @@ func (d *Dispatcher) deliver(ctx context.Context, row dbgen.ClaimOutboxBatchRow)
 		return false, nil
 	}
 	if sendErr == nil {
-		if err := q.MarkOutboxSent(ctx, dbgen.MarkOutboxSentParams{
-			ID: row.ID, Now: pgtype.Timestamptz{Time: d.clock.Now(), Valid: true},
-		}); err != nil {
+		n, err := q.MarkOutboxSent(ctx, dbgen.MarkOutboxSentParams{
+			ID: row.ID, Attempts: row.Attempts, Now: pgtype.Timestamptz{Time: d.clock.Now(), Valid: true},
+		})
+		if err != nil {
 			return false, fmt.Errorf("notifications: mark sent: %w", err)
+		}
+		if n == 0 {
+			d.lostLease(row)
+			return false, nil
 		}
 		d.log.Info("outbox message sent", "id", row.ID, "template", row.Template, "attempts", row.Attempts)
 		return true, nil
@@ -106,20 +118,35 @@ func (d *Dispatcher) deliver(ctx context.Context, row dbgen.ClaimOutboxBatchRow)
 	last := pgtype.Text{String: reason, Valid: true}
 	if row.Attempts >= maxAttempts {
 		d.log.Error("outbox message dead", attrs...)
-		if err := q.MarkOutboxDead(ctx, dbgen.MarkOutboxDeadParams{ID: row.ID, LastError: last}); err != nil {
+		n, err := q.MarkOutboxDead(ctx, dbgen.MarkOutboxDeadParams{ID: row.ID, Attempts: row.Attempts, LastError: last})
+		if err != nil {
 			return false, fmt.Errorf("notifications: mark dead: %w", err)
+		}
+		if n == 0 {
+			d.lostLease(row)
 		}
 		return false, nil
 	}
 	d.log.Warn("outbox message failed, will retry", attrs...)
-	if err := q.MarkOutboxRetry(ctx, dbgen.MarkOutboxRetryParams{
+	n, err := q.MarkOutboxRetry(ctx, dbgen.MarkOutboxRetryParams{
 		ID:          row.ID,
+		Attempts:    row.Attempts,
 		LastError:   last,
 		AvailableAt: pgtype.Timestamptz{Time: d.clock.Now().Add(Backoff(int(row.Attempts))), Valid: true},
-	}); err != nil {
+	})
+	if err != nil {
 		return false, fmt.Errorf("notifications: mark retry: %w", err)
 	}
+	if n == 0 {
+		d.lostLease(row)
+	}
 	return false, nil
+}
+
+// lostLease logs a finish that matched no row: the lease expired and another
+// claim owns the message now, so this outcome is dropped untouched.
+func (d *Dispatcher) lostLease(row dbgen.ClaimOutboxBatchRow) {
+	d.log.Warn("outbox lease lost, outcome discarded", "id", row.ID, "template", row.Template, "attempts", row.Attempts)
 }
 
 func (d *Dispatcher) sendRow(ctx context.Context, row dbgen.ClaimOutboxBatchRow) error {

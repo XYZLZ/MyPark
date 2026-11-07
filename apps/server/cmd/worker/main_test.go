@@ -114,8 +114,9 @@ func TestWorker_MissingSMTPConfig(t *testing.T) {
 func TestWorker_DeliversOutbox(t *testing.T) {
 	smtpAddr, api := testsupport.Mailpit(t)
 	db := testsupport.NewTestDB(t)
+	to := testsupport.UniqueRecipient(t, api)
 	if _, err := db.Super.Exec(t.Context(), `insert into outbox_messages (template, locale, to_address, payload, dedupe_key)
-		values ('verify_email', 'en', 'worker@example.com', '{"code":"424242"}', 'worker-test:1')`); err != nil {
+		values ('verify_email', 'en', $1, '{"code":"424242"}', 'worker-test:1')`, to); err != nil {
 		t.Fatal(err)
 	}
 	host, port := testsupport.SplitHostPort(t, smtpAddr)
@@ -126,7 +127,7 @@ func TestWorker_DeliversOutbox(t *testing.T) {
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		msgs := testsupport.MailpitMessages(t, api, "worker@example.com")
+		msgs := testsupport.MailpitMessages(t, api, to)
 		if len(msgs) == 1 {
 			if !strings.Contains(msgs[0].Text, "424242") {
 				t.Errorf("message lacks the code")

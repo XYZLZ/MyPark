@@ -13,7 +13,8 @@ where user_id = @user_id
 
 -- name: ClaimOutboxBatch :many
 -- Leases up to @batch due rows: they become 'sending' until @lease_until. A
--- row whose lease expired is claimed again (crashed worker).
+-- row whose lease expired is claimed again (crashed worker). The dispatcher
+-- claims one row at a time so a lease never waits behind other sends.
 update outbox_messages
 set status = 'sending', attempts = attempts + 1, available_at = @lease_until
 where id in (
@@ -25,20 +26,22 @@ where id in (
 )
 returning id, template, locale, to_address, payload, dedupe_key, attempts;
 
--- name: MarkOutboxSent :exec
+-- name: MarkOutboxSent :execrows
+-- Fenced on the claim (status and attempts): a worker whose lease expired and
+-- was reclaimed matches 0 rows and changes nothing.
 update outbox_messages
 set status = 'sent', sent_at = @now, last_error = null, payload = payload - 'code'
-where id = @id;
+where id = @id and status = 'sending' and attempts = @attempts;
 
--- name: MarkOutboxRetry :exec
+-- name: MarkOutboxRetry :execrows
 update outbox_messages
 set status = 'pending', available_at = @available_at, last_error = @last_error
-where id = @id;
+where id = @id and status = 'sending' and attempts = @attempts;
 
--- name: MarkOutboxDead :exec
+-- name: MarkOutboxDead :execrows
 update outbox_messages
 set status = 'dead', last_error = @last_error, payload = payload - 'code'
-where id = @id;
+where id = @id and status = 'sending' and attempts = @attempts;
 
 -- name: PurgeOutbox :execrows
 -- sent and dead rows older than @cutoff.

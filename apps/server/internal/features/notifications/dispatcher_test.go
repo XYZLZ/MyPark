@@ -58,11 +58,12 @@ func (r *recorder) messages() []email.Message {
 type fixture struct {
 	db  *testsupport.TestDB
 	clk *testsupport.FakeClock
+	to  string
 }
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	return fixture{db: testsupport.NewTestDB(t), clk: testsupport.NewFakeClock(t0)}
+	return fixture{db: testsupport.NewTestDB(t), clk: testsupport.NewFakeClock(t0), to: "ana@example.com"}
 }
 
 func (f fixture) dispatcher(s email.Sender, log *slog.Logger) *notifications.Dispatcher {
@@ -77,7 +78,7 @@ func (f fixture) enqueue(t *testing.T, key, locale string) {
 	t.Helper()
 	err := database.NewTxRunner(f.db.App).InTx(t.Context(), func(ctx context.Context) error {
 		return notificationspg.NewNotifier(f.clk).Enqueue(ctx, notifications.Email{
-			Template: notifications.TplVerifyEmail, Locale: locale, To: "ana@example.com",
+			Template: notifications.TplVerifyEmail, Locale: locale, To: f.to,
 			Data: map[string]string{"code": "123456", "first_name": "Ana"}, DedupeKey: key,
 		})
 	})
@@ -322,6 +323,7 @@ func TestPurgeOutbox(t *testing.T) {
 func TestDispatcher_DeliversToMailpit(t *testing.T) {
 	smtpAddr, api := testsupport.Mailpit(t)
 	f := newFixture(t)
+	f.to = testsupport.UniqueRecipient(t, api)
 	f.enqueue(t, "mp:es", "es-DO")
 	f.enqueue(t, "mp:en", "en")
 	host, port := testsupport.SplitHostPort(t, smtpAddr)
@@ -330,7 +332,7 @@ func TestDispatcher_DeliversToMailpit(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("Tick = %d, %v; want 2", n, err)
 	}
-	msgs := testsupport.MailpitMessages(t, api, "ana@example.com")
+	msgs := testsupport.MailpitMessages(t, api, f.to)
 	if len(msgs) != 2 {
 		t.Fatalf("mailpit has %d messages, want 2", len(msgs))
 	}
@@ -354,5 +356,78 @@ func TestDispatcher_DeliversToMailpit(t *testing.T) {
 		if _, has := r.Payload["code"]; has || r.Status != "sent" {
 			t.Errorf("%s row = %+v, want sent and scrubbed", key, r)
 		}
+	}
+}
+
+func TestDispatcher_LeaseCoversSlowSendAndLaterRowsAreNotLeased(t *testing.T) {
+	f := newFixture(t)
+	f.enqueue(t, "a", "en")
+	f.enqueue(t, "b", "en")
+	slow := &recorder{block: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = f.dispatcher(slow, nil).Tick(t.Context())
+	}()
+	waitStatus(t, f, "a", "sending")
+	// "b" waits behind the slow send but holds no lease: still pending, untouched.
+	if r := f.row(t, "b"); r.Status != "pending" || r.Attempts != 0 || !r.AvailAt.Equal(t0) {
+		t.Fatalf("row b = %+v, want untouched pending while a is being sent", r)
+	}
+	// 59 s into the slow send, a second worker takes b but must not take a.
+	f.clk.Advance(59 * time.Second)
+	other := &recorder{}
+	if n, err := f.dispatcher(other, nil).Tick(t.Context()); err != nil || n != 1 {
+		t.Fatalf("second worker Tick = %d, %v; want 1", n, err)
+	}
+	if ms := other.messages(); len(ms) != 1 || ms[0].MessageID != email.MessageID("b") {
+		t.Fatalf("second worker sent %+v, want only b", ms)
+	}
+	close(slow.block)
+	<-done
+	if r := f.row(t, "a"); r.Status != "sent" || r.Attempts != 1 {
+		t.Errorf("row a = %+v, want sent on its single attempt", r)
+	}
+}
+
+func TestDispatcher_StaleFinishChangesNothing(t *testing.T) {
+	f := newFixture(t)
+	f.enqueue(t, "k", "en")
+	stale := &recorder{block: make(chan struct{}), err: errors.New("boom")}
+	var staleLogs bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = f.dispatcher(stale, slog.New(slog.NewTextHandler(&staleLogs, nil))).Tick(t.Context())
+	}()
+	waitStatus(t, f, "k", "sending")
+	// The lease expires and a second worker delivers the message.
+	f.clk.Advance(61 * time.Second)
+	good := &recorder{}
+	if n, err := f.dispatcher(good, nil).Tick(t.Context()); err != nil || n != 1 {
+		t.Fatalf("second worker Tick = %d, %v; want 1", n, err)
+	}
+	before := f.row(t, "k")
+	// The first worker now fails: its retry must not overwrite "sent".
+	close(stale.block)
+	<-done
+	after := f.row(t, "k")
+	if after.Status != "sent" || after.Attempts != 2 || after.LastError != before.LastError ||
+		!after.AvailAt.Equal(before.AvailAt) || before.SentAt == nil || after.SentAt == nil || !after.SentAt.Equal(*before.SentAt) {
+		t.Errorf("row changed by a stale finish: before %+v after %+v", before, after)
+	}
+	if !strings.Contains(staleLogs.String(), "lease lost") || strings.Contains(staleLogs.String(), "ana@example.com") {
+		t.Errorf("stale finish log = %s", staleLogs.String())
+	}
+}
+
+func waitStatus(t *testing.T, f fixture, key, want string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for f.row(t, key).Status != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("row %s never reached %s", key, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

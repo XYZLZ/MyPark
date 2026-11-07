@@ -1,8 +1,10 @@
 package testsupport
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -27,8 +29,9 @@ type MailpitMessage struct {
 }
 
 // Mailpit returns the SMTP address and API base URL of the Mailpit test
-// instance (TEST_SMTP_ADDR, TEST_MAILPIT_API) and empties its inbox. When
-// they are unset the test is skipped, except with CI=true, where it fails:
+// instance (TEST_SMTP_ADDR, TEST_MAILPIT_API). The inbox is shared by every
+// test package running in parallel, so it is never cleared: address each test
+// to its own UniqueRecipient and read only that. When they are unset the test is skipped, except with CI=true, where it fails:
 // a CI run must never silently skip the delivery tests (OC-34).
 func Mailpit(t *testing.T) (smtpAddr, apiURL string) {
 	t.Helper()
@@ -39,19 +42,53 @@ func Mailpit(t *testing.T) (smtpAddr, apiURL string) {
 		}
 		t.Skipf("testsupport: %s and %s not set; skipping Mailpit test", envSMTPAddr, envMailpitAPI)
 	}
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, apiURL+"/api/v1/messages", nil)
-	if err != nil {
-		t.Fatalf("testsupport: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("testsupport: clear mailpit inbox: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		t.Fatalf("testsupport: clear mailpit inbox: status %d", resp.StatusCode)
-	}
 	return smtpAddr, apiURL
+}
+
+// UniqueRecipient returns an address no other test uses, and deletes the
+// messages sent to it when the test ends.
+func UniqueRecipient(t *testing.T, apiURL string) string {
+	t.Helper()
+	to := fmt.Sprintf("t-%d-%d@example.com", time.Now().UnixNano(), rand.Uint32())
+	t.Cleanup(func() { deleteTo(apiURL, to) })
+	return to
+}
+
+// deleteTo removes the Mailpit messages addressed to to. Best effort.
+func deleteTo(apiURL, to string) {
+	var list struct {
+		Messages []struct {
+			ID string
+			To []struct{ Address string }
+		}
+	}
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(apiURL + "/api/v1/messages")
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if json.NewDecoder(resp.Body).Decode(&list) != nil {
+		return
+	}
+	var ids []string
+	for _, m := range list.Messages {
+		if anyAddress(m.To, to) {
+			ids = append(ids, m.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	body, _ := json.Marshal(map[string][]string{"IDs": ids})
+	req, err := http.NewRequest(http.MethodDelete, apiURL+"/api/v1/messages", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if r, err := client.Do(req); err == nil {
+		r.Body.Close()
+	}
 }
 
 // SplitHostPort splits a "host:port" address into the pieces SMTPConfig takes.

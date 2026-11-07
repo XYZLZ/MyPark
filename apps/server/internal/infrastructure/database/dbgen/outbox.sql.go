@@ -41,7 +41,8 @@ type ClaimOutboxBatchRow struct {
 }
 
 // Leases up to @batch due rows: they become 'sending' until @lease_until. A
-// row whose lease expired is claimed again (crashed worker).
+// row whose lease expired is claimed again (crashed worker). The dispatcher
+// claims one row at a time so a lease never waits behind other sends.
 func (q *Queries) ClaimOutboxBatch(ctx context.Context, arg ClaimOutboxBatchParams) ([]ClaimOutboxBatchRow, error) {
 	rows, err := q.db.Query(ctx, claimOutboxBatch, arg.LeaseUntil, arg.Now, arg.Batch)
 	if err != nil {
@@ -100,53 +101,72 @@ func (q *Queries) EnqueueOutboxEmail(ctx context.Context, arg EnqueueOutboxEmail
 	return err
 }
 
-const markOutboxDead = `-- name: MarkOutboxDead :exec
+const markOutboxDead = `-- name: MarkOutboxDead :execrows
 update outbox_messages
 set status = 'dead', last_error = $1, payload = payload - 'code'
-where id = $2
+where id = $2 and status = 'sending' and attempts = $3
 `
 
 type MarkOutboxDeadParams struct {
 	LastError pgtype.Text
 	ID        int64
+	Attempts  int16
 }
 
-func (q *Queries) MarkOutboxDead(ctx context.Context, arg MarkOutboxDeadParams) error {
-	_, err := q.db.Exec(ctx, markOutboxDead, arg.LastError, arg.ID)
-	return err
+func (q *Queries) MarkOutboxDead(ctx context.Context, arg MarkOutboxDeadParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxDead, arg.LastError, arg.ID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markOutboxRetry = `-- name: MarkOutboxRetry :exec
+const markOutboxRetry = `-- name: MarkOutboxRetry :execrows
 update outbox_messages
 set status = 'pending', available_at = $1, last_error = $2
-where id = $3
+where id = $3 and status = 'sending' and attempts = $4
 `
 
 type MarkOutboxRetryParams struct {
 	AvailableAt pgtype.Timestamptz
 	LastError   pgtype.Text
 	ID          int64
+	Attempts    int16
 }
 
-func (q *Queries) MarkOutboxRetry(ctx context.Context, arg MarkOutboxRetryParams) error {
-	_, err := q.db.Exec(ctx, markOutboxRetry, arg.AvailableAt, arg.LastError, arg.ID)
-	return err
+func (q *Queries) MarkOutboxRetry(ctx context.Context, arg MarkOutboxRetryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxRetry,
+		arg.AvailableAt,
+		arg.LastError,
+		arg.ID,
+		arg.Attempts,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markOutboxSent = `-- name: MarkOutboxSent :exec
+const markOutboxSent = `-- name: MarkOutboxSent :execrows
 update outbox_messages
 set status = 'sent', sent_at = $1, last_error = null, payload = payload - 'code'
-where id = $2
+where id = $2 and status = 'sending' and attempts = $3
 `
 
 type MarkOutboxSentParams struct {
-	Now pgtype.Timestamptz
-	ID  int64
+	Now      pgtype.Timestamptz
+	ID       int64
+	Attempts int16
 }
 
-func (q *Queries) MarkOutboxSent(ctx context.Context, arg MarkOutboxSentParams) error {
-	_, err := q.db.Exec(ctx, markOutboxSent, arg.Now, arg.ID)
-	return err
+// Fenced on the claim (status and attempts): a worker whose lease expired and
+// was reclaimed matches 0 rows and changes nothing.
+func (q *Queries) MarkOutboxSent(ctx context.Context, arg MarkOutboxSentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxSent, arg.Now, arg.ID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const purgeOutbox = `-- name: PurgeOutbox :execrows
