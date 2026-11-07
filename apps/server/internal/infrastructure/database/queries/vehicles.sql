@@ -41,10 +41,12 @@ set deleted_at = @now, updated_at = @now
 where public_id = @public_id and user_id = @owner_id and deleted_at is null;
 
 -- name: EraseVehiclesOfOwner :exec
--- Account deletion (spec 7.8): soft-delete and scrub, which frees the plates.
+-- Account deletion (spec 7.8): scrub every vehicle of the owner, including the
+-- ones already soft-deleted, so no real plate stays linked to the anonymized
+-- user. The placeholder is per row, which keeps the active-plate index happy.
 update vehicles
 set plate_normalized = 'X' || right(upper(lpad(to_hex(id), 8, '0')), 8),
     plate_display = 'X' || right(upper(lpad(to_hex(id), 8, '0')), 8),
     make = '-', model = '-', color = '-',
-    deleted_at = @now, updated_at = @now
-where user_id = @owner_id and deleted_at is null;
+    deleted_at = coalesce(deleted_at, @now), updated_at = @now
+where user_id = @owner_id;

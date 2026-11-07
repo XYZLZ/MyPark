@@ -163,8 +163,14 @@ func (r *Repo) SoftDeleteOwned(ctx context.Context, ownerID int64, id uuid.UUID,
 	return nil
 }
 
-// EraseOwner implements vehicles.Repo.
+// EraseOwner implements vehicles.Repo. It fails with database.ErrNoTx outside
+// a transaction, so the scrub always commits or rolls back with the account
+// deletion that calls it.
 func (r *Repo) EraseOwner(ctx context.Context, ownerID int64, now time.Time) error {
-	return safeError("vehicles: erase owner", r.q(ctx).EraseVehiclesOfOwner(ctx,
+	tx, err := database.MustTx(ctx)
+	if err != nil {
+		return err
+	}
+	return safeError("vehicles: erase owner", dbgen.New(tx).EraseVehiclesOfOwner(ctx,
 		dbgen.EraseVehiclesOfOwnerParams{OwnerID: ownerID, Now: ts(now)}))
 }

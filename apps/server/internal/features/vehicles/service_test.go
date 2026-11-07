@@ -42,6 +42,10 @@ func TestEraseOwner_FreesPlatesAndScrubs(t *testing.T) {
 	a, b := e.newUser("a", authz.RoleDriver), e.newUser("b", authz.RoleDriver)
 	e.create(&a, "ABC123")
 	e.create(&a, "DEF456")
+	gone := e.create(&a, "GONE99")
+	if r := e.do(&a, http.MethodDelete, "/v1/vehicles/"+gone, nil); r.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", r.Code)
+	}
 	keep := e.create(&b, "KEEP11")
 
 	err := database.NewTxRunner(e.db.App).InTx(t.Context(), func(ctx context.Context) error {
@@ -74,8 +78,8 @@ func TestEraseOwner_FreesPlatesAndScrubs(t *testing.T) {
 			}
 		}
 	}
-	if n != 2 {
-		t.Errorf("scrubbed %d rows, want 2", n)
+	if n != 3 {
+		t.Errorf("scrubbed %d rows, want 3 (including the soft-deleted one)", n)
 	}
 	// The plate is reusable and the other driver is untouched.
 	if r := e.do(&b, http.MethodPost, "/v1/vehicles", vehicleBody("ABC123")); r.Code != http.StatusCreated {
@@ -83,5 +87,17 @@ func TestEraseOwner_FreesPlatesAndScrubs(t *testing.T) {
 	}
 	if r := e.do(&b, http.MethodGet, "/v1/vehicles/"+keep, nil); r.Code != 200 || r.data()["make"] != "Toyota" {
 		t.Errorf("other driver's vehicle changed: %d %s", r.Code, r.Body)
+	}
+}
+
+func TestEraseOwner_RequiresTransaction(t *testing.T) {
+	e := newEnv(t)
+	a := e.newUser("a", authz.RoleDriver)
+	e.create(&a, "ABC123")
+	if err := e.svc.EraseOwner(t.Context(), a.ID); !errors.Is(err, database.ErrNoTx) {
+		t.Fatalf("err = %v, want database.ErrNoTx", err)
+	}
+	if n := e.count(`select count(*) from vehicles where user_id = $1 and plate_normalized = 'ABC123'`, a.ID); n != 1 {
+		t.Errorf("vehicle was scrubbed outside a transaction")
 	}
 }

@@ -28,8 +28,8 @@ update vehicles
 set plate_normalized = 'X' || right(upper(lpad(to_hex(id), 8, '0')), 8),
     plate_display = 'X' || right(upper(lpad(to_hex(id), 8, '0')), 8),
     make = '-', model = '-', color = '-',
-    deleted_at = $1, updated_at = $1
-where user_id = $2 and deleted_at is null
+    deleted_at = coalesce(deleted_at, $1), updated_at = $1
+where user_id = $2
 `
 
 type EraseVehiclesOfOwnerParams struct {
@@ -37,7 +37,9 @@ type EraseVehiclesOfOwnerParams struct {
 	OwnerID int64
 }
 
-// Account deletion (spec 7.8): soft-delete and scrub, which frees the plates.
+// Account deletion (spec 7.8): scrub every vehicle of the owner, including the
+// ones already soft-deleted, so no real plate stays linked to the anonymized
+// user. The placeholder is per row, which keeps the active-plate index happy.
 func (q *Queries) EraseVehiclesOfOwner(ctx context.Context, arg EraseVehiclesOfOwnerParams) error {
 	_, err := q.db.Exec(ctx, eraseVehiclesOfOwner, arg.Now, arg.OwnerID)
 	return err
