@@ -34,6 +34,31 @@ func loginBody(email, password string) map[string]any {
 	return map[string]any{"email": email, "password": password, "client_kind": "mobile"}
 }
 
+// wantFailedReasons asserts the auth.login_failed rows of the user, oldest
+// first, carry exactly these reasons.
+func (e *env) wantFailedReasons(email string, want ...string) {
+	e.t.Helper()
+	u := e.user(email)
+	rows, err := e.db.Super.Query(e.t.Context(), `select after->>'reason' from audit_log
+		where action='auth.login_failed' and entity_type='user' and entity_id=$1
+		and actor_kind='anonymous' order by id`, u.PublicID.String())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			e.t.Fatal(err)
+		}
+		got = append(got, s)
+	}
+	if !reflect.DeepEqual(got, want) {
+		e.t.Errorf("login_failed reasons = %v, want %v", got, want)
+	}
+}
+
 func TestLogin_Success(t *testing.T) {
 	e := newEnv(t)
 	u := e.activeDriver("ana@example.com")
@@ -150,6 +175,7 @@ func TestLogin_NotVerifiedOnlyWithCorrectPassword(t *testing.T) {
 		r.errCode() != "auth.email_not_verified" {
 		t.Errorf("right pw: %d %s", r.Code, r.errCode())
 	}
+	e.wantFailedReasons("ana@example.com", "password", "not_verified")
 	if n := e.count(`select count(*) from auth_sessions`); n != 0 {
 		t.Errorf("sessions = %d, want 0", n)
 	}
@@ -165,6 +191,7 @@ func TestLogin_SuspendedOnlyWithCorrectPassword(t *testing.T) {
 		r.errCode() != "auth.account_suspended" {
 		t.Errorf("right pw: %d %s", r.Code, r.errCode())
 	}
+	e.wantFailedReasons("ana@example.com", "password", "suspended")
 	if n := e.count(`select count(*) from auth_sessions`); n != 0 {
 		t.Errorf("sessions = %d, want 0", n)
 	}

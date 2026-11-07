@@ -60,15 +60,21 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (TokenPair, error) {
 		return TokenPair{}, apperr.Unauthenticated(errcodes.AuthInvalidCredentials)
 	}
 	if !ok {
-		if err := s.recordFailedLogin(ctx, u); err != nil {
+		if err := s.recordFailedLogin(ctx, u, "password"); err != nil {
 			return TokenPair{}, err
 		}
 		return TokenPair{}, apperr.Unauthenticated(errcodes.AuthInvalidCredentials)
 	}
 	switch u.Status {
 	case StatusPending:
+		if err := s.recordFailedLogin(ctx, u, "not_verified"); err != nil {
+			return TokenPair{}, err
+		}
 		return TokenPair{}, apperr.Forbidden(errcodes.AuthEmailNotVerified)
 	case StatusSuspended:
+		if err := s.recordFailedLogin(ctx, u, "suspended"); err != nil {
+			return TokenPair{}, err
+		}
 		return TokenPair{}, apperr.Forbidden(errcodes.AuthAccountSuspended)
 	case StatusActive:
 	default:
@@ -150,14 +156,15 @@ func (s *Service) openSession(ctx context.Context, u LoginUser, in LoginInput, n
 	}, nil
 }
 
-// recordFailedLogin audits a wrong password for a known account. The audit
+// recordFailedLogin audits a refused login (reason password, not_verified or
+// suspended) for a known account. The audit
 // row commits on its own, because the request then fails with 401.
-func (s *Service) recordFailedLogin(ctx context.Context, u LoginUser) error {
+func (s *Service) recordFailedLogin(ctx context.Context, u LoginUser, reason string) error {
 	return s.d.Tx.InTx(ctx, func(ctx context.Context) error {
 		err := s.d.Audit.Record(ctx, audit.Entry{
 			Action: audit.AuthLoginFailed, Actor: audit.ActorAnonymous,
 			EntityType: "user", EntityID: u.PublicID.String(),
-			After: map[string]any{"reason": "password"},
+			After: map[string]any{"reason": reason},
 		})
 		if err != nil {
 			return fmt.Errorf("auth: audit %s: %w", audit.AuthLoginFailed, err)
