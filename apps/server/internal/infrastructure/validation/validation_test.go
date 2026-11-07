@@ -58,3 +58,17 @@ func TestStruct_NonStructIsNotAValidationError(t *testing.T) {
 		t.Fatalf("non-struct input reported as field errors: %v", err)
 	}
 }
+
+func TestValidator_PasswordCommonTag(t *testing.T) {
+	type dto struct {
+		P string `json:"password" validate:"required,min=10,max=128,password_common"`
+	}
+	err := validation.New().Struct(dto{P: "1234567890"})
+	verr, ok := errors.AsType[*validation.Error](err)
+	if !ok || len(verr.Fields) != 1 || verr.Fields[0].Rule != "password_common" {
+		t.Fatalf("err = %v; want single password_common failure", err)
+	}
+	if err := validation.New().Struct(dto{P: "Zx9!kelp-orbit"}); err != nil {
+		t.Fatalf("strong password rejected: %v", err)
+	}
+}

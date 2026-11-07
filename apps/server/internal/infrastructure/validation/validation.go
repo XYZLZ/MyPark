@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/go-playground/validator/v10"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 )
 
 // FieldError describes one failed rule on one field.
@@ -49,6 +51,10 @@ type Validator struct {
 var shared = sync.OnceValue(func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	v.RegisterTagNameFunc(jsonName)
+	// password_common fails when the password is in the common-password list.
+	_ = v.RegisterValidation("password_common", func(fl validator.FieldLevel) bool {
+		return !hashing.IsCommonPassword(fl.Field().String())
+	})
 	return v
 })
 
