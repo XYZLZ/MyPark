@@ -78,7 +78,7 @@ Requirement IDs are stable; tests and PRs reference them. **Must** means Phase 1
 
 | ID | Requirement |
 |---|---|
-| FR-AUTH-1 | A driver registers with full name, email, phone (optional) and password. The account starts as `pending_verification` |
+| FR-AUTH-1 | A driver registers with first name, last name, email, phone (optional) and password. The account starts as `pending_verification` |
 | FR-AUTH-2 | The system emails a 6-digit verification code (15-minute expiry, max 5 attempts). Verifying sets the account to `active` **(our call)** |
 | FR-AUTH-3 | Login uses email + password. Unverified accounts are asked to verify first |
 | FR-AUTH-4 | Sessions: web uses httpOnly cookies via the BFF; mobile uses a short-lived access token plus a rotating refresh token stored in secure storage (see architecture §5) |

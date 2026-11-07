@@ -371,7 +371,7 @@ Conventions (from supabase-postgres-best-practices):
 
 | Table | Key columns | Constraints and indexes |
 |---|---|---|
-| `users` | id, public_id, email `citext`, password_hash, full_name, phone, role, status, locale, email_verified_at, terms_version, terms_accepted_at, privacy_version, privacy_accepted_at, reservation_blocked_until, created_at, updated_at, deleted_at | `unique(email) where deleted_at is null`; `role in ('driver','admin')`; `status in ('pending_verification','active','suspended','deleted')`; `locale in ('es-DO','en')` |
+| `users` | id, public_id, email `citext`, password_hash, first_name, last_name, phone, role, status, locale, email_verified_at, terms_version, terms_accepted_at, privacy_version, privacy_accepted_at, reservation_blocked_until, created_at, updated_at, deleted_at | `unique(email) where deleted_at is null`; `role in ('driver','admin')`; `status in ('pending_verification','active','suspended','deleted')`; `locale in ('es-DO','en')` |
 | `auth_codes` | id, user_id, purpose, code_hash, expires_at, attempts, consumed_at | `purpose in ('verify_email','reset_password')`; idx (user_id, purpose) where consumed_at is null |
 | `refresh_tokens` | id, user_id, family_id uuid, token_hash, client_kind, expires_at, rotated_at, revoked_at, created_ip, user_agent | `unique(token_hash)`; idx(user_id); idx(family_id) |
 | `vehicles` | id, public_id, user_id, plate_normalized, plate_display, make, model, color, deleted_at | `unique(plate_normalized) where deleted_at is null`; idx(user_id) |
