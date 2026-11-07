@@ -102,6 +102,9 @@ func (r *Router) validate(pattern string, p Policy) {
 	if isAdminPattern(pattern) && (p.Public || !slices.Equal(p.Roles, AdminOnly)) {
 		fail("admin path requires AdminOnly roles")
 	}
+	if p.Limit != nil && p.Limit.Key != ratelimit.KeyIP && p.Limit.Key != ratelimit.KeyUser {
+		fail("route policy Limit must be KeyIP or KeyUser; handler-keyed rules belong in handlers")
+	}
 	if p.Limit != nil && p.Limit.Key == ratelimit.KeyUser && p.Public {
 		fail("user-keyed rate limit requires an authenticated route")
 	}
@@ -120,7 +123,7 @@ func (r *Router) validate(pattern string, p Policy) {
 			fail("Middlewares.Legal is nil")
 		}
 	}
-	if p.Limit != nil && p.Limit.Key != ratelimit.KeyCustom && r.mw.RateLimit == nil {
+	if p.Limit != nil && r.mw.RateLimit == nil {
 		fail("Middlewares.RateLimit is nil but the policy has a Limit")
 	}
 }

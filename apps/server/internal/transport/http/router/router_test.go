@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
@@ -180,4 +181,15 @@ func TestPassthroughRateLimit_RegistersAndServes(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status = %d", rec.Code)
 	}
+}
+
+func TestHandle_PanicsOnHandlerKeyedOrUnknownLimitKey(t *testing.T) {
+	rt := router.New(http.NewServeMux(), (&recorder{}).middlewares())
+	mustPanic(t, "POST /v1/custom", func() {
+		rt.Handle("POST /v1/custom", router.Policy{Public: true, Limit: &ratelimit.LoginIPEmail}, noop)
+	})
+	unknown := ratelimit.Rule{Name: "x", Limit: 1, Window: time.Minute, Key: ratelimit.KeyKind(99)}
+	mustPanic(t, "POST /v1/unknown", func() {
+		rt.Handle("POST /v1/unknown", router.Policy{Public: true, Limit: &unknown}, noop)
+	})
 }
