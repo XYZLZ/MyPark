@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/reqctx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 )
 
@@ -37,7 +38,7 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 				if sw.wroteHeader {
 					return
 				}
-				r = r.WithContext(withRequestID(r.Context(), id))
+				r = r.WithContext(reqctx.WithRequestID(r.Context(), id))
 				response.Error(w, r, http.StatusInternalServerError, errcodes.InternalUnexpected,
 					"internal server error", nil)
 			}()

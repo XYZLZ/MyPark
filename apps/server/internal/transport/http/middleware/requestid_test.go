@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/reqctx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 )
 
@@ -22,7 +23,7 @@ var uuidV7 = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-
 func serveRequestID(t *testing.T, inbound string) (header, fromCtx string) {
 	t.Helper()
 	h := middleware.RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fromCtx = middleware.RequestIDFrom(r.Context())
+		fromCtx = reqctx.RequestID(r.Context())
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	if inbound != "" {
@@ -77,14 +78,7 @@ func TestRequestID_GeneratesUniqueIDs(t *testing.T) {
 	}
 }
 
-func TestRequestIDFrom_EmptyContext(t *testing.T) {
-	if got := middleware.RequestIDFrom(httptest.NewRequest(http.MethodGet, "/", nil).Context()); got != "" {
-		t.Fatalf("RequestIDFrom(empty) = %q, want empty", got)
-	}
-}
-
-func TestRecover_ReturnsEnvelope(t *testing.T) {
-	response.RequestIDFunc = middleware.RequestIDFrom
+func TestRecover_PanicEnvelopeHasMetaRequestID(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
 	h := middleware.Recover(log)(middleware.RequestID(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -104,8 +98,8 @@ func TestRecover_ReturnsEnvelope(t *testing.T) {
 		t.Errorf("code = %q, want internal.unexpected", env.Error.Code)
 	}
 	id := rec.Header().Get(middleware.HeaderRequestID)
-	if id == "" || env.Error.RequestID != id {
-		t.Errorf("request_id = %q, want header id %q", env.Error.RequestID, id)
+	if id == "" || env.Meta.RequestID != id {
+		t.Errorf("request_id = %q, want header id %q", env.Meta.RequestID, id)
 	}
 	if !strings.Contains(logs.String(), "boom") || !strings.Contains(logs.String(), id) {
 		t.Errorf("panic log missing value or request id: %s", logs.String())
@@ -164,5 +158,16 @@ func TestAccessLog_Fields(t *testing.T) {
 		if _, ok := entry["duration_ms"].(float64); !ok {
 			t.Errorf("%s: duration_ms = %v, want a number", tc.path, entry["duration_ms"])
 		}
+	}
+}
+
+func TestRequestID_InstallsLogFields(t *testing.T) {
+	var f *reqctx.LogFields
+	h := middleware.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		f = reqctx.Fields(r.Context())
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if f == nil {
+		t.Fatal("RequestID did not install reqctx.LogFields")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 )
 
 type fakePinger struct{ err error }
@@ -33,7 +34,7 @@ func serve(t *testing.T, p health.Pinger, m health.MigrationStatus, path string)
 	mux := http.NewServeMux()
 	health.NewHandler("api", "test", p, m).Register(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	middleware.RequestID(mux).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
@@ -52,6 +53,9 @@ func notReadyDetails(t *testing.T, rec *httptest.ResponseRecorder, body map[stri
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 	errObj, _ := body["error"].(map[string]any)
+	if meta, _ := body["meta"].(map[string]any); meta["request_id"] == "" || meta["request_id"] == nil {
+		t.Errorf("meta.request_id missing: %v", body["meta"])
+	}
 	if errObj["code"] != "health.not_ready" {
 		t.Fatalf("error.code = %v, want health.not_ready", errObj["code"])
 	}
@@ -70,14 +74,18 @@ func TestHealthz_OK(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
+	data, _ := body["data"].(map[string]any)
 	want := map[string]any{"status": "ok", "service": "api", "version": "test"}
-	if len(body) != len(want) {
-		t.Fatalf("body = %v, want %v", body, want)
+	if len(data) != len(want) {
+		t.Fatalf("data = %v, want %v", data, want)
 	}
 	for k, v := range want {
-		if body[k] != v {
-			t.Errorf("body[%q] = %v, want %v", k, body[k], v)
+		if data[k] != v {
+			t.Errorf("data[%q] = %v, want %v", k, data[k], v)
 		}
+	}
+	if meta, _ := body["meta"].(map[string]any); meta["request_id"] == nil || meta["request_id"] == "" {
+		t.Errorf("meta.request_id missing: %v", body["meta"])
 	}
 }
 
@@ -86,10 +94,11 @@ func TestReadyz_Ready(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %v)", rec.Code, body)
 	}
-	if body["status"] != "ready" {
-		t.Errorf("status = %v, want ready", body["status"])
+	data, _ := body["data"].(map[string]any)
+	if data["status"] != "ready" {
+		t.Errorf("data.status = %v, want ready", data["status"])
 	}
-	checks, _ := body["checks"].(map[string]any)
+	checks, _ := data["checks"].(map[string]any)
 	if checks["database"] != "ok" || checks["migrations"] != "ok" {
 		t.Errorf("checks = %v, want database=ok migrations=ok", checks)
 	}
@@ -141,7 +150,8 @@ func TestRegisterLiveness(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
 	}
-	if rec.Code != http.StatusOK || body["status"] != "ok" || body["service"] != "simulator" || body["version"] != "test" {
+	data, _ := body["data"].(map[string]any)
+	if rec.Code != http.StatusOK || data["status"] != "ok" || data["service"] != "simulator" || data["version"] != "test" {
 		t.Fatalf("/healthz = %d %v, want 200 ok simulator test", rec.Code, body)
 	}
 

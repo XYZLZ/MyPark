@@ -43,8 +43,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // MigrationStatus, so there is no /readyz to call them.
 func RegisterLiveness(mux *http.ServeMux, service, version string) {
 	body := healthBody{Status: "ok", Service: service, Version: version}
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		response.JSON(w, http.StatusOK, body)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		response.OK(w, r, http.StatusOK, body)
 	})
 }
 
@@ -73,7 +73,7 @@ func (h *Handler) readyz(w http.ResponseWriter, r *http.Request) {
 
 	checks := h.check(ctx)
 	if checks.Database == checkOK && checks.Migrations == checkOK {
-		response.JSON(w, http.StatusOK, readinessBody{Status: "ready", Checks: checks})
+		response.OK(w, r, http.StatusOK, readinessBody{Status: "ready", Checks: checks})
 		return
 	}
 	response.Error(w, r, http.StatusServiceUnavailable, errcodes.HealthNotReady, "service is not ready",

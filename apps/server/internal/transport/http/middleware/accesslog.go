@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/reqctx"
 )
 
 // routeUnmatched is logged as the route when no mux pattern matched.
@@ -24,7 +26,7 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 
 			route := cmp.Or(r.Pattern, routeUnmatched)
 			log.LogAttrs(r.Context(), slog.LevelInfo, "http request",
-				slog.String("request_id", RequestIDFrom(r.Context())),
+				slog.String("request_id", reqctx.RequestID(r.Context())),
 				slog.String("method", r.Method),
 				slog.String("route", route),
 				slog.Int("status", sw.status()),

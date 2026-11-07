@@ -2,7 +2,9 @@ openapi: 3.1.0
 info:
   title: MyPark API
   version: 0.1.0
-  description: MyPark HTTP API. M0 exposes health and readiness probes only.
+  description: >-
+    MyPark HTTP API. Every response uses the baseline envelope: data and meta
+    on success, error and meta on failure.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -26,7 +28,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Health"
+                      meta:
+                        $ref: "#/components/schemas/Meta"
   /readyz:
     get:
       operationId: getReadiness
@@ -43,7 +52,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Readiness"
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Readiness"
+                      meta:
+                        $ref: "#/components/schemas/Meta"
         "503":
           description: The service is not ready. error.code is "health.not_ready".
           content:
@@ -57,6 +73,7 @@ paths:
                   details:
                     database: ok
                     migrations: behind
+                meta:
                   request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9
 components:
   schemas:
@@ -95,33 +112,55 @@ components:
           const: ready
         checks:
           $ref: "#/components/schemas/ReadinessChecks"
+    Page:
+      type: object
+      additionalProperties: false
+      required: [limit, next_cursor]
+      properties:
+        limit:
+          type: integer
+          description: Maximum number of items in this page.
+        next_cursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page, or null on the last page.
+    Meta:
+      type: object
+      additionalProperties: false
+      required: [request_id]
+      properties:
+        request_id:
+          type: string
+          description: Request correlation identifier, equal to the X-Request-Id header.
+        page:
+          $ref: "#/components/schemas/Page"
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable machine-readable code in "<domain>.<reason>" snake_case
+            format. This is the client contract; see
+            packages/contracts/src/error-codes.ts.
+          pattern: '^[a-z][a-z0-9_]*[.][a-z][a-z0-9_]*$'
+        message:
+          type: string
+          description: Developer-facing message. Never shown to end users.
+        details:
+          type: object
+          description: >-
+            Structured context for the error. Always present, possibly as an
+            empty object {}. For health.not_ready it carries the
+            ReadinessChecks object.
+          additionalProperties: true
     ErrorEnvelope:
       type: object
       additionalProperties: false
-      required: [error]
+      required: [error, meta]
       properties:
         error:
-          type: object
-          additionalProperties: false
-          required: [code, message, request_id]
-          properties:
-            code:
-              type: string
-              description: >-
-                Stable machine-readable code in "<domain>.<reason>" snake_case
-                format. This is the client contract; see
-                packages/contracts/src/error-codes.ts.
-              pattern: '^[a-z][a-z0-9_]*[.][a-z][a-z0-9_]*$'
-            message:
-              type: string
-              description: Developer-facing message. Never shown to end users.
-            details:
-              type: object
-              description: >-
-                Optional structured context for the error. The server currently
-                always sends this key, possibly as an empty object {}. For
-                health.not_ready it carries the ReadinessChecks object.
-              additionalProperties: true
-            request_id:
-              type: string
-              description: Request correlation identifier.
+          $ref: "#/components/schemas/ErrorBody"
+        meta:
+          $ref: "#/components/schemas/Meta"

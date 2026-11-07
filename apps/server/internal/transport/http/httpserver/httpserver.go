@@ -13,18 +13,14 @@ import (
 	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
-	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 )
 
 // ShutdownTimeout bounds the graceful shutdown after the context is canceled.
 const ShutdownTimeout = 10 * time.Second
 
 // NewHandler wraps mux in the full HTTP chain: recover -> request ID ->
-// access log -> router (mux with JSON 404/405). It also points
-// response.RequestIDFunc at the request ID middleware so every error
-// envelope carries request_id.
+// access log -> router (mux with JSON 404/405).
 func NewHandler(log *slog.Logger, mux *http.ServeMux) http.Handler {
-	response.RequestIDFunc = middleware.RequestIDFrom
 	return middleware.Recover(log)(
 		middleware.RequestID(
 			middleware.AccessLog(log)(

@@ -42,7 +42,7 @@ func readyHealth() *health.Handler {
 }
 
 // assertEnvelope checks status, error code, content type, and that
-// request_id matches the X-Request-Id response header set by the full chain.
+// meta.request_id matches the X-Request-Id response header set by the full chain.
 func assertEnvelope(t *testing.T, rec *httptest.ResponseRecorder, body map[string]any, status int, code string) {
 	t.Helper()
 	if rec.Code != status {
@@ -53,8 +53,9 @@ func assertEnvelope(t *testing.T, rec *httptest.ResponseRecorder, body map[strin
 		t.Errorf("error.code = %v, want %s", errObj["code"], code)
 	}
 	id := rec.Header().Get(middleware.HeaderRequestID)
-	if id == "" || errObj["request_id"] != id {
-		t.Errorf("error.request_id = %v, want X-Request-Id %q", errObj["request_id"], id)
+	meta, _ := body["meta"].(map[string]any)
+	if id == "" || meta["request_id"] != id {
+		t.Errorf("meta.request_id = %v, want X-Request-Id %q", meta["request_id"], id)
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
@@ -76,8 +77,12 @@ func TestMethodNotAllowed_ReturnsEnvelope(t *testing.T) {
 
 func TestHealthz_ThroughFullChain(t *testing.T) {
 	rec, body := doRequest(t, readyHealth(), http.MethodGet, "/healthz")
-	if rec.Code != http.StatusOK || body["status"] != "ok" {
+	data, _ := body["data"].(map[string]any)
+	if rec.Code != http.StatusOK || data["status"] != "ok" {
 		t.Fatalf("status=%d body=%v, want 200 ok", rec.Code, body)
+	}
+	if meta, _ := body["meta"].(map[string]any); meta["request_id"] != rec.Header().Get(middleware.HeaderRequestID) {
+		t.Errorf("meta.request_id = %v, want X-Request-Id header", meta["request_id"])
 	}
 	if rec.Header().Get(middleware.HeaderRequestID) == "" {
 		t.Error("missing X-Request-Id on success response")
@@ -110,7 +115,8 @@ func getReadyz(t *testing.T, baseURL string) (int, map[string]any) {
 func TestRun_ReadyzReady_Integration(t *testing.T) {
 	base := startRun(t, map[string]string{"HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": testsupport.NewDBURL(t)})
 	status, body := getReadyz(t, base)
-	if status != http.StatusOK || body["status"] != "ready" {
+	data, _ := body["data"].(map[string]any)
+	if status != http.StatusOK || data["status"] != "ready" {
 		t.Fatalf("/readyz = %d %v, want 200 ready", status, body)
 	}
 }

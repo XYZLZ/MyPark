@@ -3,12 +3,13 @@
 package middleware
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"net/http"
 	"time"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/reqctx"
 )
 
 // HeaderRequestID is the request correlation header, read from clients and
@@ -18,11 +19,10 @@ const HeaderRequestID = "X-Request-Id"
 // maxRequestIDLen bounds accepted inbound IDs.
 const maxRequestIDLen = 64
 
-type ctxKey struct{}
-
 // RequestID accepts a valid inbound X-Request-Id (1-64 chars of
 // [A-Za-z0-9-]) or generates a UUIDv7. It sets the response header before
-// calling next, and stores the ID in the request context.
+// calling next, and stores the ID and a fresh reqctx.LogFields in the request
+// context.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)
@@ -30,18 +30,9 @@ func RequestID(next http.Handler) http.Handler {
 			id = newUUIDv7()
 		}
 		w.Header().Set(HeaderRequestID, id)
-		next.ServeHTTP(w, r.WithContext(withRequestID(r.Context(), id)))
+		ctx, _ := reqctx.WithLogFields(reqctx.WithRequestID(r.Context(), id))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-// RequestIDFrom returns the request ID stored by RequestID, or "".
-func RequestIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(ctxKey{}).(string)
-	return id
-}
-
-func withRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, ctxKey{}, id)
 }
 
 func validRequestID(id string) bool {

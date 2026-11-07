@@ -23,7 +23,8 @@ func TestSimulator_HealthzServes(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode /healthz body: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK || body["status"] != "ok" || body["service"] != "simulator" {
+	data, _ := body["data"].(map[string]any)
+	if resp.StatusCode != http.StatusOK || data["status"] != "ok" || data["service"] != "simulator" {
 		t.Fatalf("/healthz = %d %v, want 200 ok service=simulator", resp.StatusCode, body)
 	}
 }
