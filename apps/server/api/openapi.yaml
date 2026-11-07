@@ -504,7 +504,7 @@ paths:
                       data:
                         type: array
                         items: { $ref: "#/components/schemas/Vehicle" }
-                      meta: { $ref: "#/components/schemas/Meta" }
+                      meta: { $ref: "#/components/schemas/ListMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ForbiddenLegal" }
     post:
@@ -666,7 +666,7 @@ paths:
                       data:
                         type: array
                         items: { $ref: "#/components/schemas/AdminUser" }
-                      meta: { $ref: "#/components/schemas/Meta" }
+                      meta: { $ref: "#/components/schemas/ListMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
@@ -779,6 +779,13 @@ components:
           description: Request correlation identifier, equal to the X-Request-Id header.
         page:
           $ref: "#/components/schemas/Page"
+    ListMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          required: [page]
+          properties:
+            page: { $ref: "#/components/schemas/Page" }
     ErrorBody:
       type: object
       additionalProperties: false
@@ -906,7 +913,7 @@ components:
         last_name: { type: string, minLength: 1, maxLength: 80 }
         phone:
           type: string
-          pattern: '^\+[1-9][0-9]{6,14}$'
+          pattern: '^(\+[1-9][0-9]{6,14})?$'
           description: E.164. An empty string means no phone.
         locale: { type: string, enum: [es-DO, en], default: es-DO }
         accepted_terms_version: { type: string }
@@ -964,7 +971,7 @@ components:
         last_name: { type: string, minLength: 1, maxLength: 80 }
         phone:
           type: [string, "null"]
-          pattern: '^\+[1-9][0-9]{6,14}$'
+          pattern: '^(\+[1-9][0-9]{6,14})?$'
           description: E.164. Null or an empty string clears the phone.
         locale: { type: string, enum: [es-DO, en] }
     DeleteMeRequest:

@@ -65,3 +65,11 @@ test('TokenResponse has first_name and last_name on user, never full_name', () =
   expectTypeOf<Schemas['AdminUser']['first_name']>().toBeString();
   expectTypeOf<Schemas['AdminUser']['last_name']>().toBeString();
 });
+
+test('list responses always carry meta.page (required, non-optional)', () => {
+  type ListBody<T> = T extends { content: { 'application/json': infer B } } ? B : never;
+  type Vehicles = ListBody<paths['/v1/vehicles']['get']['responses']['200']>;
+  type Admins = ListBody<paths['/v1/admin/admins']['get']['responses']['200']>;
+  expectTypeOf<Vehicles['meta']['page']>().toEqualTypeOf<Schemas['Page']>();
+  expectTypeOf<Admins['meta']['page']>().toEqualTypeOf<Schemas['Page']>();
+});

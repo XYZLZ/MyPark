@@ -386,6 +386,9 @@ export interface components {
             request_id: string;
             page?: components["schemas"]["Page"];
         };
+        ListMeta: components["schemas"]["Meta"] & {
+            page: components["schemas"]["Page"];
+        };
         ErrorBody: {
             /** @description Stable machine-readable code in "<domain>.<reason>" snake_case format. This is the client contract; see packages/contracts/src/error-codes.ts. */
             code: string;
@@ -1353,7 +1356,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["Vehicle"][];
-                        meta: components["schemas"]["Meta"];
+                        meta: components["schemas"]["ListMeta"];
                     };
                 };
             };
@@ -1560,7 +1563,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["AdminUser"][];
-                        meta: components["schemas"]["Meta"];
+                        meta: components["schemas"]["ListMeta"];
                     };
                 };
             };
