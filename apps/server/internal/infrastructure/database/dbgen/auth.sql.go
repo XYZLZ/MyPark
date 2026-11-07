@@ -7,11 +7,75 @@ package dbgen
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const activateUser = `-- name: ActivateUser :exec
+update users
+set status = 'active', email_verified_at = $1, updated_at = $1
+where id = $2 and status = 'pending_verification'
+`
+
+type ActivateUserParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) ActivateUser(ctx context.Context, arg ActivateUserParams) error {
+	_, err := q.db.Exec(ctx, activateUser, arg.Now, arg.ID)
+	return err
+}
+
+const attemptAuthCode = `-- name: AttemptAuthCode :one
+update auth_codes
+set attempts = attempts + 1
+where user_id = $1 and purpose = $2 and consumed_at is null
+  and expires_at > $3 and attempts < $4::smallint
+returning id, code_hash, attempts
+`
+
+type AttemptAuthCodeParams struct {
+	UserID      int64
+	Purpose     string
+	Now         pgtype.Timestamptz
+	MaxAttempts int16
+}
+
+type AttemptAuthCodeRow struct {
+	ID       int64
+	CodeHash []byte
+	Attempts int16
+}
+
+// Counts one attempt on the live code and returns it. Runs first and commits
+// even when the code is wrong, so attempts survive the failing request.
+func (q *Queries) AttemptAuthCode(ctx context.Context, arg AttemptAuthCodeParams) (AttemptAuthCodeRow, error) {
+	row := q.db.QueryRow(ctx, attemptAuthCode,
+		arg.UserID,
+		arg.Purpose,
+		arg.Now,
+		arg.MaxAttempts,
+	)
+	var i AttemptAuthCodeRow
+	err := row.Scan(&i.ID, &i.CodeHash, &i.Attempts)
+	return i, err
+}
+
+const consumeAuthCode = `-- name: ConsumeAuthCode :exec
+update auth_codes set consumed_at = $1 where id = $2 and consumed_at is null
+`
+
+type ConsumeAuthCodeParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) ConsumeAuthCode(ctx context.Context, arg ConsumeAuthCodeParams) error {
+	_, err := q.db.Exec(ctx, consumeAuthCode, arg.Now, arg.ID)
+	return err
+}
 
 const consumeLiveAuthCodes = `-- name: ConsumeLiveAuthCodes :exec
 update auth_codes
@@ -28,74 +92,6 @@ type ConsumeLiveAuthCodesParams struct {
 func (q *Queries) ConsumeLiveAuthCodes(ctx context.Context, arg ConsumeLiveAuthCodesParams) error {
 	_, err := q.db.Exec(ctx, consumeLiveAuthCodes, arg.Now, arg.UserID, arg.Purpose)
 	return err
-}
-
-const getActiveUserByEmail = `-- name: GetActiveUserByEmail :one
-select id, public_id, email, password_hash, role, status, email_verified_at, locale
-from users
-where email = $1 and deleted_at is null
-`
-
-type GetActiveUserByEmailRow struct {
-	ID              int64
-	PublicID        uuid.UUID
-	Email           string
-	PasswordHash    pgtype.Text
-	Role            string
-	Status          string
-	EmailVerifiedAt pgtype.Timestamptz
-	Locale          string
-}
-
-// Credential columns of the non-deleted account with this email (citext, so
-// the match ignores case).
-func (q *Queries) GetActiveUserByEmail(ctx context.Context, email string) (GetActiveUserByEmailRow, error) {
-	row := q.db.QueryRow(ctx, getActiveUserByEmail, email)
-	var i GetActiveUserByEmailRow
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.Role,
-		&i.Status,
-		&i.EmailVerifiedAt,
-		&i.Locale,
-	)
-	return i, err
-}
-
-const getUserCredentialsByID = `-- name: GetUserCredentialsByID :one
-select id, public_id, email, password_hash, role, status, email_verified_at, locale
-from users
-where id = $1
-`
-
-type GetUserCredentialsByIDRow struct {
-	ID              int64
-	PublicID        uuid.UUID
-	Email           string
-	PasswordHash    pgtype.Text
-	Role            string
-	Status          string
-	EmailVerifiedAt pgtype.Timestamptz
-	Locale          string
-}
-
-func (q *Queries) GetUserCredentialsByID(ctx context.Context, id int64) (GetUserCredentialsByIDRow, error) {
-	row := q.db.QueryRow(ctx, getUserCredentialsByID, id)
-	var i GetUserCredentialsByIDRow
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.Role,
-		&i.Status,
-		&i.EmailVerifiedAt,
-		&i.Locale,
-	)
-	return i, err
 }
 
 const insertAuthCode = `-- name: InsertAuthCode :one
@@ -125,122 +121,142 @@ func (q *Queries) InsertAuthCode(ctx context.Context, arg InsertAuthCodeParams) 
 	return id, err
 }
 
-const insertAuthSession = `-- name: InsertAuthSession :one
-insert into auth_sessions (user_id, client_kind, created_at, last_used_at, absolute_expires_at,
-                           created_ip, user_agent)
-values ($1, $2, $3, $3, $4, $5, $6)
+const insertPendingDriver = `-- name: InsertPendingDriver :one
+insert into users (email, password_hash, password_changed_at, first_name, last_name, phone, locale,
+                   role, status, terms_version, terms_accepted_at, privacy_version,
+                   privacy_accepted_at, created_at, updated_at)
+values ($1, $2, $3, $4, $5, $6, $7,
+        'driver', 'pending_verification', $8, $3, $9, $3, $3, $3)
 returning id, public_id
 `
 
-type InsertAuthSessionParams struct {
-	UserID            int64
-	ClientKind        string
-	Now               pgtype.Timestamptz
-	AbsoluteExpiresAt pgtype.Timestamptz
-	CreatedIp         *netip.Addr
-	UserAgent         pgtype.Text
+type InsertPendingDriverParams struct {
+	Email          string
+	PasswordHash   pgtype.Text
+	Now            pgtype.Timestamptz
+	FirstName      string
+	LastName       string
+	Phone          pgtype.Text
+	Locale         string
+	TermsVersion   pgtype.Text
+	PrivacyVersion pgtype.Text
 }
 
-type InsertAuthSessionRow struct {
+type InsertPendingDriverRow struct {
 	ID       int64
 	PublicID uuid.UUID
 }
 
-func (q *Queries) InsertAuthSession(ctx context.Context, arg InsertAuthSessionParams) (InsertAuthSessionRow, error) {
-	row := q.db.QueryRow(ctx, insertAuthSession,
-		arg.UserID,
-		arg.ClientKind,
-		arg.Now,
-		arg.AbsoluteExpiresAt,
-		arg.CreatedIp,
-		arg.UserAgent,
-	)
-	var i InsertAuthSessionRow
-	err := row.Scan(&i.ID, &i.PublicID)
-	return i, err
-}
-
-const insertRefreshToken = `-- name: InsertRefreshToken :exec
-insert into refresh_tokens (session_id, token_hash, created_at, expires_at)
-values ($1, $2, $3, $4)
-`
-
-type InsertRefreshTokenParams struct {
-	SessionID int64
-	TokenHash []byte
-	Now       pgtype.Timestamptz
-	ExpiresAt pgtype.Timestamptz
-}
-
-func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
-	_, err := q.db.Exec(ctx, insertRefreshToken,
-		arg.SessionID,
-		arg.TokenHash,
-		arg.Now,
-		arg.ExpiresAt,
-	)
-	return err
-}
-
-const insertUser = `-- name: InsertUser :one
-insert into users (email, password_hash, password_changed_at, first_name, last_name, phone,
-                   locale, terms_version, terms_accepted_at, privacy_version, privacy_accepted_at)
-values ($1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11)
-returning id, public_id
-`
-
-type InsertUserParams struct {
-	Email             string
-	PasswordHash      pgtype.Text
-	PasswordChangedAt pgtype.Timestamptz
-	FirstName         string
-	LastName          string
-	Phone             pgtype.Text
-	Locale            string
-	TermsVersion      pgtype.Text
-	TermsAcceptedAt   pgtype.Timestamptz
-	PrivacyVersion    pgtype.Text
-	PrivacyAcceptedAt pgtype.Timestamptz
-}
-
-type InsertUserRow struct {
-	ID       int64
-	PublicID uuid.UUID
-}
-
-func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertUserRow, error) {
-	row := q.db.QueryRow(ctx, insertUser,
+func (q *Queries) InsertPendingDriver(ctx context.Context, arg InsertPendingDriverParams) (InsertPendingDriverRow, error) {
+	row := q.db.QueryRow(ctx, insertPendingDriver,
 		arg.Email,
 		arg.PasswordHash,
-		arg.PasswordChangedAt,
+		arg.Now,
 		arg.FirstName,
 		arg.LastName,
 		arg.Phone,
 		arg.Locale,
 		arg.TermsVersion,
-		arg.TermsAcceptedAt,
 		arg.PrivacyVersion,
-		arg.PrivacyAcceptedAt,
 	)
-	var i InsertUserRow
+	var i InsertPendingDriverRow
 	err := row.Scan(&i.ID, &i.PublicID)
 	return i, err
 }
 
-const revokeAuthSession = `-- name: RevokeAuthSession :exec
-update auth_sessions
-set revoked_at = $1, revoked_reason = $2
-where id = $3 and revoked_at is null
+const lockPendingDriverByEmail = `-- name: LockPendingDriverByEmail :one
+select id, public_id, locale
+from users
+where email = $1 and deleted_at is null
+  and role = 'driver' and status = 'pending_verification'
+for update
 `
 
-type RevokeAuthSessionParams struct {
-	Now    pgtype.Timestamptz
-	Reason pgtype.Text
-	ID     int64
+type LockPendingDriverByEmailRow struct {
+	ID       int64
+	PublicID uuid.UUID
+	Locale   string
 }
 
-func (q *Queries) RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) error {
-	_, err := q.db.Exec(ctx, revokeAuthSession, arg.Now, arg.Reason, arg.ID)
+// Only a driver that has not verified yet. A pending admin invitee, an active
+// account and an unknown address all return no row (OC-38).
+func (q *Queries) LockPendingDriverByEmail(ctx context.Context, email string) (LockPendingDriverByEmailRow, error) {
+	row := q.db.QueryRow(ctx, lockPendingDriverByEmail, email)
+	var i LockPendingDriverByEmailRow
+	err := row.Scan(&i.ID, &i.PublicID, &i.Locale)
+	return i, err
+}
+
+const lockUserByEmail = `-- name: LockUserByEmail :one
+select id, public_id, role, status, locale
+from users
+where email = $1 and deleted_at is null
+for update
+`
+
+type LockUserByEmailRow struct {
+	ID       int64
+	PublicID uuid.UUID
+	Role     string
+	Status   string
+	Locale   string
+}
+
+// The non-deleted account with this email, row-locked so concurrent
+// registrations of one address serialize.
+func (q *Queries) LockUserByEmail(ctx context.Context, email string) (LockUserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, lockUserByEmail, email)
+	var i LockUserByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.Role,
+		&i.Status,
+		&i.Locale,
+	)
+	return i, err
+}
+
+const overwritePendingDriver = `-- name: OverwritePendingDriver :exec
+update users
+set password_hash = $1,
+    password_changed_at = $2,
+    first_name = $3,
+    last_name = $4,
+    phone = $5,
+    locale = $6,
+    terms_version = $7,
+    terms_accepted_at = $2,
+    privacy_version = $8,
+    privacy_accepted_at = $2,
+    updated_at = $2
+where id = $9 and role = 'driver' and status = 'pending_verification' and deleted_at is null
+`
+
+type OverwritePendingDriverParams struct {
+	PasswordHash   pgtype.Text
+	Now            pgtype.Timestamptz
+	FirstName      string
+	LastName       string
+	Phone          pgtype.Text
+	Locale         string
+	TermsVersion   pgtype.Text
+	PrivacyVersion pgtype.Text
+	ID             int64
+}
+
+// Replaces the profile and credentials of a never-verified driver (OC-12).
+func (q *Queries) OverwritePendingDriver(ctx context.Context, arg OverwritePendingDriverParams) error {
+	_, err := q.db.Exec(ctx, overwritePendingDriver,
+		arg.PasswordHash,
+		arg.Now,
+		arg.FirstName,
+		arg.LastName,
+		arg.Phone,
+		arg.Locale,
+		arg.TermsVersion,
+		arg.PrivacyVersion,
+		arg.ID,
+	)
 	return err
 }

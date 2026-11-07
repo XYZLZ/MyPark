@@ -72,3 +72,19 @@ func TestValidator_PasswordCommonTag(t *testing.T) {
 		t.Fatalf("strong password rejected: %v", err)
 	}
 }
+
+func TestValidator_PhoneTagMatchesDBCheck(t *testing.T) {
+	type dto struct {
+		P string `json:"phone" validate:"omitempty,phone"`
+	}
+	for phone, valid := range map[string]bool{
+		"": true, "+18095551234": true, "+1234567": true, "+123456789012345": true,
+		"+0123456789": false, "+123456": false, "+1234567890123456": false,
+		"18095551234": false, "+1 809 555 1234": false, " +18095551234": false,
+	} {
+		err := validation.New().Struct(dto{P: phone})
+		if (err == nil) != valid {
+			t.Errorf("phone %q: err = %v, want valid=%v", phone, err, valid)
+		}
+	}
+}

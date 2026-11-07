@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -48,12 +49,19 @@ type Validator struct {
 
 // shared is built once: validator.Validate caches struct metadata and is safe
 // for concurrent use, so every Validator shares one instance.
+// phonePattern is the users.phone CHECK, so a value that passes validation
+// can never fail the constraint.
+var phonePattern = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
+
 var shared = sync.OnceValue(func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	v.RegisterTagNameFunc(jsonName)
 	// password_common fails when the password is in the common-password list.
 	_ = v.RegisterValidation("password_common", func(fl validator.FieldLevel) bool {
 		return !hashing.IsCommonPassword(fl.Field().String())
+	})
+	_ = v.RegisterValidation("phone", func(fl validator.FieldLevel) bool {
+		return phonePattern.MatchString(fl.Field().String())
 	})
 	return v
 })

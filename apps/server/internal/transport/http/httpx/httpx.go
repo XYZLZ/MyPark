@@ -58,15 +58,26 @@ func DecodeJSON[T any](r *http.Request, v *validation.Validator) (T, error) {
 	}
 
 	if v != nil {
-		if err := v.Struct(out); err != nil {
-			if verr, ok := errors.AsType[*validation.Error](err); ok {
-				return out, apperr.Invalid(errcodes.ValidationFailed).
-					WithDetails(map[string]any{"fields": verr.Fields}).Wrap(verr)
-			}
+		if err := Validate(v, out); err != nil {
 			return out, err
 		}
 	}
 	return out, nil
+}
+
+// Validate runs v on s and maps a failure to a 422 validation.failed apperr
+// whose details list the failed fields. Handlers that normalize a decoded
+// body before validating it call this after DecodeJSON[T](r, nil).
+func Validate(v *validation.Validator, s any) error {
+	err := v.Struct(s)
+	if err == nil {
+		return nil
+	}
+	if verr, ok := errors.AsType[*validation.Error](err); ok {
+		return apperr.Invalid(errcodes.ValidationFailed).
+			WithDetails(map[string]any{"fields": verr.Fields}).Wrap(verr)
+	}
+	return err
 }
 
 // WriteError writes err as the standard error envelope. Unknown errors, and

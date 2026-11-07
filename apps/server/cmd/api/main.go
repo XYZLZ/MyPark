@@ -22,11 +22,18 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
+	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
+	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
@@ -89,12 +96,21 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
+	codes, err := hashing.NewCodeHasher(cfg.AuthCodePepper())
+	if err != nil {
+		return err
+	}
 	d := deps{
-		log:    log,
-		cfg:    cfg,
-		pool:   pool,
-		clock:  clock.System{},
-		health: health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
+		log:   log,
+		cfg:   cfg,
+		pool:  pool,
+		clock: clock.System{},
+		// Argon2id with the spec 7.1 parameters; at most 4 derivations at once.
+		hasher: hashing.NewArgon2id(hashing.DefaultParams, maxConcurrentHashes),
+		codes:  codes,
+		// The Postgres limiter replaces Noop in the rate limiting slice.
+		limiter: ratelimit.Noop{},
+		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
 	}
 	srv := httpserver.New(cfg.HTTPAddr(), newHandler(d), log)
 	// The config is logged only through Config.LogValue, which redacts the
@@ -105,6 +121,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 // legalCacheTTL is how long the current legal versions are cached.
 const legalCacheTTL = 60 * time.Second
 
+// maxConcurrentHashes bounds concurrent argon2id derivations (OC-14).
+const maxConcurrentHashes = 4
+
 // deps are the dependencies newHandler wires. Tests build it directly.
 type deps struct {
 	log    *slog.Logger
@@ -112,6 +131,10 @@ type deps struct {
 	pool   *pgxpool.Pool
 	clock  clock.Clock
 	health *health.Handler
+
+	hasher  hashing.PasswordHasher
+	codes   hashing.CodeHasher
+	limiter ratelimit.Limiter
 }
 
 // newHandler builds the API router with every feature handler and wraps it
@@ -128,6 +151,18 @@ func newHandler(d deps) http.Handler {
 	})
 	legalSvc := legal.NewService(legalpg.NewRepo(d.pool), d.clock, legalCacheTTL)
 	legal.NewHandler(legalSvc, d.log).Register(r)
+
+	authSvc := auth.NewService(auth.Deps{
+		Tx:     database.NewTxRunner(d.pool),
+		Repo:   authpg.NewRepo(d.pool),
+		Hasher: d.hasher,
+		Codes:  d.codes,
+		Legal:  legalSvc,
+		Audit:  auditpg.NewRecorder(),
+		Notify: notificationspg.NewNotifier(),
+		Clock:  d.clock,
+	})
+	auth.NewHandler(authSvc, validation.New(), d.limiter, d.log).Register(r)
 
 	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins())
 }

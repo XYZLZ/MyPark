@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -18,6 +19,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 )
@@ -50,6 +53,9 @@ func testDeps(h *health.Handler, pool *pgxpool.Pool) deps {
 		pool:   pool,
 		clock:  testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)),
 		health: h,
+
+		hasher:  hashing.NewArgon2id(hashing.Params{Memory: 1024, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}, 2),
+		limiter: ratelimit.Noop{},
 	}
 }
 
@@ -296,5 +302,43 @@ func TestGetLegalCurrent_Envelope(t *testing.T) {
 	meta, _ := body["meta"].(map[string]any)
 	if id := rec.Header().Get(middleware.HeaderRequestID); id == "" || meta["request_id"] != id {
 		t.Errorf("meta.request_id = %v, want X-Request-Id %q", meta["request_id"], id)
+	}
+}
+
+// TestAuthRoutes_WiredInProductionHandler registers a driver through the
+// exact handler cmd/api serves, then verifies with the emailed code.
+func TestAuthRoutes_WiredInProductionHandler(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	if err := legal.SeedDocuments(t.Context(), db.App); err != nil {
+		t.Fatalf("SeedDocuments: %v", err)
+	}
+	pepper, err := hashing.NewCodeHasher(bytes.Repeat([]byte("p"), 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := testDeps(readyHealth(), db.App)
+	d.codes = pepper
+	h := newHandler(d)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := post("/v1/auth/register", `{"email":"ana@example.com","password":"Zx9!kelp-orbit","first_name":"Ana","last_name":"Perez",`+
+		`"accepted_terms_version":"2026-11-16","accepted_privacy_version":"2026-11-16"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("register = %d %s, want 202", rec.Code, rec.Body)
+	}
+	var code string
+	if err := db.Super.QueryRow(t.Context(), `select payload->>'code' from outbox_messages`).Scan(&code); err != nil {
+		t.Fatalf("outbox code: %v", err)
+	}
+	if rec := post("/v1/auth/verify", `{"email":"ana@example.com","code":"`+code+`"}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("verify = %d %s, want 204", rec.Code, rec.Body)
+	}
+	if rec := post("/v1/auth/verify/resend", `{"email":"ana@example.com"}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("resend = %d %s, want 202", rec.Code, rec.Body)
 	}
 }
