@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
@@ -146,4 +147,78 @@ func safeError(op string, err error) error {
 		return fmt.Errorf("%s: sqlstate %s constraint %q", op, pgErr.Code, pgErr.ConstraintName)
 	}
 	return fmt.Errorf("%s: %w", op, err)
+}
+
+// FindUserForLogin implements auth.Repo.
+func (r *Repo) FindUserForLogin(ctx context.Context, email string) (auth.LoginUser, bool, error) {
+	row, err := r.q(ctx).FindUserForLogin(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.LoginUser{}, false, nil
+	}
+	if err != nil {
+		return auth.LoginUser{}, false, safeError("auth: find user for login", err)
+	}
+	role, _ := authz.ParseRole(row.Role)
+	return auth.LoginUser{
+		UserRow:      auth.UserRow{ID: row.ID, PublicID: row.PublicID, Role: row.Role, Status: row.Status, Locale: row.Locale},
+		PasswordHash: row.PasswordHash.String,
+		HasPassword:  row.PasswordHash.Valid,
+		View: auth.UserView{
+			PublicID: row.PublicID, Email: row.Email, FirstName: row.FirstName, LastName: row.LastName,
+			Phone: strPtr(row.Phone), Role: role, Status: row.Status, Locale: row.Locale,
+			EmailVerifiedAt: timePtr(row.EmailVerifiedAt),
+			TermsVersion:    strPtr(row.TermsVersion), TermsAcceptedAt: timePtr(row.TermsAcceptedAt),
+			PrivacyVersion: strPtr(row.PrivacyVersion), PrivacyAcceptedAt: timePtr(row.PrivacyAcceptedAt),
+			CreatedAt: row.CreatedAt.Time,
+		},
+	}, true, nil
+}
+
+// RehashPassword implements auth.Repo.
+func (r *Repo) RehashPassword(ctx context.Context, userID int64, oldHash, newHash string, now time.Time) error {
+	err := r.q(ctx).RehashPassword(ctx, dbgen.RehashPasswordParams{
+		ID: userID, OldHash: text(oldHash), NewHash: text(newHash), Now: ts(now),
+	})
+	return safeError("auth: rehash password", err)
+}
+
+// InsertSession implements auth.Repo.
+func (r *Repo) InsertSession(ctx context.Context, s auth.NewSession) (auth.SessionRow, error) {
+	arg := dbgen.InsertAuthSessionParams{
+		UserID: s.UserID, ClientKind: string(s.ClientKind), Now: ts(s.Now), AbsoluteExpiresAt: ts(s.Absolute),
+	}
+	if s.IP.IsValid() {
+		ip := s.IP.Unmap()
+		arg.CreatedIp = &ip
+	}
+	if s.UserAgent != "" {
+		arg.UserAgent = text(s.UserAgent)
+	}
+	row, err := r.q(ctx).InsertAuthSession(ctx, arg)
+	if err != nil {
+		return auth.SessionRow{}, safeError("auth: insert session", err)
+	}
+	return auth.SessionRow{ID: row.ID, PublicID: row.PublicID}, nil
+}
+
+// InsertRefreshToken implements auth.Repo.
+func (r *Repo) InsertRefreshToken(ctx context.Context, sessionID int64, hash []byte, expiresAt, now time.Time) error {
+	err := r.q(ctx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		SessionID: sessionID, TokenHash: hash, Now: ts(now), ExpiresAt: ts(expiresAt),
+	})
+	return safeError("auth: insert refresh token", err)
+}
+
+func strPtr(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	return &t.String
+}
+
+func timePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
 }

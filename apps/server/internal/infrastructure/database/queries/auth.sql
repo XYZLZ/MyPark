@@ -65,3 +65,30 @@ returning id, code_hash, attempts;
 
 -- name: ConsumeAuthCode :exec
 update auth_codes set consumed_at = @now where id = @id and consumed_at is null;
+
+-- name: FindUserForLogin :one
+-- The non-deleted account with this email, unlocked: login verifies the
+-- password before it opens a transaction.
+select id, public_id, email, password_hash, first_name, last_name, phone, role, status, locale,
+       email_verified_at, terms_version, terms_accepted_at, privacy_version,
+       privacy_accepted_at, created_at
+from users
+where email = @email and deleted_at is null;
+
+-- name: RehashPassword :exec
+-- Compare-and-set, so a password changed since the login read is never
+-- overwritten by the upgrade.
+update users
+set password_hash = @new_hash, updated_at = @now
+where id = @id and password_hash = @old_hash;
+
+-- name: InsertAuthSession :one
+insert into auth_sessions (user_id, client_kind, created_at, last_used_at, absolute_expires_at,
+                           created_ip, user_agent)
+values (@user_id, @client_kind, @now, @now, @absolute_expires_at, sqlc.narg('created_ip'),
+        sqlc.narg('user_agent'))
+returning id, public_id;
+
+-- name: InsertRefreshToken :exec
+insert into refresh_tokens (session_id, token_hash, created_at, expires_at)
+values (@session_id, @token_hash, @now, @expires_at);

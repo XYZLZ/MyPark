@@ -32,6 +32,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
@@ -100,11 +101,16 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
+	signer, err := jwt.NewSigner(cfg.JWTKeyID(), cfg.JWTSigningSeed(), clock.System{}, jwt.AccessTTL)
+	if err != nil {
+		return err
+	}
 	d := deps{
-		log:   log,
-		cfg:   cfg,
-		pool:  pool,
-		clock: clock.System{},
+		signer: signer,
+		log:    log,
+		cfg:    cfg,
+		pool:   pool,
+		clock:  clock.System{},
 		// Argon2id with the spec 7.1 parameters; at most 4 derivations at once.
 		hasher: hashing.NewArgon2id(hashing.DefaultParams, maxConcurrentHashes),
 		codes:  codes,
@@ -132,6 +138,7 @@ type deps struct {
 	clock  clock.Clock
 	health *health.Handler
 
+	signer  *jwt.Signer
 	hasher  hashing.PasswordHasher
 	codes   hashing.CodeHasher
 	limiter ratelimit.Limiter
@@ -161,6 +168,7 @@ func newHandler(d deps) http.Handler {
 		Audit:  auditpg.NewRecorder(),
 		Notify: notificationspg.NewNotifier(),
 		Clock:  d.clock,
+		Signer: d.signer,
 	})
 	auth.NewHandler(authSvc, validation.New(), d.limiter, d.log).Register(r)
 

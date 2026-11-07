@@ -24,14 +24,21 @@ func TestHandler_RoutesAndPolicies(t *testing.T) {
 		"POST /v1/auth/register":      ratelimit.RegisterIP.Name,
 		"POST /v1/auth/verify":        ratelimit.CodeSubmitIP.Name,
 		"POST /v1/auth/verify/resend": ratelimit.CodeRequestIP.Name,
+		// Login limits per ip+email and per email in the handler, so the
+		// route itself carries no rule.
+		"POST /v1/auth/login": "",
 	}
 	got := map[string]string{}
 	for _, rt := range r.Routes() {
-		if !rt.Policy.Public || rt.Policy.Limit == nil {
-			t.Errorf("%s: policy = %+v, want public with a limit", rt.Pattern, rt.Policy)
+		if !rt.Policy.Public {
+			t.Errorf("%s: policy = %+v, want public", rt.Pattern, rt.Policy)
 			continue
 		}
-		got[rt.Pattern] = rt.Policy.Limit.Name
+		if rt.Policy.Limit != nil {
+			got[rt.Pattern] = rt.Policy.Limit.Name
+		} else {
+			got[rt.Pattern] = ""
+		}
 	}
 	for pattern, rule := range want {
 		if got[pattern] != rule {

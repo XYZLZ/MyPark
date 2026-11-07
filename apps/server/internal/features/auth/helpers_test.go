@@ -25,6 +25,7 @@ import (
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
@@ -35,10 +36,35 @@ import (
 
 var fastParams = hashing.Params{Memory: 1024, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
-// spyHasher counts Hash calls on a real, fast argon2id hasher.
+// spyHasher counts Hash calls and records the hash of every Verify call on a
+// real, fast argon2id hasher.
 type spyHasher struct {
 	hashing.PasswordHasher
 	hashes atomic.Int64
+
+	mu       sync.Mutex
+	verified []string
+}
+
+func (s *spyHasher) Verify(ctx context.Context, phc, pw string) (bool, bool, error) {
+	s.mu.Lock()
+	s.verified = append(s.verified, phc)
+	s.mu.Unlock()
+	return s.PasswordHasher.Verify(ctx, phc, pw)
+}
+
+// resetVerifies forgets the recorded Verify calls.
+func (s *spyHasher) resetVerifies() {
+	s.mu.Lock()
+	s.verified = nil
+	s.mu.Unlock()
+}
+
+// verifies returns the hashes passed to Verify since the last reset.
+func (s *spyHasher) verifies() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.verified)
 }
 
 func (s *spyHasher) Hash(ctx context.Context, pw string) (string, error) {
@@ -79,7 +105,11 @@ type env struct {
 	limiter *fakeLimiter
 	svc     *auth.Service
 	h       http.Handler
+	signer  *jwt.Signer
 }
+
+// jwtSeed is the Ed25519 seed of the test signer.
+var jwtSeed = bytes.Repeat([]byte("s"), 32)
 
 func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 	t.Helper()
@@ -93,7 +123,12 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	signer, err := jwt.NewSigner("test", jwtSeed, clk, jwt.AccessTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	d := auth.Deps{
+		Signer: signer,
 		Tx:     database.NewTxRunner(db.App),
 		Repo:   authpg.NewRepo(db.App),
 		Hasher: hasher,
@@ -115,7 +150,7 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 		RateLimit: router.PassthroughRateLimit,
 	})
 	auth.NewHandler(svc, validation.New(), lim, log).Register(r)
-	return &env{t: t, db: db, clock: clk, hasher: hasher, codes: codes, limiter: lim, svc: svc,
+	return &env{t: t, db: db, clock: clk, hasher: hasher, codes: codes, limiter: lim, svc: svc, signer: signer,
 		h: httpserver.NewHandler(log, mux, nil)}
 }
 

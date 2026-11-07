@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +46,8 @@ type CodeAttempt struct {
 // Repo is the persistence port of the auth feature. Every method runs in the
 // transaction carried by ctx when there is one.
 type Repo interface {
+	LoginRepo
+
 	// LockUserByEmail returns the non-deleted user with this email, locked.
 	LockUserByEmail(ctx context.Context, email string) (UserRow, bool, error)
 	// LockPendingDriverByEmail returns the non-deleted driver in
@@ -66,4 +69,43 @@ type Repo interface {
 	AttemptCode(ctx context.Context, userID int64, p Purpose, now time.Time, maxAttempts int) (CodeAttempt, bool, error)
 	// ConsumeCode marks a code used.
 	ConsumeCode(ctx context.Context, id int64, now time.Time) error
+}
+
+// LoginUser is the account a login attempt names. HasPassword is false for
+// an invited admin that has not accepted yet.
+type LoginUser struct {
+	UserRow
+	PasswordHash string
+	HasPassword  bool
+	View         UserView
+}
+
+// NewSession holds the values of a login session.
+type NewSession struct {
+	UserID     int64
+	ClientKind ClientKind
+	Now        time.Time
+	Absolute   time.Time
+	IP         netip.Addr
+	UserAgent  string
+}
+
+// SessionRow is a stored session.
+type SessionRow struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+// LoginRepo is the part of the persistence port used by login.
+type LoginRepo interface {
+	// FindUserForLogin returns the non-deleted user with this email, without
+	// locking it.
+	FindUserForLogin(ctx context.Context, email string) (LoginUser, bool, error)
+	// RehashPassword replaces oldHash with newHash, only while oldHash is
+	// still the stored hash.
+	RehashPassword(ctx context.Context, userID int64, oldHash, newHash string, now time.Time) error
+	// InsertSession creates a login session.
+	InsertSession(ctx context.Context, s NewSession) (SessionRow, error)
+	// InsertRefreshToken stores the SHA-256 of a refresh token.
+	InsertRefreshToken(ctx context.Context, sessionID int64, hash []byte, expiresAt, now time.Time) error
 }

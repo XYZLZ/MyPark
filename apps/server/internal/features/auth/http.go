@@ -10,6 +10,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/reqctx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
@@ -33,6 +34,7 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/auth/register", router.Policy{Public: true, Limit: &ratelimit.RegisterIP}, h.register)
 	r.Handle("POST /v1/auth/verify", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.verify)
 	r.Handle("POST /v1/auth/verify/resend", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.resend)
+	r.Handle("POST /v1/auth/login", router.Policy{Public: true}, h.login)
 }
 
 // Request bodies. Secret fields are secret.String so they never print.
@@ -54,6 +56,11 @@ type (
 	resendRequest struct {
 		Email string `json:"email" validate:"required,email,max=254"`
 	}
+	loginRequest struct {
+		Email      string        `json:"email" validate:"required,email,max=254"`
+		Password   secret.String `json:"password" validate:"required,max=128"`
+		ClientKind string        `json:"client_kind" validate:"required,oneof=web mobile"`
+	}
 )
 
 // normalize trims what the validator would otherwise accept as non-empty
@@ -67,6 +74,7 @@ func (q *registerRequest) normalize() {
 
 func (q *verifyRequest) normalize() { q.Email = NormalizeEmail(q.Email) }
 func (q *resendRequest) normalize() { q.Email = NormalizeEmail(q.Email) }
+func (q *loginRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
 
 // decode reads the JSON body, normalizes it, then validates it, so a blank
 // name fails validation instead of reaching a database CHECK.
@@ -82,10 +90,15 @@ func decode[T any, P interface {
 	return req, httpx.Validate(h.v, req)
 }
 
-// allowEmail applies the per-email code request rule. A limiter failure
-// fails closed (spec 10.2).
+// allowEmail applies the per-email code request rule.
 func (h *Handler) allowEmail(r *http.Request, email string) error {
-	d, err := h.limiter.Allow(r.Context(), ratelimit.CodeRequestEmail, email)
+	return h.allow(r, ratelimit.CodeRequestEmail, email)
+}
+
+// allow applies a custom-keyed rule. A limiter failure fails closed
+// (spec 10.2).
+func (h *Handler) allow(r *http.Request, rule ratelimit.Rule, key string) error {
+	d, err := h.limiter.Allow(r.Context(), rule, key)
 	if err != nil {
 		return err
 	}
@@ -147,4 +160,28 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, r, http.StatusAccepted, statusDTO{Status: "accepted"})
+}
+
+func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[loginRequest](h, r)
+	ip := reqctx.ClientIP(r.Context())
+	// Both limits run before any lookup or hashing, on the normalized email.
+	if err == nil {
+		err = h.allow(r, ratelimit.LoginIPEmail, ratelimit.IPKey(ip)+"|"+req.Email)
+	}
+	if err == nil {
+		err = h.allow(r, ratelimit.LoginEmail, req.Email)
+	}
+	var pair TokenPair
+	if err == nil {
+		pair, err = h.svc.Login(r.Context(), LoginInput{
+			Email: req.Email, Password: req.Password, ClientKind: ClientKind(req.ClientKind),
+			IP: ip, UserAgent: r.UserAgent(),
+		})
+	}
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.OK(w, r, http.StatusOK, newTokenResponse(pair))
 }

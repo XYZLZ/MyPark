@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -94,6 +95,59 @@ func (q *Queries) ConsumeLiveAuthCodes(ctx context.Context, arg ConsumeLiveAuthC
 	return err
 }
 
+const findUserForLogin = `-- name: FindUserForLogin :one
+select id, public_id, email, password_hash, first_name, last_name, phone, role, status, locale,
+       email_verified_at, terms_version, terms_accepted_at, privacy_version,
+       privacy_accepted_at, created_at
+from users
+where email = $1 and deleted_at is null
+`
+
+type FindUserForLoginRow struct {
+	ID                int64
+	PublicID          uuid.UUID
+	Email             string
+	PasswordHash      pgtype.Text
+	FirstName         string
+	LastName          string
+	Phone             pgtype.Text
+	Role              string
+	Status            string
+	Locale            string
+	EmailVerifiedAt   pgtype.Timestamptz
+	TermsVersion      pgtype.Text
+	TermsAcceptedAt   pgtype.Timestamptz
+	PrivacyVersion    pgtype.Text
+	PrivacyAcceptedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
+// The non-deleted account with this email, unlocked: login verifies the
+// password before it opens a transaction.
+func (q *Queries) FindUserForLogin(ctx context.Context, email string) (FindUserForLoginRow, error) {
+	row := q.db.QueryRow(ctx, findUserForLogin, email)
+	var i FindUserForLoginRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.Role,
+		&i.Status,
+		&i.Locale,
+		&i.EmailVerifiedAt,
+		&i.TermsVersion,
+		&i.TermsAcceptedAt,
+		&i.PrivacyVersion,
+		&i.PrivacyAcceptedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertAuthCode = `-- name: InsertAuthCode :one
 insert into auth_codes (user_id, purpose, code_hash, expires_at, created_at)
 values ($1, $2, $3, $4, $5)
@@ -119,6 +173,42 @@ func (q *Queries) InsertAuthCode(ctx context.Context, arg InsertAuthCodeParams) 
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertAuthSession = `-- name: InsertAuthSession :one
+insert into auth_sessions (user_id, client_kind, created_at, last_used_at, absolute_expires_at,
+                           created_ip, user_agent)
+values ($1, $2, $3, $3, $4, $5,
+        $6)
+returning id, public_id
+`
+
+type InsertAuthSessionParams struct {
+	UserID            int64
+	ClientKind        string
+	Now               pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	CreatedIp         *netip.Addr
+	UserAgent         pgtype.Text
+}
+
+type InsertAuthSessionRow struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+func (q *Queries) InsertAuthSession(ctx context.Context, arg InsertAuthSessionParams) (InsertAuthSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertAuthSession,
+		arg.UserID,
+		arg.ClientKind,
+		arg.Now,
+		arg.AbsoluteExpiresAt,
+		arg.CreatedIp,
+		arg.UserAgent,
+	)
+	var i InsertAuthSessionRow
+	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
 }
 
 const insertPendingDriver = `-- name: InsertPendingDriver :one
@@ -162,6 +252,28 @@ func (q *Queries) InsertPendingDriver(ctx context.Context, arg InsertPendingDriv
 	var i InsertPendingDriverRow
 	err := row.Scan(&i.ID, &i.PublicID)
 	return i, err
+}
+
+const insertRefreshToken = `-- name: InsertRefreshToken :exec
+insert into refresh_tokens (session_id, token_hash, created_at, expires_at)
+values ($1, $2, $3, $4)
+`
+
+type InsertRefreshTokenParams struct {
+	SessionID int64
+	TokenHash []byte
+	Now       pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
+	_, err := q.db.Exec(ctx, insertRefreshToken,
+		arg.SessionID,
+		arg.TokenHash,
+		arg.Now,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const lockPendingDriverByEmail = `-- name: LockPendingDriverByEmail :one
@@ -257,6 +369,31 @@ func (q *Queries) OverwritePendingDriver(ctx context.Context, arg OverwritePendi
 		arg.TermsVersion,
 		arg.PrivacyVersion,
 		arg.ID,
+	)
+	return err
+}
+
+const rehashPassword = `-- name: RehashPassword :exec
+update users
+set password_hash = $1, updated_at = $2
+where id = $3 and password_hash = $4
+`
+
+type RehashPasswordParams struct {
+	NewHash pgtype.Text
+	Now     pgtype.Timestamptz
+	ID      int64
+	OldHash pgtype.Text
+}
+
+// Compare-and-set, so a password changed since the login read is never
+// overwritten by the upgrade.
+func (q *Queries) RehashPassword(ctx context.Context, arg RehashPasswordParams) error {
+	_, err := q.db.Exec(ctx, rehashPassword,
+		arg.NewHash,
+		arg.Now,
+		arg.ID,
+		arg.OldHash,
 	)
 	return err
 }

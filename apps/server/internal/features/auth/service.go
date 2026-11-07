@@ -29,7 +29,7 @@ type Deps struct {
 	Notify notifications.Notifier
 	Clock  clock.Clock
 	Rand   io.Reader
-	// Signer is used by the login use cases of later slices.
+	// Signer issues the access tokens of login and refresh.
 	Signer *jwt.Signer
 }
 
