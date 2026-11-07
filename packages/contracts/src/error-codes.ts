@@ -2,11 +2,31 @@
 // Source: apps/server/internal/domain/errcodes/errcodes.go
 
 export const ERROR_CODES = [
+  "auth.account_suspended",
+  "auth.code_invalid",
+  "auth.email_not_verified",
+  "auth.forbidden",
+  "auth.invalid_credentials",
+  "auth.password_incorrect",
+  "auth.refresh_invalid",
+  "auth.session_revoked",
+  "auth.unauthenticated",
   "health.not_ready",
+  "http.invalid_json",
   "http.method_not_allowed",
   "http.not_found",
+  "http.payload_too_large",
+  "http.unsupported_media_type",
   "internal.unexpected",
+  "legal.acceptance_required",
+  "legal.version_outdated",
+  "rate_limit.exceeded",
+  "user.email_taken",
   "validation.failed",
+  "vehicle.in_use",
+  "vehicle.limit_reached",
+  "vehicle.not_found",
+  "vehicle.plate_taken",
 ] as const;
 
 export type ErrorCode = typeof ERROR_CODES[number];

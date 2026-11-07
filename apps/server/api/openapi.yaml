@@ -14,6 +14,16 @@ servers:
 tags:
   - name: health
     description: Liveness and readiness probes.
+  - name: legal
+    description: Current terms and privacy documents.
+  - name: auth
+    description: Registration, login, sessions and password recovery.
+  - name: me
+    description: The current user.
+  - name: vehicles
+    description: The current driver's vehicles.
+  - name: admin
+    description: Admin user management.
 paths:
   /healthz:
     get:
@@ -75,6 +85,642 @@ paths:
                     migrations: behind
                 meta:
                   request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9
+  /v1/legal/current:
+    get:
+      operationId: getLegalCurrent
+      summary: Current terms and privacy documents
+      tags: [legal]
+      security: []
+      responses:
+        "200":
+          description: The current terms and privacy documents.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/LegalCurrent" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+  /v1/auth/register:
+    post:
+      operationId: register
+      summary: Register a driver account
+      description: >-
+        Always answers 202 with the same body, whether or not the email is
+        already in use, so the endpoint does not reveal which emails exist.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "202":
+          description: Registration accepted. A verification code is emailed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data:
+                        type: object
+                        additionalProperties: false
+                        required: [status]
+                        properties:
+                          status: { type: string, const: verification_pending }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: The submitted legal versions are not the current ones.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: legal.version_outdated
+                  message: legal version outdated
+                  details: { terms_version: "2026-11-16", privacy_version: "2026-11-16" }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/verify:
+    post:
+      operationId: verifyEmail
+      summary: Verify an email address with the emailed code
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyEmailRequest" }
+      responses:
+        "204": { description: Email verified. No body. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationOrCodeInvalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/verify/resend:
+    post:
+      operationId: resendVerification
+      summary: Resend the verification code
+      description: Always answers 202, whether or not the account exists.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResendVerificationRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/login:
+    post:
+      operationId: login
+      summary: Log in with email and password
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Logged in. Returns an access token and a refresh token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/TokenResponse" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Wrong email or password. One code for both.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: auth.invalid_credentials, message: invalid credentials, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "403":
+          description: Correct password, but the account cannot log in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                emailNotVerified:
+                  summary: The account is pending email verification.
+                  value:
+                    error: { code: auth.email_not_verified, message: email not verified, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                accountSuspended:
+                  summary: The account is suspended.
+                  value:
+                    error: { code: auth.account_suspended, message: account suspended, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate the refresh token and get a new access token
+      description: >-
+        An empty, malformed or unknown refresh token is answered with 401
+        auth.refresh_invalid, never 422.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshSessionRequest" }
+      responses:
+        "200":
+          description: Session refreshed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/TokenResponse" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: The refresh token is unknown, expired or already rotated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                refreshInvalid:
+                  summary: Unknown, expired or malformed refresh token.
+                  value:
+                    error: { code: auth.refresh_invalid, message: refresh token invalid, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                sessionRevoked:
+                  summary: The session was revoked or the token was reused.
+                  value:
+                    error: { code: auth.session_revoked, message: session revoked, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke the current session
+      description: >-
+        A second logout with an already revoked session answers 401
+        auth.session_revoked, not 204.
+      tags: [auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Session revoked. No body. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      summary: Revoke every session of the current user
+      tags: [auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: All sessions revoked. No body. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/auth/password/forgot:
+    post:
+      operationId: forgotPassword
+      summary: Request a password reset code
+      description: Always answers 202, whether or not the account exists.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForgotPasswordRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/password/reset:
+    post:
+      operationId: resetPassword
+      summary: Set a new password with the emailed code
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResetPasswordRequest" }
+      responses:
+        "204": { description: Password changed and every session revoked. No body. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationOrCodeInvalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/auth/invitations/accept:
+    post:
+      operationId: acceptInvitation
+      summary: Accept an admin invitation and set a password
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptInvitationRequest" }
+      responses:
+        "204": { description: Invitation accepted. No body. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationOrCodeInvalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: Get the current user
+      tags: [me]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The current user.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      operationId: updateMe
+      summary: Update the current user profile
+      description: A null phone clears it.
+      tags: [me]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMeRequest" }
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      operationId: deleteMe
+      summary: Delete the current driver account
+      description: Requires the current password. Not blocked by a pending legal acceptance.
+      tags: [me]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteMeRequest" }
+      responses:
+        "204": { description: Account deleted. No body. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Role or account state not allowed, or the password is wrong.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                forbidden:
+                  summary: The role is not allowed on this route.
+                  value:
+                    error: { code: auth.forbidden, message: forbidden, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                accountSuspended:
+                  summary: The account is suspended.
+                  value:
+                    error: { code: auth.account_suspended, message: account suspended, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                passwordIncorrect:
+                  summary: Re-authentication failed.
+                  value:
+                    error: { code: auth.password_incorrect, message: password incorrect, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /v1/me/legal-acceptance:
+    post:
+      operationId: acceptLegal
+      summary: Accept the current terms and privacy versions
+      tags: [me]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptLegalRequest" }
+      responses:
+        "204": { description: Acceptance stored. No body. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The submitted versions are not the current ones.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: legal.version_outdated
+                  message: legal version outdated
+                  details: { terms_version: "2026-11-16", privacy_version: "2026-11-16" }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /v1/vehicles:
+    get:
+      operationId: listVehicles
+      summary: List the current driver's vehicles
+      description: >-
+        At most MAX_VEHICLES_PER_USER (5) items. meta.page.limit equals that
+        cap and meta.page.next_cursor is always null.
+      tags: [vehicles]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The driver's vehicles.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Vehicle" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+    post:
+      operationId: createVehicle
+      summary: Register a vehicle
+      tags: [vehicles]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVehicleRequest" }
+      responses:
+        "201":
+          description: The created vehicle.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/Vehicle" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "409":
+          description: The plate is already in use, or the vehicle limit is reached.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                plateTaken:
+                  summary: The plate is active on another account.
+                  value:
+                    error: { code: vehicle.plate_taken, message: plate already registered, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                limitReached:
+                  summary: The driver already has the maximum number of vehicles.
+                  value:
+                    error: { code: vehicle.limit_reached, message: vehicle limit reached, details: { limit: 5 } }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/vehicles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Vehicle id. A malformed id is answered 404 vehicle.not_found.
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getVehicle
+      summary: Get one of the current driver's vehicles
+      tags: [vehicles]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The vehicle.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/Vehicle" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/VehicleNotFound" }
+    patch:
+      operationId: updateVehicle
+      summary: Update one of the current driver's vehicles
+      tags: [vehicles]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateVehicleRequest" }
+      responses:
+        "200":
+          description: The updated vehicle.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/Vehicle" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/VehicleNotFound" }
+        "409":
+          description: The plate is active on another account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: vehicle.plate_taken, message: plate already registered, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteVehicle
+      summary: Delete one of the current driver's vehicles
+      tags: [vehicles]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Vehicle deleted. No body. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/VehicleNotFound" }
+        "409":
+          description: The vehicle is in use by an active reservation (from M3).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: vehicle.in_use, message: vehicle in use, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/admin/admins:
+    get:
+      operationId: listAdmins
+      summary: List admin users
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor from a previous meta.page.next_cursor.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of admin users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AdminUser" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createAdmin
+      summary: Invite an admin
+      description: >-
+        Answers 201 for a new invitation or when taking over a pending driver
+        registration, and 200 when re-issuing the invitation to a pending
+        invitee.
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAdminRequest" }
+      responses:
+        "200":
+          description: The invitation was re-issued to a pending invitee.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/AdminUser" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "201":
+          description: The invitation was created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - type: object
+                    required: [data, meta]
+                    properties:
+                      data: { $ref: "#/components/schemas/AdminUser" }
+                      meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The email belongs to an active or suspended account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: user.email_taken, message: email already in use, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
 components:
   schemas:
     Health:
@@ -164,3 +810,356 @@ components:
           $ref: "#/components/schemas/ErrorBody"
         meta:
           $ref: "#/components/schemas/Meta"
+    LegalDocument:
+      type: object
+      additionalProperties: false
+      required: [version, published_at, url_es, url_en]
+      properties:
+        version: { type: string }
+        published_at: { type: string, format: date-time }
+        url_es: { type: string }
+        url_en: { type: string }
+    LegalCurrent:
+      type: object
+      additionalProperties: false
+      required: [terms, privacy]
+      properties:
+        terms: { $ref: "#/components/schemas/LegalDocument" }
+        privacy: { $ref: "#/components/schemas/LegalDocument" }
+    AcceptedStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, const: accepted }
+    UserLegal:
+      type: object
+      additionalProperties: false
+      required: [terms_version, terms_accepted_at, privacy_version, privacy_accepted_at]
+      properties:
+        terms_version: { type: [string, "null"] }
+        terms_accepted_at: { type: [string, "null"], format: date-time }
+        privacy_version: { type: [string, "null"] }
+        privacy_accepted_at: { type: [string, "null"], format: date-time }
+    User:
+      type: object
+      additionalProperties: false
+      required:
+        [id, email, first_name, last_name, phone, role, status, locale, email_verified_at, legal, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        first_name: { type: string, minLength: 1, maxLength: 60 }
+        last_name: { type: string, minLength: 1, maxLength: 80 }
+        phone: { type: [string, "null"], description: E.164. }
+        role: { type: string, enum: [driver, admin] }
+        status: { type: string, enum: [pending_verification, active, suspended] }
+        locale: { type: string, enum: [es-DO, en] }
+        email_verified_at: { type: [string, "null"], format: date-time }
+        legal: { $ref: "#/components/schemas/UserLegal" }
+        created_at: { type: string, format: date-time }
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [access_token, token_type, expires_in, refresh_token, refresh_expires_in, legal_acceptance_required, user]
+      properties:
+        access_token: { type: string, description: JWT. }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, description: Access token lifetime in seconds. }
+        refresh_token: { type: string, description: Opaque base64url token. }
+        refresh_expires_in: { type: integer, description: Refresh token lifetime in seconds. }
+        legal_acceptance_required: { type: boolean }
+        user: { $ref: "#/components/schemas/User" }
+    Vehicle:
+      type: object
+      additionalProperties: false
+      required: [id, plate, plate_normalized, make, model, color, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        plate: { type: string, description: Plate as the driver typed it. }
+        plate_normalized: { type: string, pattern: '^[A-Z0-9]{2,10}$' }
+        make: { type: string }
+        model: { type: string }
+        color: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [id, email, first_name, last_name, status, locale, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        first_name: { type: string, minLength: 1, maxLength: 60 }
+        last_name: { type: string, minLength: 1, maxLength: 80 }
+        status: { type: string, enum: [pending_verification, active, suspended] }
+        locale: { type: string, enum: [es-DO, en] }
+        created_at: { type: string, format: date-time }
+    RegisterRequest:
+      type: object
+      required: [email, password, first_name, last_name, accepted_terms_version, accepted_privacy_version]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 10, maxLength: 128 }
+        first_name: { type: string, minLength: 1, maxLength: 60 }
+        last_name: { type: string, minLength: 1, maxLength: 80 }
+        phone:
+          type: string
+          pattern: '^\+[1-9][0-9]{6,14}$'
+          description: E.164. An empty string means no phone.
+        locale: { type: string, enum: [es-DO, en], default: es-DO }
+        accepted_terms_version: { type: string }
+        accepted_privacy_version: { type: string }
+    VerifyEmailRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+    ResendVerificationRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+    LoginRequest:
+      type: object
+      required: [email, password, client_kind]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, maxLength: 128 }
+        client_kind: { type: string, enum: [web, mobile] }
+    RefreshSessionRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: >-
+            Opaque token. No length rule is enforced here; an empty or
+            malformed token is answered 401 auth.refresh_invalid.
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+    ResetPasswordRequest:
+      type: object
+      required: [email, code, new_password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+        new_password: { type: string, minLength: 10, maxLength: 128 }
+    AcceptInvitationRequest:
+      type: object
+      required: [email, code, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+        password: { type: string, minLength: 10, maxLength: 128 }
+    UpdateMeRequest:
+      type: object
+      properties:
+        first_name: { type: string, minLength: 1, maxLength: 60 }
+        last_name: { type: string, minLength: 1, maxLength: 80 }
+        phone:
+          type: [string, "null"]
+          pattern: '^\+[1-9][0-9]{6,14}$'
+          description: E.164. Null or an empty string clears the phone.
+        locale: { type: string, enum: [es-DO, en] }
+    DeleteMeRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, maxLength: 128 }
+    AcceptLegalRequest:
+      type: object
+      required: [terms_version, privacy_version]
+      properties:
+        terms_version: { type: string }
+        privacy_version: { type: string }
+    CreateVehicleRequest:
+      type: object
+      required: [plate, make, model, color]
+      properties:
+        plate:
+          type: string
+          minLength: 2
+          maxLength: 15
+          description: >-
+            Normalized (uppercase, spaces and dashes removed) and then
+            checked against ^[A-Z0-9]{2,10}$.
+        make: { type: string, minLength: 1, maxLength: 50 }
+        model: { type: string, minLength: 1, maxLength: 50 }
+        color: { type: string, minLength: 1, maxLength: 30 }
+    UpdateVehicleRequest:
+      type: object
+      properties:
+        plate: { type: string, minLength: 2, maxLength: 15 }
+        make: { type: string, minLength: 1, maxLength: 50 }
+        model: { type: string, minLength: 1, maxLength: 50 }
+        color: { type: string, minLength: 1, maxLength: 30 }
+    CreateAdminRequest:
+      type: object
+      required: [email, first_name, last_name]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        first_name: { type: string, minLength: 1, maxLength: 60 }
+        last_name: { type: string, minLength: 1, maxLength: 80 }
+        locale: { type: string, enum: [es-DO, en], default: es-DO }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Accepted:
+      description: Request accepted. The answer is the same whether or not the account exists.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/AcceptedStatus" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+    BadRequest:
+      description: The body is not valid JSON or has the wrong JSON types.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: http.invalid_json, message: invalid json body, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    PayloadTooLarge:
+      description: The body is larger than 64 KiB.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: http.payload_too_large, message: payload too large, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    UnsupportedMediaType:
+      description: The body is not application/json.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: http.unsupported_media_type, message: unsupported media type, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    ValidationFailed:
+      description: >-
+        Input validation failed. error.details.fields lists field, rule and
+        param. The submitted value is never echoed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: validation.failed
+              message: validation failed
+              details: { fields: [{ field: email, rule: email }] }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    ValidationOrCodeInvalid:
+      description: >-
+        Either input validation failed (validation.failed) or the code is
+        wrong, expired or used (auth.code_invalid).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            validationFailed:
+              summary: A field is invalid.
+              value:
+                error:
+                  code: validation.failed
+                  message: validation failed
+                  details: { fields: [{ field: code, rule: len, param: "6" }] }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+            codeInvalid:
+              summary: The code is wrong, expired or already used.
+              value:
+                error: { code: auth.code_invalid, message: code invalid, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    RateLimited:
+      description: Too many requests.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: rate_limit.exceeded
+              message: rate limit exceeded
+              details: { retry_after_seconds: 30 }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    Unauthorized:
+      description: The bearer token is missing or invalid, or the session was revoked.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            unauthenticated:
+              summary: Missing, malformed, expired or badly signed token.
+              value:
+                error: { code: auth.unauthenticated, message: unauthenticated, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+            sessionRevoked:
+              summary: The session was revoked.
+              value:
+                error: { code: auth.session_revoked, message: session revoked, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    Forbidden:
+      description: The role is not allowed, or the account is suspended.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            forbidden:
+              summary: The role is not allowed on this route.
+              value:
+                error: { code: auth.forbidden, message: forbidden, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+            accountSuspended:
+              summary: The account is suspended.
+              value:
+                error: { code: auth.account_suspended, message: account suspended, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    ForbiddenLegal:
+      description: >-
+        The role is not allowed, the account is suspended, or a driver must
+        accept the current legal documents first.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            forbidden:
+              summary: The role is not allowed on this route.
+              value:
+                error: { code: auth.forbidden, message: forbidden, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+            accountSuspended:
+              summary: The account is suspended.
+              value:
+                error: { code: auth.account_suspended, message: account suspended, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+            legalAcceptanceRequired:
+              summary: The driver has not accepted the current legal versions.
+              value:
+                error:
+                  code: legal.acceptance_required
+                  message: legal acceptance required
+                  details: { terms_version: "2026-11-16", privacy_version: "2026-11-16" }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    VehicleNotFound:
+      description: The vehicle does not exist, is deleted, is owned by someone else, or the id is malformed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: vehicle.not_found, message: vehicle not found, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
