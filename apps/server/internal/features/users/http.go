@@ -10,6 +10,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
@@ -35,7 +36,7 @@ func NewHandler(s *Service, v *validation.Validator, log *slog.Logger) *Handler 
 func (h *Handler) Register(r *router.Router) {
 	r.Handle("GET /v1/me", router.Policy{Roles: router.AnyRole, LegalExempt: true}, h.get)
 	r.Handle("PATCH /v1/me", router.Policy{Roles: router.AnyRole}, h.patch)
-	r.Handle("DELETE /v1/me", router.Policy{Roles: router.DriverOnly, LegalExempt: true}, h.delete)
+	r.Handle("DELETE /v1/me", router.Policy{Roles: router.DriverOnly, LegalExempt: true, Limit: &ratelimit.DeleteAccountUser}, h.delete)
 	r.Handle("POST /v1/me/legal-acceptance", router.Policy{Roles: router.DriverOnly, LegalExempt: true}, h.acceptLegal)
 	h.registerAdmin(r)
 }

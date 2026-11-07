@@ -184,7 +184,7 @@ The facility belongs to Banreservas. The product is **MyPark**, shown as "MyPark
 | Passwords | argon2id. Minimum 10 characters; checked against a common-password list; no composition rules |
 | Sessions | 15-min access tokens; rotating refresh tokens with reuse detection; web tokens only in `httpOnly; Secure; SameSite=Lax` cookies |
 | CSRF | BFF mutations require an `Origin` match + double-submit token |
-| Rate limits | Login 5/min per IP+email; register / code requests 3/min per IP; reservation create 10/min per user; device API 100/s per device |
+| Rate limits | Login 5/min per IP+email; register / code requests 3/min per IP; reservation create 10/min per user; device API 100/s per device. Added in M1 (OC-23): login 20/hour per email (any IP); code emails 5/hour per email; code submission 10/min per IP; refresh 60/min per IP; vehicle writes 20/min per user; account deletion 5 per 15 min per user. Auth rules fail closed on a limiter error; the vehicle rule fails open |
 | CORS | Explicit allow-list (web origin, Expo dev origins in development only). No wildcard with credentials |
 | Input | All input validated at the edge (zod in clients, explicit validation in Go). SQL only through sqlc parameterized queries |
 | Authorization | Deny by default. Every use case checks role **and** ownership. Admin actions are audited |

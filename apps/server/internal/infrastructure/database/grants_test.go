@@ -22,7 +22,7 @@ func TestGrants_AppDMLOnIdentityTables(t *testing.T) {
 	db := testsupport.NewTestDB(t)
 	// Each privilege is checked on its own: has_table_privilege with a list
 	// is true when ANY privilege is held.
-	for _, table := range []string{"users", "auth_sessions", "refresh_tokens", "auth_codes", "legal_documents", "vehicles"} {
+	for _, table := range []string{"users", "auth_sessions", "refresh_tokens", "auth_codes", "legal_documents", "vehicles", "rate_limit_counters"} {
 		for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 			var ok bool
 			err := db.Super.QueryRow(t.Context(),
@@ -264,5 +264,22 @@ func TestVehicles_ChecksAndActivePlateUniqueness(t *testing.T) {
 	}
 	if got := execCode(t, pool, ins, uid, "ABC123", "ABC123", "Toyota"); got != "" {
 		t.Errorf("reuse after soft delete SQLSTATE = %q, want success", got)
+	}
+}
+
+func TestRateLimitCounters_UnloggedWithPurgeIndex(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	var persistence string
+	if err := db.Super.QueryRow(t.Context(),
+		`select relpersistence::text from pg_class where relname = 'rate_limit_counters'`).Scan(&persistence); err != nil {
+		t.Fatalf("relpersistence: %v", err)
+	}
+	if persistence != "u" {
+		t.Errorf("rate_limit_counters persistence = %q, want u (unlogged)", persistence)
+	}
+	var indexed bool
+	if err := db.Super.QueryRow(t.Context(),
+		`select exists (select 1 from pg_indexes where tablename = 'rate_limit_counters' and indexdef like '%(expires_at)%')`).Scan(&indexed); err != nil || !indexed {
+		t.Errorf("expires_at index present = %v, %v; want true", indexed, err)
 	}
 }

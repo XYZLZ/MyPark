@@ -117,10 +117,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		pool:   pool,
 		clock:  clock.System{},
 		// Argon2id with the spec 7.1 parameters; at most 4 derivations at once.
-		hasher: hashing.NewArgon2id(hashing.DefaultParams, maxConcurrentHashes),
-		codes:  codes,
-		// The Postgres limiter replaces Noop in the rate limiting slice.
-		limiter: ratelimit.Noop{},
+		hasher:  hashing.NewArgon2id(hashing.DefaultParams, maxConcurrentHashes),
+		codes:   codes,
+		limiter: ratelimit.NewPostgres(pool, clock.System{}),
 		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
 	}
 	srv := httpserver.New(cfg.HTTPAddr(), newHandler(d), log)
@@ -162,7 +161,7 @@ func newHandler(d deps) http.Handler {
 	gates := authn.New(auth.NewAuthenticator(verifier, authRepo, legalSvc, d.clock), d.log, authn.WithLegal(legalSvc))
 	r := router.New(mux, router.Middlewares{
 		ClientIP:  middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
-		RateLimit: router.PassthroughRateLimit,
+		RateLimit: middleware.RateLimit(d.limiter, d.log),
 		Authn:     gates.Authn,
 		Roles:     gates.Roles,
 		Legal:     gates.Legal,

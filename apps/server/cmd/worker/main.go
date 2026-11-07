@@ -1,5 +1,6 @@
 // Command worker is the MyPark background job runner. It delivers the email
-// outbox over SMTP every 2 s and purges expired auth data (hourly) and old
+// outbox over SMTP every 2 s and purges expired rate-limit counters (every
+// minute), expired auth data (hourly) and old
 // outbox rows (daily). It also serves the health probes on WORKER_HEALTH_ADDR
 // (default :8091), /healthz for liveness and /readyz for the database and
 // migrations.
@@ -33,6 +34,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/email"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jobs"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
 )
@@ -51,9 +53,10 @@ const (
 	// time each.
 	maxConns = 8
 
-	dispatchEvery    = 2 * time.Second
-	authPurgeEvery   = time.Hour
-	outboxPurgeEvery = 24 * time.Hour
+	dispatchEvery       = 2 * time.Second
+	rateLimitPurgeEvery = time.Minute
+	authPurgeEvery      = time.Hour
+	outboxPurgeEvery    = 24 * time.Hour
 )
 
 func main() {
@@ -119,7 +122,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	return httpserver.Serve(ctx, log, srv, serviceName, "version", version)
 }
 
-// workerJobs lists the periodic jobs. The rate-limit purge joins in A22.
+// workerJobs lists the periodic jobs.
 func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, log *slog.Logger) []jobs.Job {
 	sender := email.NewSMTP(email.SMTPConfig{
 		Host: cfg.SMTPHost(), Port: cfg.SMTPPort(),
@@ -130,6 +133,10 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
+			return err
+		}},
+		{Name: "rate_limit_purge", Every: rateLimitPurgeEvery, Run: func(ctx context.Context) error {
+			_, err := ratelimit.Purge(ctx, pool, clk.Now())
 			return err
 		}},
 		{Name: "auth-purge", Every: authPurgeEvery, Run: authPurger.Purge},

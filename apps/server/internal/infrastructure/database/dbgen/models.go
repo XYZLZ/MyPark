@@ -99,6 +99,13 @@ type OutboxMessage struct {
 	SentAt      pgtype.Timestamptz
 }
 
+type RateLimitCounter struct {
+	Key         []byte
+	WindowStart pgtype.Timestamptz
+	Count       int32
+	ExpiresAt   pgtype.Timestamptz
+}
+
 type RefreshToken struct {
 	ID        int64
 	SessionID int64

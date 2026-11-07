@@ -26,6 +26,7 @@ func TestRules_MatchSpec(t *testing.T) {
 		{"CodeSubmitIP", ratelimit.CodeSubmitIP, 10, time.Minute, "codesub:", ratelimit.KeyIP, false},
 		{"RefreshIP", ratelimit.RefreshIP, 60, time.Minute, "refresh:", ratelimit.KeyIP, false},
 		{"VehicleWriteUser", ratelimit.VehicleWriteUser, 20, time.Minute, "veh:", ratelimit.KeyUser, true},
+		{"DeleteAccountUser", ratelimit.DeleteAccountUser, 5, 15 * time.Minute, "delme:", ratelimit.KeyUser, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

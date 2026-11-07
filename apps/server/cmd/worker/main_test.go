@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jobs"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
@@ -152,5 +155,32 @@ func TestWorker_DeliversOutbox(t *testing.T) {
 	}
 	if status != "sent" || strings.Contains(string(payload), "424242") {
 		t.Errorf("row status %q payload %s, want sent and scrubbed", status, payload)
+	}
+}
+
+func TestWorkerJobs_RateLimitPurgeEveryMinute(t *testing.T) {
+	db := testsupport.NewDB(t)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	if _, err := db.Exec(t.Context(), `insert into rate_limit_counters (key, window_start, count, expires_at)
+		values ('\x01', $1, 1, $2), ('\x02', $1, 1, $3)`,
+		clk.Now().Add(-2*time.Minute), clk.Now().Add(-time.Minute), clk.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("seed counters: %v", err)
+	}
+	var job *jobs.Job
+	list := workerJobs(db, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "rate_limit_purge" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != time.Minute {
+		t.Fatalf("rate_limit_purge job = %+v, want one running every minute", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var left int
+	if err := db.QueryRow(t.Context(), `select count(*) from rate_limit_counters`).Scan(&left); err != nil || left != 1 {
+		t.Fatalf("rows left = %d, %v; want only the live one", left, err)
 	}
 }
