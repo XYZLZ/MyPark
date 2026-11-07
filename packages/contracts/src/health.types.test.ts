@@ -1,5 +1,6 @@
 import { expectTypeOf, test } from 'vitest';
-import type { ErrorEnvelope, Health, Readiness, ReadinessChecks } from './health';
+import type { ErrorEnvelope, Meta, Page } from './envelope';
+import type { Health, Readiness, ReadinessChecks } from './health';
 import type { components } from './openapi';
 
 type Schemas = components['schemas'];
@@ -16,6 +17,15 @@ test('zod ReadinessChecks matches the OpenAPI ReadinessChecks schema', () => {
 
 test('zod Readiness matches the OpenAPI Readiness schema', () => {
   expectTypeOf<Readiness>().toEqualTypeOf<Schemas['Readiness']>();
+});
+
+test('zod Page matches the OpenAPI Page schema', () => {
+  expectTypeOf<Page>().toEqualTypeOf<Schemas['Page']>();
+});
+
+test('zod Meta matches the OpenAPI Meta schema', () => {
+  expectTypeOf<Meta>().toExtend<Schemas['Meta']>();
+  expectTypeOf<Schemas['Meta']>().toExtend<Meta>();
 });
 
 test('zod ErrorEnvelope matches the OpenAPI ErrorEnvelope schema', () => {

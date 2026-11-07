@@ -67,19 +67,30 @@ export interface components {
             status: "ready";
             checks: components["schemas"]["ReadinessChecks"];
         };
-        ErrorEnvelope: {
-            error: {
-                /** @description Stable machine-readable code in "<domain>.<reason>" snake_case format. This is the client contract; see packages/contracts/src/error-codes.ts. */
-                code: string;
-                /** @description Developer-facing message. Never shown to end users. */
-                message: string;
-                /** @description Optional structured context for the error. The server currently always sends this key, possibly as an empty object {}. For health.not_ready it carries the ReadinessChecks object. */
-                details?: {
-                    [key: string]: unknown;
-                };
-                /** @description Request correlation identifier. */
-                request_id: string;
+        Page: {
+            /** @description Maximum number of items in this page. */
+            limit: number;
+            /** @description Opaque cursor for the next page, or null on the last page. */
+            next_cursor: string | null;
+        };
+        Meta: {
+            /** @description Request correlation identifier, equal to the X-Request-Id header. */
+            request_id: string;
+            page?: components["schemas"]["Page"];
+        };
+        ErrorBody: {
+            /** @description Stable machine-readable code in "<domain>.<reason>" snake_case format. This is the client contract; see packages/contracts/src/error-codes.ts. */
+            code: string;
+            /** @description Developer-facing message. Never shown to end users. */
+            message: string;
+            /** @description Structured context for the error. Always present, possibly as an empty object {}. For health.not_ready it carries the ReadinessChecks object. */
+            details: {
+                [key: string]: unknown;
             };
+        };
+        ErrorEnvelope: {
+            error: components["schemas"]["ErrorBody"];
+            meta: components["schemas"]["Meta"];
         };
     };
     responses: never;
@@ -105,7 +116,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Health"];
+                    "application/json": {
+                        data: components["schemas"]["Health"];
+                        meta: components["schemas"]["Meta"];
+                    };
                 };
             };
         };
@@ -125,7 +139,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Readiness"];
+                    "application/json": {
+                        data: components["schemas"]["Readiness"];
+                        meta: components["schemas"]["Meta"];
+                    };
                 };
             };
             /** @description The service is not ready. error.code is "health.not_ready". */
@@ -142,7 +159,9 @@ export interface operations {
                      *         "details": {
                      *           "database": "ok",
                      *           "migrations": "behind"
-                     *         },
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
                      *       }
                      *     }

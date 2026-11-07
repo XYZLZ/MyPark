@@ -20,14 +20,14 @@ test('createHttpClient rejects on network errors', async () => {
 test('getApiHealth probes /readyz and reports healthy', async () => {
   const fetchImpl = jest
     .fn()
-    .mockResolvedValue(jsonResponse(200, { status: 'ready', checks: { database: 'ok', migrations: 'ok' } }));
+    .mockResolvedValue(jsonResponse(200, { data: { status: 'ready', checks: { database: 'ok', migrations: 'ok' } }, meta: { request_id: 'r1' } }));
   const client = createHttpClient('http://api.test', fetchImpl);
   expect(await getApiHealth(client)).toBe('healthy');
   expect(fetchImpl).toHaveBeenCalledWith('http://api.test/readyz', expect.objectContaining({ method: 'GET' }));
 });
 
 test('getApiHealth reports not_ready on a 503 health.not_ready envelope', async () => {
-  const body = { error: { code: 'health.not_ready', message: 'migrations behind', request_id: 'r1' } };
+  const body = { error: { code: 'health.not_ready', message: 'migrations behind', details: {} }, meta: { request_id: 'r1' } };
   const client = createHttpClient('http://api.test', jest.fn().mockResolvedValue(jsonResponse(503, body)));
   expect(await getApiHealth(client)).toBe('not_ready');
 });

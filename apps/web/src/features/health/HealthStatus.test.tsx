@@ -58,7 +58,7 @@ describe('getApiHealth', () => {
   test('returns healthy for a 200 readiness body, fetched without cache and with a timeout', async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     const fetchMock = vi.fn().mockResolvedValue(
-      Response.json({ status: 'ready', checks: { database: 'ok', migrations: 'ok' } }),
+      Response.json({ data: { status: 'ready', checks: { database: 'ok', migrations: 'ok' } }, meta: { request_id: 'r1' } }),
     );
     stubApi(fetchMock);
 
@@ -79,7 +79,7 @@ describe('getApiHealth', () => {
     stubApi(
       vi.fn().mockResolvedValue(
         Response.json(
-          { error: { code: 'health.not_ready', message: 'migrations behind', request_id: 'r1' } },
+          { error: { code: 'health.not_ready', message: 'migrations behind', details: {} }, meta: { request_id: 'r1' } },
           { status: 503 },
         ),
       ),
