@@ -154,9 +154,12 @@ Rules: dependencies point inward; composition happens only in `cmd/*/main.go`; f
 
 ### 4.3 Error envelope (stable codes for i18n)
 
+Every response uses one baseline envelope (decided 2026-11-07, see the M1 backend design §6.0). Success is `{ "data": …, "meta": { "request_id" } }`, lists add `meta.page` `{limit, next_cursor}`, and `204` has no body. Errors look like this:
+
 ```json
 { "error": { "code": "reservation.capacity_reached", "message": "debug-only english text",
-             "details": { "field": "arrival_at" }, "request_id": "01J..." } }
+             "details": { "field": "arrival_at" } },
+  "meta":  { "request_id": "01J..." } }
 ```
 
 - `code` is `<domain>.<reason>` in snake_case and is the **contract**. Clients translate the code and never show `message` to end users.

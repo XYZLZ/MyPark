@@ -72,6 +72,7 @@ M1 is the first milestone with users. Everything later depends on its identity m
 6. Reservations are **not** in M1 (they are M3). M1 builds the role and ownership authorization they will reuse.
 7. The database schema is approved. A person's name is stored as two required fields, `first_name` and `last_name`, never a single `full_name`, in `users` and everything that depends on it (API bodies, validation, anonymization, audit field names, emails). `last_name` holds both surnames (es-DO convention).
 8. After reviewing the design and the schema, the user said to continue to the plan. The calls in §2.2 stand unless the user changes one.
+9. **Baseline response envelope for every backend response** (§6.0), including `/healthz` and `/readyz`. Success is `{data, meta}`, errors are `{error, meta}`, and `meta.request_id` is always present. Lists put pagination in `meta.page`. The only exception is `204`, which has no body.
 
 ### 2.2 Our calls (review these)
 
@@ -127,7 +128,7 @@ M1 is the first milestone with users. Everything later depends on its identity m
 | HTTP | stdlib `net/http` `ServeMux` method+path patterns. No third-party router (architecture §4.2) |
 | Data | `pgx/v5` pool, `sqlc` (queries in `internal/infrastructure/database/queries`, output in `dbgen`, committed), `goose` **forward-only** migrations, Postgres 18 (`uuidv7()`, `citext`) |
 | Validation | `go-playground/validator/v10` through `internal/infrastructure/validation` (JSON field paths, `422 validation.failed` with `details.fields[{field,rule,param}]`) |
-| Errors | The existing envelope `{"error":{"code","message","details","request_id"}}`. New codes go into `internal/domain/errcodes/errcodes.go` and are exported to `packages/contracts/src/error-codes.ts` by `go generate`. CI fails on drift |
+| Response shape | **Every** response body uses the baseline envelope in §6.0 (user decision, §2.1 item 9). Errors are `{"error":{"code","message","details"},"meta":{"request_id"}}`. `request_id` moves from `error` to `meta`, a change to the M0 shape. New codes go into `internal/domain/errcodes/errcodes.go` and are exported to `packages/contracts/src/error-codes.ts` by `go generate`. CI fails on drift |
 | Config | `internal/config` accessors over unexported fields. Validated at boot. **No `.env` files.** Compose uses inline `${VAR:-dev-default}` |
 | DB roles | `mypark_migrator` (DDL, runs goose) and `mypark_app` (DML only, used by api, worker and seed). Created by `deploy/compose/postgres/init/01-roles.sh`. Default privileges grant `mypark_app` full DML on every new table |
 | Email | Mailpit (`axllent/mailpit:v1.33.0`, SMTP 1025, UI/API 8025) in dev |
@@ -371,6 +372,33 @@ Test `TestGrants_AuditLogAppendOnly`: as `mypark_app`, an `update` or `delete` o
 ## 6. API (contract-first)
 
 All paths are under `/v1`. Bodies are JSON (`Content-Type: application/json` required on bodies, otherwise 415), capped at 64 KiB. Ids are UUIDv7 `public_id` values. Timestamps are RFC 3339 UTC. The OpenAPI file adds a `bearerAuth` (JWT) security scheme. Public operations declare `security: []`.
+
+### 6.0 Baseline response envelope (user decision)
+
+Every response body from the backend has this shape. The **Success** column in §6.1 shows only the `data` payload. The envelope wraps it.
+
+```jsonc
+// Single resource (200/201/202)
+{ "data": { … }, "meta": { "request_id": "01J…" } }
+
+// List (data is always an array; pagination lives in meta.page)
+{ "data": [ … ], "meta": { "request_id": "01J…", "page": { "limit": 50, "next_cursor": "opaque" | null } } }
+
+// Error (every 4xx/5xx, including 404/405/415/429/500 from middleware and Recover)
+{ "error": { "code": "domain.reason", "message": "debug-only", "details": { … } }, "meta": { "request_id": "01J…" } }
+```
+
+| Rule | Detail |
+|---|---|
+| Mutually exclusive | A body has `data` **or** `error`, never both. Clients branch on which key is present |
+| `meta.request_id` | Always present. Equals the `X-Request-Id` response header. It is no longer inside `error` (a change from M0) |
+| `details` | Always an object (`{}` when empty), never `null` |
+| Lists | `data` is always an array. Unpaginated lists (vehicles, at most 5) still send `meta.page` with `next_cursor: null` and `limit` equal to the server cap |
+| `204` | No body: logout, logout-all, verify, password reset, invitation accept, delete. HTTP forbids a body there |
+| Health | `/healthz` and `/readyz` use the same envelope. The current health payload moves under `data` |
+| Go | `internal/transport/http/response` exposes generic helpers: `OK[T any](w, r, status int, data T)`, `List[T any](w, r, items []T, page Page)` and `Error(...)`, plus `type Meta struct{RequestID string; Page *Page}` and `type Page struct{Limit int; NextCursor *string}`. Handlers never call `json.Encoder` directly. A test checks that every route in the registry produces either `data` or `error` plus `meta.request_id` |
+| Contracts | `packages/contracts` exports `ApiSuccess<T>`, `ApiList<T>`, `ApiError` and `Meta` types, and one zod parser, `parseEnvelope(schema)`, that unwraps `data` or raises a typed `ApiError`. Web and mobile both use it. The health clients (`toHealthState`) are updated in the same change |
+| OpenAPI | Reusable `components.schemas`: `Meta`, `Page`, `ErrorBody`, `ErrorEnvelope`, and a `DataEnvelope` pattern (`allOf` with a `data` property per operation). Every operation references them |
 
 ### 6.1 Endpoints
 
