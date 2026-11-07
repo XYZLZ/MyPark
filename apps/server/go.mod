@@ -4,6 +4,7 @@ go 1.27
 
 require (
 	github.com/go-playground/validator/v10 v10.30.6
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/pressly/goose/v3 v3.29.0

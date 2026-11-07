@@ -3,8 +3,8 @@
 #   docker compose -f deploy/compose/docker-compose.yml up -d --build
 #
 # Works with no .env file: every variable has an inline dev-only default
-# (${VAR:-default}). Override any of them in deploy/compose/.env or in the
-# shell environment. Never reuse these credentials outside local development.
+# (${VAR:-default}). Override any of them in the shell environment. Never
+# reuse these credentials outside local development.
 #
 # Boot order: postgres (healthy) -> migrate (exits 0) -> seed (exits 0) ->
 # api, worker -> web (once api is healthy). postgres creates the
@@ -98,6 +98,14 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
+      # Dev-only defaults (config.DevJWTSigningKey / DevAuthCodePepper); the API
+      # refuses them when APP_ENV=production.
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-KOjknsSvcscUncFCKZZVyz6pIx6qzsgynPkmGSI5ap0=}
+      JWT_KEY_ID: ${JWT_KEY_ID:-dev-1}
+      JWT_VERIFY_KEYS: ${JWT_VERIFY_KEYS:-}
+      AUTH_CODE_PEPPER: ${AUTH_CODE_PEPPER:-Vx+9DiL7uyqiwY3gQJqdTNupMJqGdpB+gmkk1YUbEwY=}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      MAX_VEHICLES_PER_USER: ${MAX_VEHICLES_PER_USER:-5}
     # All interfaces on purpose: a phone running Expo on the LAN must reach the
     # API. Every other published port is bound to loopback.
     ports:

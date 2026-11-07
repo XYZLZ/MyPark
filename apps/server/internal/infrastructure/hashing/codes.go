@@ -4,6 +4,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
+	"log/slog"
 
 	"github.com/google/uuid"
 )
@@ -15,10 +17,22 @@ type CodeHasher struct {
 	pepper []byte
 }
 
-// NewCodeHasher returns a CodeHasher keyed with pepper.
-func NewCodeHasher(pepper []byte) CodeHasher {
-	return CodeHasher{pepper: append([]byte(nil), pepper...)}
+// MinPepperLen is the shortest accepted pepper, in bytes.
+const MinPepperLen = 32
+
+// NewCodeHasher returns a CodeHasher keyed with pepper. It rejects a pepper
+// shorter than MinPepperLen bytes.
+func NewCodeHasher(pepper []byte) (CodeHasher, error) {
+	if len(pepper) < MinPepperLen {
+		return CodeHasher{}, errors.New("hashing: pepper must be at least 32 bytes")
+	}
+	return CodeHasher{pepper: append([]byte(nil), pepper...)}, nil
 }
+
+// String, GoString and LogValue keep the pepper out of logs and fmt output.
+func (CodeHasher) String() string       { return "[redacted]" }
+func (CodeHasher) GoString() string     { return "[redacted]" }
+func (CodeHasher) LogValue() slog.Value { return slog.StringValue("[redacted]") }
 
 // Hash returns HMAC-SHA256(pepper, purpose ":" userPublicID ":" code). Binding
 // the purpose and the user stops a code from being replayed for another flow

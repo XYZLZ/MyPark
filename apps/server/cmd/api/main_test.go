@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
@@ -91,6 +93,17 @@ func TestHealthz_ThroughFullChain(t *testing.T) {
 
 // startRun starts run with env and returns the base URL it listens on. run
 // is stopped and must return nil when the test ends.
+// testEnv adds the required auth variables (the development defaults) to env.
+func testEnv(env map[string]string) map[string]string {
+	out := map[string]string{
+		"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
+		"JWT_KEY_ID":       "dev-1",
+		"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
+	}
+	maps.Copy(out, env)
+	return out
+}
+
 func startRun(t *testing.T, env map[string]string) string {
 	t.Helper()
 	return testsupport.StartServer(t, run, env, "api listening")
@@ -113,7 +126,7 @@ func getReadyz(t *testing.T, baseURL string) (int, map[string]any) {
 // TestRun_ReadyzReady_Integration checks run wires the real pool and
 // migration status: a reachable, migrated database makes /readyz 200.
 func TestRun_ReadyzReady_Integration(t *testing.T) {
-	base := startRun(t, map[string]string{"HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": testsupport.NewDBURL(t)})
+	base := startRun(t, testEnv(map[string]string{"HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": testsupport.NewDBURL(t)}))
 	status, body := getReadyz(t, base)
 	data, _ := body["data"].(map[string]any)
 	if status != http.StatusOK || data["status"] != "ready" {
@@ -124,10 +137,10 @@ func TestRun_ReadyzReady_Integration(t *testing.T) {
 // TestRun_ReadyzDBDown checks an unreachable database does not stop the API
 // from booting; /readyz reports it as 503 with database=fail instead.
 func TestRun_ReadyzDBDown(t *testing.T) {
-	base := startRun(t, map[string]string{
+	base := startRun(t, testEnv(map[string]string{
 		"HTTP_ADDR":    "127.0.0.1:0",
 		"DATABASE_URL": "postgres://mypark:x@127.0.0.1:1/mypark?connect_timeout=1",
-	})
+	}))
 	status, body := getReadyz(t, base)
 	errObj, _ := body["error"].(map[string]any)
 	details, _ := errObj["details"].(map[string]any)
@@ -150,7 +163,7 @@ func TestRun_ListenError(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	defer busy.Close()
-	env := map[string]string{"HTTP_ADDR": busy.Addr().String(), "DATABASE_URL": "postgres://x"}
+	env := testEnv(map[string]string{"HTTP_ADDR": busy.Addr().String(), "DATABASE_URL": "postgres://x"})
 	err = run(t.Context(), func(k string) string { return env[k] }, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Fatalf("run error = %v, want a listen error", err)
@@ -158,10 +171,10 @@ func TestRun_ListenError(t *testing.T) {
 }
 
 func TestRun_ShutsDownOnCancel(t *testing.T) {
-	env := map[string]string{
+	env := testEnv(map[string]string{
 		"HTTP_ADDR":    "127.0.0.1:0",
 		"DATABASE_URL": "postgres://mypark:s3cret@localhost:5432/mypark",
-	}
+	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var out testsupport.SyncBuffer

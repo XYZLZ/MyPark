@@ -8,13 +8,30 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 )
 
-// env returns a getenv-style lookup backed by the given map.
+// env returns a getenv-style lookup backed by the given map, on top of the
+// required auth variables (valid dev values) unless m overrides them.
 func env(m map[string]string) func(string) string {
+	return func(key string) string {
+		if v, ok := m[key]; ok {
+			return v
+		}
+		return authEnv[key]
+	}
+}
+
+// rawEnv is a getenv-style lookup backed by exactly the given map.
+func rawEnv(m map[string]string) func(string) string {
 	return func(key string) string { return m[key] }
 }
 
+var authEnv = map[string]string{
+	"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
+	"JWT_KEY_ID":       "dev-1",
+	"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
+}
+
 func TestLoad_MissingDatabaseURL(t *testing.T) {
-	_, err := config.Load(func(string) string { return "" })
+	_, err := config.Load(env(nil))
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Fatalf("want error naming DATABASE_URL, got %v", err)
 	}
@@ -118,10 +135,12 @@ func TestLoad_AggregatesErrors(t *testing.T) {
 
 func TestLoad_Overrides(t *testing.T) {
 	c, err := config.Load(env(map[string]string{
-		"APP_ENV":      "production",
-		"HTTP_ADDR":    ":9000",
-		"DATABASE_URL": "postgres://y",
-		"DB_MAX_CONNS": "25",
+		"APP_ENV":          "production",
+		"JWT_SIGNING_KEY":  "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"AUTH_CODE_PEPPER": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"HTTP_ADDR":        ":9000",
+		"DATABASE_URL":     "postgres://y",
+		"DB_MAX_CONNS":     "25",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

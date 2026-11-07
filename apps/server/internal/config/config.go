@@ -4,10 +4,14 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"slices"
@@ -26,6 +30,12 @@ const (
 	EnvLogLevel           = "LOG_LEVEL"
 	EnvCORSAllowedOrigins = "CORS_ALLOWED_ORIGINS"
 	EnvDBMaxConns         = "DB_MAX_CONNS"
+	EnvJWTSigningKey      = "JWT_SIGNING_KEY"
+	EnvJWTKeyID           = "JWT_KEY_ID"
+	EnvJWTVerifyKeys      = "JWT_VERIFY_KEYS"
+	EnvAuthCodePepper     = "AUTH_CODE_PEPPER"
+	EnvTrustedProxyCIDRs  = "TRUSTED_PROXY_CIDRS"
+	EnvMaxVehiclesPerUser = "MAX_VEHICLES_PER_USER"
 )
 
 // Default values applied when an optional variable is unset or empty.
@@ -35,6 +45,15 @@ const (
 	DefaultHTTPAddr   = ":8080"
 	DefaultLogLevel   = slog.LevelInfo
 	DefaultDBMaxConns = int32(10)
+
+	// DefaultMaxVehiclesPerUser is the per-user vehicle cap when unset.
+	DefaultMaxVehiclesPerUser = 5
+)
+
+const (
+	jwtSeedLen   = ed25519.SeedSize // 32
+	minPepperLen = 32
+	redacted     = "[redacted]"
 )
 
 // Config is the validated, read-only server configuration. Build it with
@@ -46,6 +65,13 @@ type Config struct {
 	logLevel           slog.Level
 	corsAllowedOrigins []string
 	dbMaxConns         int32
+
+	jwtSigningSeed     []byte
+	jwtKeyID           string
+	jwtVerifyKeys      map[string]ed25519.PublicKey
+	authCodePepper     []byte
+	trustedProxyCIDRs  []netip.Prefix
+	maxVehiclesPerUser int
 }
 
 // Env returns the deployment environment: development, test or production.
@@ -67,6 +93,36 @@ func (c Config) CORSAllowedOrigins() []string { return slices.Clone(c.corsAllowe
 // DBMaxConns returns the maximum size of the database pool.
 func (c Config) DBMaxConns() int32 { return c.dbMaxConns }
 
+// JWTSigningSeed returns a copy of the 32-byte Ed25519 seed that signs access
+// tokens. Never log it.
+func (c Config) JWTSigningSeed() []byte { return slices.Clone(c.jwtSigningSeed) }
+
+// JWTKeyID returns the kid written to the tokens the signing key issues.
+func (c Config) JWTKeyID() string { return c.jwtKeyID }
+
+// JWTVerifyKeys returns the public keys accepted when verifying tokens by
+// kid: the signing key's own public key plus any rotated-out keys from
+// JWT_VERIFY_KEYS.
+func (c Config) JWTVerifyKeys() map[string]ed25519.PublicKey { return maps.Clone(c.jwtVerifyKeys) }
+
+// AuthCodePepper returns a copy of the HMAC pepper for one-time codes. Never
+// log it.
+func (c Config) AuthCodePepper() []byte { return slices.Clone(c.authCodePepper) }
+
+// TrustedProxyCIDRs returns a copy of the networks whose forwarding headers
+// are trusted.
+func (c Config) TrustedProxyCIDRs() []netip.Prefix { return slices.Clone(c.trustedProxyCIDRs) }
+
+// MaxVehiclesPerUser returns the per-user vehicle cap.
+func (c Config) MaxVehiclesPerUser() int { return c.maxVehiclesPerUser }
+
+// String renders the redacted LogValue group, so %v, %+v and %s never print
+// credentials.
+func (c Config) String() string { return c.LogValue().String() }
+
+// GoString renders the same redacted group for %#v.
+func (c Config) GoString() string { return c.String() }
+
 // LogValue implements slog.LogValuer so a Config can be logged safely: the
 // database URL password is replaced with "xxxxx". A value that is not a URL
 // with a scheme is replaced entirely, since its credential cannot be located.
@@ -78,6 +134,12 @@ func (c Config) LogValue() slog.Value {
 		slog.String("log_level", c.logLevel.String()),
 		slog.Any("cors_allowed_origins", c.corsAllowedOrigins),
 		slog.Int("db_max_conns", int(c.dbMaxConns)),
+		slog.String("jwt_signing_key", redacted),
+		slog.String("jwt_key_id", c.jwtKeyID),
+		slog.Int("jwt_verify_keys", len(c.jwtVerifyKeys)),
+		slog.String("auth_code_pepper", redacted),
+		slog.Any("trusted_proxy_cidrs", c.trustedProxyCIDRs),
+		slog.Int("max_vehicles_per_user", c.maxVehiclesPerUser),
 	)
 }
 
@@ -120,10 +182,19 @@ type rawEnv struct {
 	DatabaseURL string `env:"DATABASE_URL" validate:"required,url"`
 	LogLevel    string `env:"LOG_LEVEL" validate:"oneof=debug info warn error"`
 	DBMaxConns  int64  `env:"DB_MAX_CONNS" validate:"min=1,max=1000"`
+
+	JWTSigningKey      string `env:"JWT_SIGNING_KEY" validate:"required"`
+	JWTKeyID           string `env:"JWT_KEY_ID" validate:"required,max=64"`
+	AuthCodePepper     string `env:"AUTH_CODE_PEPPER" validate:"required"`
+	MaxVehiclesPerUser int64  `env:"MAX_VEHICLES_PER_USER" validate:"min=1,max=20"`
 }
 
 // secretVars are never echoed back in error messages.
-var secretVars = map[string]bool{EnvDatabaseURL: true}
+var secretVars = map[string]bool{
+	EnvDatabaseURL:    true,
+	EnvJWTSigningKey:  true,
+	EnvAuthCodePepper: true,
+}
 
 var envValidator = sync.OnceValue(func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
@@ -156,8 +227,22 @@ func Load(getenv func(string) string) (Config, error) {
 		DatabaseURL: strings.TrimSpace(getenv(EnvDatabaseURL)),
 		LogLevel:    strings.ToLower(valueOr(getenv(EnvLogLevel), DefaultLogLevel.String())),
 		DBMaxConns:  int64(DefaultDBMaxConns),
+
+		JWTSigningKey:      strings.TrimSpace(getenv(EnvJWTSigningKey)),
+		JWTKeyID:           strings.TrimSpace(getenv(EnvJWTKeyID)),
+		AuthCodePepper:     strings.TrimSpace(getenv(EnvAuthCodePepper)),
+		MaxVehiclesPerUser: DefaultMaxVehiclesPerUser,
 	}
 	var errs []error
+
+	if s := strings.TrimSpace(getenv(EnvMaxVehiclesPerUser)); s != "" {
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s must be an integer, got %q", EnvMaxVehiclesPerUser, s))
+		} else {
+			raw.MaxVehiclesPerUser = n
+		}
+	}
 
 	if s := strings.TrimSpace(getenv(EnvDBMaxConns)); s != "" {
 		n, err := strconv.ParseInt(s, 10, 32)
@@ -179,6 +264,44 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 
+	production := raw.Env == "production"
+	var seed, pepper []byte
+	if raw.JWTSigningKey != "" {
+		var err error
+		if seed, err = decodeKey(EnvJWTSigningKey, raw.JWTSigningKey, jwtSeedLen, true); err != nil {
+			errs = append(errs, err)
+		} else if production && raw.JWTSigningKey == DevJWTSigningKey {
+			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvJWTSigningKey))
+		}
+	}
+	if raw.AuthCodePepper != "" {
+		var err error
+		if pepper, err = decodeKey(EnvAuthCodePepper, raw.AuthCodePepper, minPepperLen, false); err != nil {
+			errs = append(errs, err)
+		} else if production && raw.AuthCodePepper == DevAuthCodePepper {
+			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvAuthCodePepper))
+		}
+	}
+	verifyKeys := map[string]ed25519.PublicKey{}
+	if seed != nil {
+		verifyKeys[raw.JWTKeyID] = ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	}
+	extra, err := parseVerifyKeys(getenv(EnvJWTVerifyKeys))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for kid, key := range extra {
+		if _, dup := verifyKeys[kid]; dup {
+			errs = append(errs, fmt.Errorf("%s repeats the signing key id", EnvJWTVerifyKeys))
+			continue
+		}
+		verifyKeys[kid] = key
+	}
+	cidrs, err := parseCIDRs(getenv(EnvTrustedProxyCIDRs))
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration: %w", errors.Join(errs...))
 	}
@@ -194,7 +317,60 @@ func Load(getenv func(string) string) (Config, error) {
 		logLevel:           level,
 		corsAllowedOrigins: splitList(getenv(EnvCORSAllowedOrigins)),
 		dbMaxConns:         int32(raw.DBMaxConns),
+
+		jwtSigningSeed:     seed,
+		jwtKeyID:           raw.JWTKeyID,
+		jwtVerifyKeys:      verifyKeys,
+		authCodePepper:     pepper,
+		trustedProxyCIDRs:  cidrs,
+		maxVehiclesPerUser: int(raw.MaxVehiclesPerUser),
 	}, nil
+}
+
+// decodeKey decodes a standard-base64 secret named name. With exact it must
+// be exactly n bytes, otherwise at least n. The error never includes the value.
+func decodeKey(name, value string, n int, exact bool) ([]byte, error) {
+	b, err := base64.StdEncoding.DecodeString(value)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("%s must be base64", name)
+	case exact && len(b) != n:
+		return nil, fmt.Errorf("%s must decode to exactly %d bytes", name, n)
+	case !exact && len(b) < n:
+		return nil, fmt.Errorf("%s must decode to at least %d bytes", name, n)
+	}
+	return b, nil
+}
+
+// parseVerifyKeys parses "kid:base64(public key)" entries, comma-separated.
+func parseVerifyKeys(raw string) (map[string]ed25519.PublicKey, error) {
+	out := map[string]ed25519.PublicKey{}
+	for _, entry := range splitList(raw) {
+		kid, enc, ok := strings.Cut(entry, ":")
+		kid = strings.TrimSpace(kid)
+		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
+		if !ok || kid == "" || err != nil || len(key) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("%s must be comma-separated kid:base64(32-byte public key) entries", EnvJWTVerifyKeys)
+		}
+		if _, dup := out[kid]; dup {
+			return nil, fmt.Errorf("%s repeats a key id", EnvJWTVerifyKeys)
+		}
+		out[kid] = ed25519.PublicKey(key)
+	}
+	return out, nil
+}
+
+// parseCIDRs parses a comma-separated list of CIDR prefixes.
+func parseCIDRs(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, entry := range splitList(raw) {
+		p, err := netip.ParsePrefix(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%s must be comma-separated CIDRs, e.g. 10.0.0.0/8", EnvTrustedProxyCIDRs)
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
 }
 
 // DatabaseURLFrom reads the database URL held in the environment variable
