@@ -143,7 +143,7 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 		Codes:  codes,
 		Legal:  legal.NewService(legalpg.NewRepo(db.App), clk, time.Minute),
 		Audit:  auditpg.NewRecorder(),
-		Notify: notificationspg.NewNotifier(),
+		Notify: notificationspg.NewNotifier(clk),
 		Clock:  clk,
 	}
 	for _, m := range mod {

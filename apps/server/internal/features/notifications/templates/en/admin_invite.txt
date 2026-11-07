@@ -1,0 +1,11 @@
+Hello{{with .first_name}} {{.}}{{end}},
+
+You were invited as a MyPark administrator. Use this code to activate your account and set your password. It expires in 48 hours.
+
+Your code is:
+{{.code}}
+
+If this was not you, you can ignore this message.
+
+-- 
+{{template "brand"}}

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#ffffff;font:16px/1.5 Arial,Helvetica,sans-serif;color:#111827">
+{{template "brand_header"}}
+<div style="padding:24px">
+<p>Hello{{with .first_name}} {{.}}{{end}},</p>
+<p>Use this code to verify your email address. It expires in 15 minutes.</p>
+<p>Your code is:</p>
+{{template "code_box" .}}
+<p>If this was not you, you can ignore this message.</p>
+{{template "brand_footer"}}
+</div>
+</body>
+</html>

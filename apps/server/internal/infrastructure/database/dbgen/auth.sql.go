@@ -489,6 +489,50 @@ func (q *Queries) OverwritePendingDriver(ctx context.Context, arg OverwritePendi
 	return err
 }
 
+const purgeAuthCodes = `-- name: PurgeAuthCodes :execrows
+delete from auth_codes where expires_at < $1
+`
+
+func (q *Queries) PurgeAuthCodes(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeAuthCodes, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeAuthSessions = `-- name: PurgeAuthSessions :execrows
+delete from auth_sessions
+where revoked_at < $1 or absolute_expires_at < $1
+`
+
+// Sessions revoked or expired before @cutoff.
+func (q *Queries) PurgeAuthSessions(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeAuthSessions, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeRefreshTokens = `-- name: PurgeRefreshTokens :execrows
+delete from refresh_tokens
+where expires_at < $1
+   or session_id in (
+       select s.id from auth_sessions s
+       where s.revoked_at < $1 or s.absolute_expires_at < $1
+   )
+`
+
+// Tokens past their expiry, and every token of a session being purged.
+func (q *Queries) PurgeRefreshTokens(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeRefreshTokens, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rehashPassword = `-- name: RehashPassword :exec
 update users
 set password_hash = $1, updated_at = $2

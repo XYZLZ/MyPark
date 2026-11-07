@@ -1,0 +1,11 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+Te invitaron como administrador de MyPark. Usa este código para activar tu cuenta y definir tu contraseña. Vence en 48 horas.
+
+Tu código es:
+{{.code}}
+
+Si no fuiste tú, puedes ignorar este mensaje.
+
+-- 
+{{template "brand"}}

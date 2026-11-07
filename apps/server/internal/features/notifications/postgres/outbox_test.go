@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
@@ -21,14 +22,14 @@ func sample(key string, uid *int64) notifications.Email {
 }
 
 func TestEnqueue_FailsOutsideTx(t *testing.T) {
-	err := postgres.NewNotifier().Enqueue(t.Context(), sample("k", nil))
+	err := notifier().Enqueue(t.Context(), sample("k", nil))
 	if !errors.Is(err, database.ErrNoTx) {
 		t.Fatalf("err = %v, want ErrNoTx", err)
 	}
 }
 
 func TestScrubPendingForUser_FailsOutsideTx(t *testing.T) {
-	err := postgres.NewNotifier().ScrubPendingForUser(t.Context(), 1)
+	err := notifier().ScrubPendingForUser(t.Context(), 1)
 	if !errors.Is(err, database.ErrNoTx) {
 		t.Fatalf("err = %v, want ErrNoTx", err)
 	}
@@ -39,7 +40,7 @@ func TestEnqueue_StoresRowAndRollsBack(t *testing.T) {
 	runner := database.NewTxRunner(db.App)
 	uid := insertUserEmail(t, db, "a@x.do")
 	if err := runner.InTx(t.Context(), func(ctx context.Context) error {
-		return postgres.NewNotifier().Enqueue(ctx, sample("verify_email:1", &uid))
+		return notifier().Enqueue(ctx, sample("verify_email:1", &uid))
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestEnqueue_StoresRowAndRollsBack(t *testing.T) {
 
 	errRollback := errors.New("rollback")
 	err := runner.InTx(t.Context(), func(ctx context.Context) error {
-		if err := postgres.NewNotifier().Enqueue(ctx, sample("verify_email:2", nil)); err != nil {
+		if err := notifier().Enqueue(ctx, sample("verify_email:2", nil)); err != nil {
 			return err
 		}
 		return errRollback
@@ -78,7 +79,7 @@ func TestEnqueue_DedupeKeyIsIdempotent(t *testing.T) {
 	runner := database.NewTxRunner(db.App)
 	for range 2 {
 		if err := runner.InTx(t.Context(), func(ctx context.Context) error {
-			return postgres.NewNotifier().Enqueue(ctx, sample("same", nil))
+			return notifier().Enqueue(ctx, sample("same", nil))
 		}); err != nil {
 			t.Fatalf("Enqueue: %v", err)
 		}
@@ -92,7 +93,7 @@ func TestEnqueue_NilDataStoresEmptyObject(t *testing.T) {
 	e := sample("nil-data", nil)
 	e.Data = nil
 	if err := runner.InTx(t.Context(), func(ctx context.Context) error {
-		return postgres.NewNotifier().Enqueue(ctx, e)
+		return notifier().Enqueue(ctx, e)
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestEnqueue_ErrorDoesNotLeakAddressOrCode(t *testing.T) {
 	e.Locale = "fr"
 	e.To = "leaky.person@x.do"
 	err := runner.InTx(t.Context(), func(ctx context.Context) error {
-		return postgres.NewNotifier().Enqueue(ctx, e)
+		return notifier().Enqueue(ctx, e)
 	})
 	if err == nil {
 		t.Fatal("want error for unknown locale")
@@ -134,7 +135,7 @@ func TestScrubPendingForUser_RemovesCodeOnly(t *testing.T) {
 		}
 	}
 	if err := runner.InTx(t.Context(), func(ctx context.Context) error {
-		return postgres.NewNotifier().ScrubPendingForUser(ctx, uid)
+		return notifier().ScrubPendingForUser(ctx, uid)
 	}); err != nil {
 		t.Fatalf("Scrub: %v", err)
 	}
@@ -162,4 +163,25 @@ func insertUserEmail(t *testing.T, db *testsupport.TestDB, email string) int64 {
 		t.Fatalf("insert user: %v", err)
 	}
 	return id
+}
+
+var fixedNow = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+
+func notifier() postgres.Notifier { return postgres.NewNotifier(testsupport.NewFakeClock(fixedNow)) }
+
+func TestEnqueue_AvailableAtComesFromClock(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	runner := database.NewTxRunner(db.App)
+	if err := runner.InTx(t.Context(), func(ctx context.Context) error {
+		return notifier().Enqueue(ctx, sample("clock:1", nil))
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	var at time.Time
+	if err := db.Super.QueryRow(t.Context(), `select available_at from outbox_messages where dedupe_key = 'clock:1'`).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	if !at.Equal(fixedNow) {
+		t.Errorf("available_at = %v, want the fake now %v", at, fixedNow)
+	}
 }

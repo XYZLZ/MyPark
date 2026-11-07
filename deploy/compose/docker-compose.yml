@@ -134,11 +134,19 @@ services:
     environment:
       WORKER_HEALTH_ADDR: ":8091"
       DATABASE_URL: *app-url
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-MyPark <no-reply@mypark.local>}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
     ports:
       - "127.0.0.1:${WORKER_HEALTH_PORT:-8091}:8091"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_started
     healthcheck:
       test: ["CMD", "/app/worker", "-healthcheck"]
       interval: 10s

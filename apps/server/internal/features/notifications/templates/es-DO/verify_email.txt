@@ -1,0 +1,11 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+Usa este código para verificar tu correo electrónico. Vence en 15 minutos.
+
+Tu código es:
+{{.code}}
+
+Si no fuiste tú, puedes ignorar este mensaje.
+
+-- 
+{{template "brand"}}

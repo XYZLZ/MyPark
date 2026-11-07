@@ -1,0 +1,6 @@
+Hello{{with .first_name}} {{.}}{{end}},
+
+Someone tried to sign up with your email address, but an account with it already exists. You can sign in, or reset your password if you forgot it.
+
+-- 
+{{template "brand"}}

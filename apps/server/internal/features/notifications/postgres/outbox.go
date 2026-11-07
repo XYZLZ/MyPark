@@ -11,21 +11,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
 )
 
 // Notifier implements notifications.Notifier over dbgen.
-type Notifier struct{}
+type Notifier struct{ clock clock.Clock }
 
 var _ notifications.Notifier = Notifier{}
 
 // NewNotifier returns a Notifier. It holds no pool: it only writes through
-// the transaction in the context.
-func NewNotifier() Notifier { return Notifier{} }
+// the transaction in the context. c stamps outbox available_at, so the worker
+// claim and the enqueue agree on one time source.
+func NewNotifier(c clock.Clock) Notifier { return Notifier{clock: c} }
 
 // Enqueue implements notifications.Notifier.
-func (Notifier) Enqueue(ctx context.Context, e notifications.Email) error {
+func (n Notifier) Enqueue(ctx context.Context, e notifications.Email) error {
 	tx, err := database.MustTx(ctx)
 	if err != nil {
 		return fmt.Errorf("notifications: enqueue: %w", err)
@@ -39,11 +41,12 @@ func (Notifier) Enqueue(ctx context.Context, e notifications.Email) error {
 		return fmt.Errorf("notifications: encode payload: %w", err)
 	}
 	arg := dbgen.EnqueueOutboxEmailParams{
-		Template:  string(e.Template),
-		Locale:    e.Locale,
-		ToAddress: e.To,
-		Payload:   payload,
-		DedupeKey: e.DedupeKey,
+		Template:    string(e.Template),
+		Locale:      e.Locale,
+		ToAddress:   e.To,
+		Payload:     payload,
+		DedupeKey:   e.DedupeKey,
+		AvailableAt: pgtype.Timestamptz{Time: n.clock.Now(), Valid: true},
 	}
 	if e.UserID != nil {
 		arg.UserID = pgtype.Int8{Int64: *e.UserID, Valid: true}

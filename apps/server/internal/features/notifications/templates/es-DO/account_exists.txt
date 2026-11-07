@@ -1,0 +1,6 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+Alguien intentó registrar tu correo en MyPark, pero ya existe una cuenta con esta dirección. Puedes iniciar sesión, o restablecer tu contraseña si la olvidaste.
+
+-- 
+{{template "brand"}}

@@ -143,3 +143,20 @@ update refresh_tokens set rotated_at = @now where id = @id and rotated_at is nul
 
 -- name: TouchAuthSession :exec
 update auth_sessions set last_used_at = @now where id = @id;
+
+-- name: PurgeAuthCodes :execrows
+delete from auth_codes where expires_at < @cutoff;
+
+-- name: PurgeRefreshTokens :execrows
+-- Tokens past their expiry, and every token of a session being purged.
+delete from refresh_tokens
+where expires_at < @cutoff
+   or session_id in (
+       select s.id from auth_sessions s
+       where s.revoked_at < @cutoff or s.absolute_expires_at < @cutoff
+   );
+
+-- name: PurgeAuthSessions :execrows
+-- Sessions revoked or expired before @cutoff.
+delete from auth_sessions
+where revoked_at < @cutoff or absolute_expires_at < @cutoff;

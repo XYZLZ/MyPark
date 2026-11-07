@@ -172,7 +172,7 @@ func newHandler(d deps) http.Handler {
 		Codes:  d.codes,
 		Legal:  legalSvc,
 		Audit:  auditpg.NewRecorder(),
-		Notify: notificationspg.NewNotifier(),
+		Notify: notificationspg.NewNotifier(d.clock),
 		Clock:  d.clock,
 		Signer: d.signer,
 	})

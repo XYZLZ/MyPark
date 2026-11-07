@@ -11,22 +11,82 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimOutboxBatch = `-- name: ClaimOutboxBatch :many
+update outbox_messages
+set status = 'sending', attempts = attempts + 1, available_at = $1
+where id in (
+    select o.id from outbox_messages o
+    where o.status in ('pending', 'sending') and o.available_at <= $2
+    order by o.available_at, o.id
+    limit $3
+    for update skip locked
+)
+returning id, template, locale, to_address, payload, dedupe_key, attempts
+`
+
+type ClaimOutboxBatchParams struct {
+	LeaseUntil pgtype.Timestamptz
+	Now        pgtype.Timestamptz
+	Batch      int32
+}
+
+type ClaimOutboxBatchRow struct {
+	ID        int64
+	Template  string
+	Locale    string
+	ToAddress string
+	Payload   []byte
+	DedupeKey string
+	Attempts  int16
+}
+
+// Leases up to @batch due rows: they become 'sending' until @lease_until. A
+// row whose lease expired is claimed again (crashed worker).
+func (q *Queries) ClaimOutboxBatch(ctx context.Context, arg ClaimOutboxBatchParams) ([]ClaimOutboxBatchRow, error) {
+	rows, err := q.db.Query(ctx, claimOutboxBatch, arg.LeaseUntil, arg.Now, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimOutboxBatchRow{}
+	for rows.Next() {
+		var i ClaimOutboxBatchRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Template,
+			&i.Locale,
+			&i.ToAddress,
+			&i.Payload,
+			&i.DedupeKey,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const enqueueOutboxEmail = `-- name: EnqueueOutboxEmail :exec
-insert into outbox_messages (kind, template, locale, to_address, user_id, payload, dedupe_key)
-values ('email', $1, $2, $3, $4, $5, $6)
+insert into outbox_messages (kind, template, locale, to_address, user_id, payload, dedupe_key, available_at)
+values ('email', $1, $2, $3, $4, $5, $6, $7)
 on conflict (dedupe_key) do nothing
 `
 
 type EnqueueOutboxEmailParams struct {
-	Template  string
-	Locale    string
-	ToAddress string
-	UserID    pgtype.Int8
-	Payload   []byte
-	DedupeKey string
+	Template    string
+	Locale      string
+	ToAddress   string
+	UserID      pgtype.Int8
+	Payload     []byte
+	DedupeKey   string
+	AvailableAt pgtype.Timestamptz
 }
 
-// Idempotent on dedupe_key.
+// Idempotent on dedupe_key. available_at comes from the injected clock.
 func (q *Queries) EnqueueOutboxEmail(ctx context.Context, arg EnqueueOutboxEmailParams) error {
 	_, err := q.db.Exec(ctx, enqueueOutboxEmail,
 		arg.Template,
@@ -35,8 +95,72 @@ func (q *Queries) EnqueueOutboxEmail(ctx context.Context, arg EnqueueOutboxEmail
 		arg.UserID,
 		arg.Payload,
 		arg.DedupeKey,
+		arg.AvailableAt,
 	)
 	return err
+}
+
+const markOutboxDead = `-- name: MarkOutboxDead :exec
+update outbox_messages
+set status = 'dead', last_error = $1, payload = payload - 'code'
+where id = $2
+`
+
+type MarkOutboxDeadParams struct {
+	LastError pgtype.Text
+	ID        int64
+}
+
+func (q *Queries) MarkOutboxDead(ctx context.Context, arg MarkOutboxDeadParams) error {
+	_, err := q.db.Exec(ctx, markOutboxDead, arg.LastError, arg.ID)
+	return err
+}
+
+const markOutboxRetry = `-- name: MarkOutboxRetry :exec
+update outbox_messages
+set status = 'pending', available_at = $1, last_error = $2
+where id = $3
+`
+
+type MarkOutboxRetryParams struct {
+	AvailableAt pgtype.Timestamptz
+	LastError   pgtype.Text
+	ID          int64
+}
+
+func (q *Queries) MarkOutboxRetry(ctx context.Context, arg MarkOutboxRetryParams) error {
+	_, err := q.db.Exec(ctx, markOutboxRetry, arg.AvailableAt, arg.LastError, arg.ID)
+	return err
+}
+
+const markOutboxSent = `-- name: MarkOutboxSent :exec
+update outbox_messages
+set status = 'sent', sent_at = $1, last_error = null, payload = payload - 'code'
+where id = $2
+`
+
+type MarkOutboxSentParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) MarkOutboxSent(ctx context.Context, arg MarkOutboxSentParams) error {
+	_, err := q.db.Exec(ctx, markOutboxSent, arg.Now, arg.ID)
+	return err
+}
+
+const purgeOutbox = `-- name: PurgeOutbox :execrows
+delete from outbox_messages
+where status in ('sent', 'dead') and created_at < $1
+`
+
+// sent and dead rows older than @cutoff.
+func (q *Queries) PurgeOutbox(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeOutbox, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const scrubPendingOutboxCodesForUser = `-- name: ScrubPendingOutboxCodesForUser :exec

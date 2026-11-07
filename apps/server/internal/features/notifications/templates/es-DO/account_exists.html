@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="es-DO">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#ffffff;font:16px/1.5 Arial,Helvetica,sans-serif;color:#111827">
+{{template "brand_header"}}
+<div style="padding:24px">
+<p>Hola{{with .first_name}} {{.}}{{end}},</p>
+<p>Alguien intentó registrar tu correo en MyPark, pero ya existe una cuenta con esta dirección. Puedes iniciar sesión, o restablecer tu contraseña si la olvidaste.</p>
+{{template "brand_footer"}}
+</div>
+</body>
+</html>
