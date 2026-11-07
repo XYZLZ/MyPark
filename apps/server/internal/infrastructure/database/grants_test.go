@@ -22,7 +22,7 @@ func TestGrants_AppDMLOnIdentityTables(t *testing.T) {
 	db := testsupport.NewTestDB(t)
 	// Each privilege is checked on its own: has_table_privilege with a list
 	// is true when ANY privilege is held.
-	for _, table := range []string{"users", "auth_sessions", "refresh_tokens", "auth_codes", "legal_documents"} {
+	for _, table := range []string{"users", "auth_sessions", "refresh_tokens", "auth_codes", "legal_documents", "vehicles"} {
 		for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 			var ok bool
 			err := db.Super.QueryRow(t.Context(),
@@ -235,5 +235,34 @@ func TestGrants_AppDMLOnOutbox(t *testing.T) {
 				t.Errorf("SQLSTATE = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestVehicles_ChecksAndActivePlateUniqueness(t *testing.T) {
+	pool := testsupport.NewDB(t)
+	uid := newUserID(t, pool, "a@x.do")
+	const ins = `insert into vehicles (user_id, plate_normalized, plate_display, make, model, color)
+		values ($1, $2, $3, $4, 'Corolla', 'Gris')`
+	for name, tc := range map[string]struct {
+		norm, disp, make string
+		want             string
+	}{
+		"lowercase normalized": {"abc123", "abc123", "Toyota", sqlStateCheckViolation},
+		"one char":             {"A", "A1", "Toyota", sqlStateCheckViolation},
+		"eleven chars":         {"ABCDEFGHIJK", "ABCDEFGHIJK", "Toyota", sqlStateCheckViolation},
+		"empty make":           {"ABC123", "ABC123", "", sqlStateCheckViolation},
+		"display too long":     {"ABC123", strings.Repeat("-", 16), "Toyota", sqlStateCheckViolation},
+		"valid":                {"ABC123", "abc-123", "Toyota", ""},
+		"duplicate active":     {"ABC123", "ABC 123", "Toyota", sqlStateUniqueViolation},
+	} {
+		if got := execCode(t, pool, ins, uid, tc.norm, tc.disp, tc.make); got != tc.want {
+			t.Errorf("%s: SQLSTATE = %q, want %q", name, got, tc.want)
+		}
+	}
+	if got := execCode(t, pool, `update vehicles set deleted_at = now() where plate_normalized = 'ABC123'`); got != "" {
+		t.Fatalf("soft delete SQLSTATE = %q", got)
+	}
+	if got := execCode(t, pool, ins, uid, "ABC123", "ABC123", "Toyota"); got != "" {
+		t.Errorf("reuse after soft delete SQLSTATE = %q, want success", got)
 	}
 }

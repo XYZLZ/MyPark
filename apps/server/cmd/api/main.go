@@ -29,6 +29,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles"
+	vehiclespg "github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
@@ -177,6 +179,11 @@ func newHandler(d deps) http.Handler {
 		Signer: d.signer,
 	})
 	auth.NewHandler(authSvc, validation.New(), d.limiter, d.log).Register(r)
+
+	// NoReservations is the M1 checker (OC-29); M3 swaps in the reservations adapter.
+	vehicleSvc := vehicles.NewService(database.NewTxRunner(d.pool), vehiclespg.NewRepo(d.pool),
+		vehicles.NoReservations{}, d.cfg.MaxVehiclesPerUser(), d.clock)
+	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
 
 	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins())
 }

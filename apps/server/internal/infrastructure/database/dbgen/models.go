@@ -138,3 +138,17 @@ type User struct {
 	UpdatedAt         pgtype.Timestamptz
 	DeletedAt         pgtype.Timestamptz
 }
+
+type Vehicle struct {
+	ID              int64
+	PublicID        uuid.UUID
+	UserID          int64
+	PlateNormalized string
+	PlateDisplay    string
+	Make            string
+	Model           string
+	Color           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
