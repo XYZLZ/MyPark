@@ -51,8 +51,9 @@ func (s *Service) Versions(ctx context.Context) (Versions, error) {
 		if v, ok := s.fresh(now); ok {
 			return v, nil
 		}
-		// The read is shared, so it must not die with the first caller's ctx.
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+		// The read is shared, so it must neither die with the first caller's
+		// ctx nor run on its transaction: a fresh context carries neither.
+		rctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 		defer cancel()
 		v, err := s.repo.Current(rctx, now)
 		if err != nil {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
@@ -86,5 +88,55 @@ func TestVersions_ConcurrentCallersShareOneQuery(t *testing.T) {
 	}
 	if n := repo.calls.Load(); n != 1 {
 		t.Errorf("repo calls = %d, want 1", n)
+	}
+}
+
+// txSpyRepo records whether Current ran on a context carrying a transaction.
+type txSpyRepo struct {
+	legal.Repo
+	sawTx atomic.Bool
+}
+
+func (r *txSpyRepo) Current(ctx context.Context, now time.Time) (legal.Versions, error) {
+	if _, err := database.MustTx(ctx); err == nil {
+		r.sawTx.Store(true)
+	}
+	return r.Repo.Current(ctx, now)
+}
+
+func TestVersions_SharedReadDoesNotUseTheCallerTransaction(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	if err := legal.SeedDocuments(t.Context(), db.Super); err != nil {
+		t.Fatal(err)
+	}
+	spy := &txSpyRepo{Repo: postgres.NewRepo(db.App)}
+	svc := legal.NewService(spy, testsupport.NewFakeClock(t0), time.Minute)
+
+	errRollback := errors.New("force rollback")
+	err := database.NewTxRunner(db.App).InTx(t.Context(), func(ctx context.Context) error {
+		v, err := svc.Versions(ctx)
+		if err != nil || v.Terms.Version != legal.InitialVersion {
+			t.Errorf("Versions inside InTx = %+v, %v", v, err)
+		}
+		// The caller's transaction is still healthy after the shared read.
+		tx, err := database.MustTx(ctx)
+		if err != nil {
+			return err
+		}
+		var one int
+		if err := tx.QueryRow(ctx, "select 1").Scan(&one); err != nil {
+			t.Errorf("caller tx unusable after Versions: %v", err)
+		}
+		return errRollback
+	})
+	if !errors.Is(err, errRollback) {
+		t.Fatalf("InTx err = %v, want the forced rollback", err)
+	}
+	if spy.sawTx.Load() {
+		t.Error("the shared read ran on the caller's transaction")
+	}
+	// The cache outlives the rolled-back transaction.
+	if v, err := svc.Versions(t.Context()); err != nil || v.Terms.Version != legal.InitialVersion {
+		t.Errorf("Versions after rollback = %+v, %v", v, err)
 	}
 }
