@@ -376,8 +376,9 @@ Conventions (from supabase-postgres-best-practices):
 | Table | Key columns | Constraints and indexes |
 |---|---|---|
 | `users` | id, public_id, email `citext`, password_hash, first_name, last_name, phone, role, status, locale, email_verified_at, terms_version, terms_accepted_at, privacy_version, privacy_accepted_at, reservation_blocked_until, created_at, updated_at, deleted_at | `unique(email) where deleted_at is null`; `role in ('driver','admin')`; `status in ('pending_verification','active','suspended','deleted')`; `locale in ('es-DO','en')` |
-| `auth_codes` | id, user_id, purpose, code_hash, expires_at, attempts, consumed_at | `purpose in ('verify_email','reset_password')`; idx (user_id, purpose) where consumed_at is null |
-| `refresh_tokens` | id, user_id, family_id uuid, token_hash, client_kind, expires_at, rotated_at, revoked_at, created_ip, user_agent | `unique(token_hash)`; idx(user_id); idx(family_id) |
+| `auth_codes` | id, user_id, purpose, code_hash, expires_at, attempts, consumed_at, created_at | `purpose in ('verify_email','reset_password','admin_invite')`; `attempts between 0 and 5`; `unique(user_id, purpose) where consumed_at is null`; idx(user_id); idx(expires_at) |
+| `auth_sessions` | id, public_id (JWT `sid`), user_id, client_kind, created_at, last_used_at, absolute_expires_at, revoked_at, revoked_reason, created_ip, user_agent | one row per login (a refresh-token family); `client_kind in ('web','mobile')`; `(revoked_at is null) = (revoked_reason is null)`; idx(user_id); idx(user_id) where revoked_at is null |
+| `refresh_tokens` | id, session_id, token_hash, created_at, expires_at, rotated_at | `unique(token_hash)`; idx(session_id); idx(expires_at); a non-null `rotated_at` on presentation means reuse |
 | `vehicles` | id, public_id, user_id, plate_normalized, plate_display, make, model, color, deleted_at | `unique(plate_normalized) where deleted_at is null`; idx(user_id) |
 | `lots` | id, public_id, name, address, latitude, longitude, timezone, capacity, status, opening_hours jsonb | `capacity > 0`; `status in ('open','closed')` |
 | `spaces` | id, lot_id, code, kind, status, sensor_updated_at | `unique(lot_id, code)`; `status in ('free','occupied','out_of_service')`; idx(lot_id, status) |

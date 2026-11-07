@@ -5,12 +5,49 @@
 package dbgen
 
 import (
+	"net/netip"
+
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuthCode struct {
+	ID         int64
+	UserID     int64
+	Purpose    string
+	CodeHash   []byte
+	ExpiresAt  pgtype.Timestamptz
+	Attempts   int16
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+type AuthSession struct {
+	ID                int64
+	PublicID          uuid.UUID
+	UserID            int64
+	ClientKind        string
+	CreatedAt         pgtype.Timestamptz
+	LastUsedAt        pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	RevokedReason     pgtype.Text
+	CreatedIp         *netip.Addr
+	UserAgent         pgtype.Text
+}
+
+type LegalDocument struct {
+	ID          int64
+	Kind        string
+	Version     string
+	PublishedAt pgtype.Timestamptz
+	UrlEs       string
+	UrlEn       string
+}
+
 type Lot struct {
 	ID           int64
-	PublicID     pgtype.UUID
+	PublicID     uuid.UUID
 	Slug         string
 	Name         string
 	Address      string
@@ -31,6 +68,15 @@ type LotOccupancy struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type RefreshToken struct {
+	ID        int64
+	SessionID int64
+	TokenHash []byte
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	RotatedAt pgtype.Timestamptz
+}
+
 type Space struct {
 	ID              int64
 	LotID           int64
@@ -38,4 +84,26 @@ type Space struct {
 	Kind            string
 	Status          string
 	SensorUpdatedAt pgtype.Timestamptz
+}
+
+type User struct {
+	ID                int64
+	PublicID          uuid.UUID
+	Email             string
+	PasswordHash      pgtype.Text
+	PasswordChangedAt pgtype.Timestamptz
+	FirstName         string
+	LastName          string
+	Phone             pgtype.Text
+	Role              string
+	Status            string
+	Locale            string
+	EmailVerifiedAt   pgtype.Timestamptz
+	TermsVersion      pgtype.Text
+	TermsAcceptedAt   pgtype.Timestamptz
+	PrivacyVersion    pgtype.Text
+	PrivacyAcceptedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	DeletedAt         pgtype.Timestamptz
 }

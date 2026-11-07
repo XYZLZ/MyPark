@@ -9,3 +9,8 @@ sql:
         out: dbgen
         sql_package: pgx/v5
         emit_empty_slices: true
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "citext"
+            go_type: "string"

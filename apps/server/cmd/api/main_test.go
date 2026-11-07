@@ -13,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 )
@@ -29,14 +32,25 @@ func (okMigrations) Status(context.Context) (int64, int64, error) { return 1, 1,
 
 func doRequest(t *testing.T, h *health.Handler, method, path string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	rec := httptest.NewRecorder()
-	newHandler(log, h, nil).ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	newHandler(testDeps(h, nil)).ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
 	}
 	return rec, body
+}
+
+// testDeps builds the production dependencies with a nil pool: enough for
+// routes that do not touch the database. Tests that do pass their own pool.
+func testDeps(h *health.Handler, pool *pgxpool.Pool) deps {
+	return deps{
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cfg:    config.Config{},
+		pool:   pool,
+		clock:  testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)),
+		health: h,
+	}
 }
 
 func readyHealth() *health.Handler {
@@ -210,7 +224,9 @@ func TestRun_ShutsDownOnCancel(t *testing.T) {
 func TestAccessLog_RouteThroughFullChain(t *testing.T) {
 	var logs testsupport.SyncBuffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
-	h := newHandler(log, readyHealth(), nil)
+	d := testDeps(readyHealth(), nil)
+	d.log = log
+	h := newHandler(d)
 	for path, route := range map[string]string{"/healthz": "GET /healthz", "/nope": "unmatched"} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
 		if want := `"route":"` + route + `"`; !strings.Contains(logs.String(), want) {
@@ -248,5 +264,37 @@ func TestAPI_UnknownFlag(t *testing.T) {
 	err := execute(t.Context(), []string{"-nope"}, func(string) string { return "" }, io.Discard)
 	if err == nil {
 		t.Fatal("execute with an unknown flag returned nil, want an error")
+	}
+}
+
+func TestGetLegalCurrent_Envelope(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	if err := legal.SeedDocuments(t.Context(), db.App); err != nil {
+		t.Fatalf("SeedDocuments: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	newHandler(testDeps(readyHealth(), db.App)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/legal/current", nil))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body.String(), err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %v", rec.Code, body)
+	}
+	data, _ := body["data"].(map[string]any)
+	terms, _ := data["terms"].(map[string]any)
+	privacy, _ := data["privacy"].(map[string]any)
+	if terms["version"] != "2026-11-16" {
+		t.Errorf("data.terms.version = %v, want 2026-11-16", terms["version"])
+	}
+	if privacy["url_en"] != "http://localhost:3000/en/legal/privacy" || privacy["url_es"] == "" {
+		t.Errorf("data.privacy urls = %v", privacy)
+	}
+	if _, err := time.Parse(time.RFC3339, terms["published_at"].(string)); err != nil {
+		t.Errorf("published_at = %v: %v", terms["published_at"], err)
+	}
+	meta, _ := body["meta"].(map[string]any)
+	if id := rec.Header().Get(middleware.HeaderRequestID); id == "" || meta["request_id"] != id {
+		t.Errorf("meta.request_id = %v, want X-Request-Id %q", meta["request_id"], id)
 	}
 }

@@ -16,14 +16,21 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
+	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
 
 // version is the build version reported by /healthz. Release builds set it
@@ -82,17 +89,45 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	h := health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB))
-	srv := httpserver.New(cfg.HTTPAddr(), newHandler(log, h, cfg.CORSAllowedOrigins()), log)
+	d := deps{
+		log:    log,
+		cfg:    cfg,
+		pool:   pool,
+		clock:  clock.System{},
+		health: health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
+	}
+	srv := httpserver.New(cfg.HTTPAddr(), newHandler(d), log)
 	// The config is logged only through Config.LogValue, which redacts the
 	// database password.
 	return httpserver.Serve(ctx, log, srv, serviceName, "version", version, "config", cfg)
 }
 
-// newHandler builds the API router and wraps it in the shared middleware
-// chain (see httpserver.NewHandler).
-func newHandler(log *slog.Logger, h *health.Handler, corsOrigins []string) http.Handler {
+// legalCacheTTL is how long the current legal versions are cached.
+const legalCacheTTL = 60 * time.Second
+
+// deps are the dependencies newHandler wires. Tests build it directly.
+type deps struct {
+	log    *slog.Logger
+	cfg    config.Config
+	pool   *pgxpool.Pool
+	clock  clock.Clock
+	health *health.Handler
+}
+
+// newHandler builds the API router with every feature handler and wraps it
+// in the shared middleware chain (see httpserver.NewHandler).
+func newHandler(d deps) http.Handler {
 	mux := http.NewServeMux()
-	h.Register(mux)
-	return httpserver.NewHandler(log, mux, corsOrigins)
+	d.health.Register(mux)
+
+	// Routes registered so far are all public: the authentication, role and
+	// legal middlewares are wired with the features that need them.
+	r := router.New(mux, router.Middlewares{
+		ClientIP:  middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
+		RateLimit: router.PassthroughRateLimit,
+	})
+	legalSvc := legal.NewService(legalpg.NewRepo(d.pool), d.clock, legalCacheTTL)
+	legal.NewHandler(legalSvc, d.log).Register(r)
+
+	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins())
 }
