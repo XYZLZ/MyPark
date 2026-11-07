@@ -29,6 +29,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/users"
+	userspg "github.com/XYZLZ/MyPark/apps/server/internal/features/users/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles"
 	vehiclespg "github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
@@ -167,23 +169,33 @@ func newHandler(d deps) http.Handler {
 	})
 	legal.NewHandler(legalSvc, d.log).Register(r)
 
+	tx := database.NewTxRunner(d.pool)
+	auditRec := auditpg.NewRecorder()
+	notifier := notificationspg.NewNotifier(d.clock)
 	authSvc := auth.NewService(auth.Deps{
-		Tx:     database.NewTxRunner(d.pool),
+		Tx:     tx,
 		Repo:   authRepo,
 		Hasher: d.hasher,
 		Codes:  d.codes,
 		Legal:  legalSvc,
-		Audit:  auditpg.NewRecorder(),
-		Notify: notificationspg.NewNotifier(d.clock),
+		Audit:  auditRec,
+		Notify: notifier,
 		Clock:  d.clock,
 		Signer: d.signer,
 	})
 	auth.NewHandler(authSvc, validation.New(), d.limiter, d.log).Register(r)
 
 	// NoReservations is the M1 checker (OC-29); M3 swaps in the reservations adapter.
-	vehicleSvc := vehicles.NewService(database.NewTxRunner(d.pool), vehiclespg.NewRepo(d.pool),
+	vehicleSvc := vehicles.NewService(tx, vehiclespg.NewRepo(d.pool),
 		vehicles.NoReservations{}, d.cfg.MaxVehiclesPerUser(), d.clock)
 	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
+
+	// Account deletion reaches vehicles and auth only through their ports.
+	usersSvc := users.NewService(users.Deps{
+		Tx: tx, Repo: userspg.NewRepo(d.pool), Accounts: auth.NewAccounts(authSvc),
+		Vehicles: vehicleSvc, Notify: notifier, Legal: legalSvc, Audit: auditRec, Clock: d.clock,
+	})
+	users.NewHandler(usersSvc, validation.New(), d.log).Register(r)
 
 	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins())
 }

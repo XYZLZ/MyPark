@@ -113,6 +113,27 @@ func (r *Repo) ConsumeLiveCodes(ctx context.Context, userID int64, p auth.Purpos
 	return safeError("auth: consume live codes", err)
 }
 
+// GetPasswordHash implements auth.Repo.
+func (r *Repo) GetPasswordHash(ctx context.Context, userID int64) (string, bool, error) {
+	h, err := r.q(ctx).GetPasswordHash(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, safeError("auth: get password hash", err)
+	}
+	return h.String, h.Valid, nil
+}
+
+// EraseUser implements auth.Repo.
+func (r *Repo) EraseUser(ctx context.Context, userID int64, now time.Time) (int64, error) {
+	n, err := r.q(ctx).EraseAuthUser(ctx, dbgen.EraseAuthUserParams{ID: userID, Now: ts(now)})
+	if err != nil {
+		return 0, safeError("auth: erase user", err)
+	}
+	return n, nil
+}
+
 // InsertCode implements auth.Repo.
 func (r *Repo) InsertCode(ctx context.Context, userID int64, p auth.Purpose, hash []byte, expiresAt, now time.Time) (int64, error) {
 	id, err := r.q(ctx).InsertAuthCode(ctx, dbgen.InsertAuthCodeParams{

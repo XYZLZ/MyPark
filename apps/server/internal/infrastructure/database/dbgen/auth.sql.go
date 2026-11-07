@@ -95,6 +95,31 @@ func (q *Queries) ConsumeLiveAuthCodes(ctx context.Context, arg ConsumeLiveAuthC
 	return err
 }
 
+const eraseAuthUser = `-- name: EraseAuthUser :execrows
+update users
+set email = 'deleted+' || public_id::text || '@deleted.invalid',
+    password_hash = null,
+    status = 'deleted',
+    deleted_at = $1,
+    updated_at = $1
+where id = $2 and deleted_at is null
+`
+
+type EraseAuthUserParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+// The auth-owned half of account deletion (spec 7.8): frees the email and
+// drops the credentials.
+func (q *Queries) EraseAuthUser(ctx context.Context, arg EraseAuthUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, eraseAuthUser, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findUserForLogin = `-- name: FindUserForLogin :one
 select id, public_id, email, password_hash, first_name, last_name, phone, role, status, locale,
        email_verified_at, terms_version, terms_accepted_at, privacy_version,
@@ -146,6 +171,20 @@ func (q *Queries) FindUserForLogin(ctx context.Context, email string) (FindUserF
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getPasswordHash = `-- name: GetPasswordHash :one
+select password_hash
+from users
+where id = $1 and deleted_at is null
+`
+
+// The stored hash of a live account; null for an invitee before acceptance.
+func (q *Queries) GetPasswordHash(ctx context.Context, id int64) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getPasswordHash, id)
+	var password_hash pgtype.Text
+	err := row.Scan(&password_hash)
+	return password_hash, err
 }
 
 const getSessionPrincipal = `-- name: GetSessionPrincipal :one

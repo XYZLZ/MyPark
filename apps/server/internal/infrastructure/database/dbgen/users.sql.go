@@ -12,6 +12,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const anonymizeUserProfile = `-- name: AnonymizeUserProfile :execrows
+update users
+set first_name = 'deleted',
+    last_name = 'deleted',
+    phone = null,
+    updated_at = $1
+where id = $2 and deleted_at is null
+`
+
+type AnonymizeUserProfileParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+// The profile half of account deletion (spec 7.8). The auth-owned columns
+// (email, password, status, deleted_at) follow in EraseAuthUser, in the same
+// transaction.
+func (q *Queries) AnonymizeUserProfile(ctx context.Context, arg AnonymizeUserProfileParams) (int64, error) {
+	result, err := q.db.Exec(ctx, anonymizeUserProfile, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getUserProfileByID = `-- name: GetUserProfileByID :one
 select id, public_id, email, first_name, last_name, phone, role, status, locale,
        email_verified_at, terms_version, terms_accepted_at, privacy_version,
@@ -86,4 +111,78 @@ func (q *Queries) UpdateUserLegalAcceptance(ctx context.Context, arg UpdateUserL
 		arg.ID,
 	)
 	return err
+}
+
+const updateUserProfile = `-- name: UpdateUserProfile :one
+update users
+set first_name = coalesce($1, first_name),
+    last_name = coalesce($2, last_name),
+    locale = coalesce($3, locale),
+    phone = case when $4::boolean then $5 else phone end,
+    updated_at = $6
+where id = $7 and deleted_at is null
+returning id, public_id, email, first_name, last_name, phone, role, status, locale,
+          email_verified_at, terms_version, terms_accepted_at, privacy_version,
+          privacy_accepted_at, created_at
+`
+
+type UpdateUserProfileParams struct {
+	FirstName pgtype.Text
+	LastName  pgtype.Text
+	Locale    pgtype.Text
+	SetPhone  bool
+	Phone     pgtype.Text
+	Now       pgtype.Timestamptz
+	ID        int64
+}
+
+type UpdateUserProfileRow struct {
+	ID                int64
+	PublicID          uuid.UUID
+	Email             string
+	FirstName         string
+	LastName          string
+	Phone             pgtype.Text
+	Role              string
+	Status            string
+	Locale            string
+	EmailVerifiedAt   pgtype.Timestamptz
+	TermsVersion      pgtype.Text
+	TermsAcceptedAt   pgtype.Timestamptz
+	PrivacyVersion    pgtype.Text
+	PrivacyAcceptedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
+// Partial profile update. A null narg leaves the column as it is; phone is
+// written only when @set_phone is true, so a null phone clears it.
+func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (UpdateUserProfileRow, error) {
+	row := q.db.QueryRow(ctx, updateUserProfile,
+		arg.FirstName,
+		arg.LastName,
+		arg.Locale,
+		arg.SetPhone,
+		arg.Phone,
+		arg.Now,
+		arg.ID,
+	)
+	var i UpdateUserProfileRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.Role,
+		&i.Status,
+		&i.Locale,
+		&i.EmailVerifiedAt,
+		&i.TermsVersion,
+		&i.TermsAcceptedAt,
+		&i.PrivacyVersion,
+		&i.PrivacyAcceptedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }

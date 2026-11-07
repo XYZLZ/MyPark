@@ -74,6 +74,12 @@ type Repo interface {
 	AttemptCode(ctx context.Context, userID int64, p Purpose, now time.Time, maxAttempts int) (CodeAttempt, bool, error)
 	// ConsumeCode marks a code used.
 	ConsumeCode(ctx context.Context, id int64, now time.Time) error
+	// GetPasswordHash returns the stored hash of a live account. found is
+	// false for an unknown or deleted user and for one with no password.
+	GetPasswordHash(ctx context.Context, userID int64) (hash string, found bool, err error)
+	// EraseUser anonymizes the login columns of a live user and returns how
+	// many rows it changed (0 when the user is gone).
+	EraseUser(ctx context.Context, userID int64, now time.Time) (int64, error)
 }
 
 // LoginUser is the account a login attempt names. HasPassword is false for

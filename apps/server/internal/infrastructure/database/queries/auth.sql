@@ -160,3 +160,20 @@ where expires_at < @cutoff
 -- Sessions revoked or expired before @cutoff.
 delete from auth_sessions
 where revoked_at < @cutoff or absolute_expires_at < @cutoff;
+
+-- name: GetPasswordHash :one
+-- The stored hash of a live account; null for an invitee before acceptance.
+select password_hash
+from users
+where id = @id and deleted_at is null;
+
+-- name: EraseAuthUser :execrows
+-- The auth-owned half of account deletion (spec 7.8): frees the email and
+-- drops the credentials.
+update users
+set email = 'deleted+' || public_id::text || '@deleted.invalid',
+    password_hash = null,
+    status = 'deleted',
+    deleted_at = @now,
+    updated_at = @now
+where id = @id and deleted_at is null;
