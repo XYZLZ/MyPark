@@ -53,12 +53,20 @@ type Validator struct {
 // can never fail the constraint.
 var phonePattern = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
 
+// codePattern is the one-time code of the OpenAPI contract. go-playground's
+// numeric also accepts signs and decimals.
+var codePattern = regexp.MustCompile(`^[0-9]{6}$`)
+
 var shared = sync.OnceValue(func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	v.RegisterTagNameFunc(jsonName)
 	// password_common fails when the password is in the common-password list.
 	_ = v.RegisterValidation("password_common", func(fl validator.FieldLevel) bool {
 		return !hashing.IsCommonPassword(fl.Field().String())
+	})
+	// code6 passes exactly six ASCII digits.
+	_ = v.RegisterValidation("code6", func(fl validator.FieldLevel) bool {
+		return codePattern.MatchString(fl.Field().String())
 	})
 	_ = v.RegisterValidation("phone", func(fl validator.FieldLevel) bool {
 		return phonePattern.MatchString(fl.Field().String())

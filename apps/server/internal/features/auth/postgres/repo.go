@@ -101,6 +101,12 @@ func (r *Repo) ActivateUser(ctx context.Context, id int64, now time.Time) error 
 	return safeError("auth: activate user", r.q(ctx).ActivateUser(ctx, dbgen.ActivateUserParams{ID: id, Now: ts(now)}))
 }
 
+// SetPassword implements auth.Repo.
+func (r *Repo) SetPassword(ctx context.Context, userID int64, hash string, now time.Time) error {
+	err := r.q(ctx).SetPassword(ctx, dbgen.SetPasswordParams{ID: userID, PasswordHash: text(hash), Now: ts(now)})
+	return safeError("auth: set password", err)
+}
+
 // ConsumeLiveCodes implements auth.Repo.
 func (r *Repo) ConsumeLiveCodes(ctx context.Context, userID int64, p auth.Purpose, now time.Time) error {
 	err := r.q(ctx).ConsumeLiveAuthCodes(ctx, dbgen.ConsumeLiveAuthCodesParams{UserID: userID, Purpose: string(p), Now: ts(now)})

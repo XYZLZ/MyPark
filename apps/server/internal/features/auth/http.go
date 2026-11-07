@@ -36,6 +36,8 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/auth/register", router.Policy{Public: true, Limit: &ratelimit.RegisterIP}, h.register)
 	r.Handle("POST /v1/auth/verify", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.verify)
 	r.Handle("POST /v1/auth/verify/resend", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.resend)
+	r.Handle("POST /v1/auth/password/forgot", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.forgot)
+	r.Handle("POST /v1/auth/password/reset", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.reset)
 	r.Handle("POST /v1/auth/login", router.Policy{Public: true}, h.login)
 	r.Handle("POST /v1/auth/refresh", router.Policy{Public: true, Limit: &ratelimit.RefreshIP}, h.refresh)
 	// Logout stays open to a driver who still owes a legal re-acceptance.
@@ -58,7 +60,15 @@ type (
 	}
 	verifyRequest struct {
 		Email string        `json:"email" validate:"required,email,max=254"`
-		Code  secret.String `json:"code" validate:"required,len=6,numeric"`
+		Code  secret.String `json:"code" validate:"required,code6"`
+	}
+	forgotRequest struct {
+		Email string `json:"email" validate:"required,email,max=254"`
+	}
+	resetRequest struct {
+		Email       string        `json:"email" validate:"required,email,max=254"`
+		Code        secret.String `json:"code" validate:"required,code6"`
+		NewPassword secret.String `json:"new_password" validate:"required,min=10,max=128,password_common"`
 	}
 	resendRequest struct {
 		Email string `json:"email" validate:"required,email,max=254"`
@@ -86,6 +96,8 @@ func (q *registerRequest) normalize() {
 
 func (q *verifyRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
 func (q *resendRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
+func (q *forgotRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
+func (q *resetRequest) normalize()   { q.Email = NormalizeEmail(q.Email) }
 func (q *loginRequest) normalize()   { q.Email = NormalizeEmail(q.Email) }
 func (q *refreshRequest) normalize() {}
 
@@ -173,6 +185,33 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, r, http.StatusAccepted, statusDTO{Status: "accepted"})
+}
+
+func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[forgotRequest](h, r)
+	if err == nil {
+		err = h.allowEmail(r, req.Email)
+	}
+	if err == nil {
+		err = h.svc.Forgot(r.Context(), req.Email)
+	}
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.OK(w, r, http.StatusAccepted, statusDTO{Status: "accepted"})
+}
+
+func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[resetRequest](h, r)
+	if err == nil {
+		err = h.svc.Reset(r.Context(), req.Email, req.Code, req.NewPassword)
+	}
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.NoContent(w)
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {

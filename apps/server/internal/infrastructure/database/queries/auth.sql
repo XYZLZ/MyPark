@@ -82,6 +82,12 @@ update users
 set password_hash = @new_hash, updated_at = @now
 where id = @id and password_hash = @old_hash;
 
+-- name: SetPassword :exec
+-- Password reset: stores the new hash and stamps the change.
+update users
+set password_hash = @password_hash, password_changed_at = @now, updated_at = @now
+where id = @id and status = 'active' and deleted_at is null;
+
 -- name: InsertAuthSession :one
 insert into auth_sessions (user_id, client_kind, created_at, last_used_at, absolute_expires_at,
                            created_ip, user_agent)

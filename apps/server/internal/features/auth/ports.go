@@ -62,6 +62,9 @@ type Repo interface {
 	OverwritePendingDriver(ctx context.Context, id int64, d NewDriver) error
 	// ActivateUser marks a pending user active and verified.
 	ActivateUser(ctx context.Context, id int64, now time.Time) error
+	// SetPassword replaces the hash of an active user and stamps
+	// password_changed_at.
+	SetPassword(ctx context.Context, userID int64, hash string, now time.Time) error
 	// ConsumeLiveCodes consumes the live code of a user and purpose, if any.
 	ConsumeLiveCodes(ctx context.Context, userID int64, p Purpose, now time.Time) error
 	// InsertCode stores a new live code and returns its id.

@@ -571,6 +571,24 @@ func (q *Queries) RotateRefreshToken(ctx context.Context, arg RotateRefreshToken
 	return err
 }
 
+const setPassword = `-- name: SetPassword :exec
+update users
+set password_hash = $1, password_changed_at = $2, updated_at = $2
+where id = $3 and status = 'active' and deleted_at is null
+`
+
+type SetPasswordParams struct {
+	PasswordHash pgtype.Text
+	Now          pgtype.Timestamptz
+	ID           int64
+}
+
+// Password reset: stores the new hash and stamps the change.
+func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error {
+	_, err := q.db.Exec(ctx, setPassword, arg.PasswordHash, arg.Now, arg.ID)
+	return err
+}
+
 const touchAuthSession = `-- name: TouchAuthSession :exec
 update auth_sessions set last_used_at = $1 where id = $2
 `
