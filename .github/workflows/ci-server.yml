@@ -62,6 +62,15 @@ jobs:
           "${{ job.services.postgres.id }}"
           sh < deploy/compose/postgres/init/01-roles.sh
 
+      - name: go mod tidy check
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      # Pinned to a release tag; bump deliberately.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
       - name: go vet
         run: go vet ./...
 

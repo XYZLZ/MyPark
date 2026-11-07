@@ -175,7 +175,6 @@ The facility belongs to Banreservas. The product is **MyPark**, shown as "MyPark
 | Expo alignment | `npx expo install --check` must pass. Expo packages are upgraded only together with an SDK upgrade |
 | Go modules | `go mod tidy` must be clean. Prefer the standard library. A new dependency needs a one-line justification in the PR |
 | Audit | `npm audit --omit=dev` and `govulncheck` run in CI. High/critical findings block release |
-| CI status | `npm audit --omit=dev`, `govulncheck` and the `go mod tidy` check are not in CI yet (planned for M1) |
 | Licenses | Only OSI-approved permissive licenses (MIT, Apache-2.0, BSD, ISC) without approval |
 
 ### 2.7 Security baseline (OWASP ASVS Level 1)
