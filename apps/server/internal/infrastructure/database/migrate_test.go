@@ -2,18 +2,34 @@ package database_test
 
 import (
 	"errors"
+	"io/fs"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
-// baselineVersion is the version of 00001_baseline.sql, the highest embedded
-// migration in M0.
-const baselineVersion = 1
+// latestVersion is the highest embedded migration version, derived from the
+// embedded files so adding a migration never needs a bump here.
+var latestVersion = func() int64 {
+	files, err := fs.Glob(database.MigrationsFS, "migrations/*.sql")
+	if err != nil || len(files) == 0 {
+		panic("migrate_test: no embedded migrations")
+	}
+	var highest int64
+	for _, f := range files {
+		v, err := goose.NumericComponent(f)
+		if err != nil {
+			panic(err)
+		}
+		highest = max(highest, v)
+	}
+	return highest
+}()
 
 func TestMigrateUp_CreatesBaseline(t *testing.T) {
 	pool := testsupport.NewDB(t)
@@ -30,9 +46,9 @@ func TestMigrateUp_CreatesBaseline(t *testing.T) {
 }
 
 func TestMigrateUp_Idempotent(t *testing.T) {
-	pool := testsupport.NewDB(t)
-	// NewDB already migrated; a second run must be a no-op.
-	if err := database.MigrateUp(t.Context(), stdlib.OpenDBFromPool(pool)); err != nil {
+	db := testsupport.NewTestDB(t)
+	// NewTestDB already migrated; a second run must be a no-op.
+	if err := database.MigrateUp(t.Context(), stdlib.OpenDBFromPool(db.Migrator)); err != nil {
 		t.Fatalf("second MigrateUp: %v", err)
 	}
 }
@@ -43,8 +59,8 @@ func TestMigrationStatus_UpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if current != baselineVersion || expected != baselineVersion {
-		t.Errorf("Status = (%d, %d), want (%d, %d)", current, expected, baselineVersion, baselineVersion)
+	if current != latestVersion || expected != latestVersion {
+		t.Errorf("Status = (%d, %d), want (%d, %d)", current, expected, latestVersion, latestVersion)
 	}
 }
 
@@ -56,8 +72,8 @@ func TestReadyz_MigrationsBehind_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status on an unmigrated database: %v", err)
 	}
-	if current != 0 || expected != baselineVersion {
-		t.Errorf("Status = (%d, %d), want (0, %d)", current, expected, baselineVersion)
+	if current != 0 || expected != latestVersion {
+		t.Errorf("Status = (%d, %d), want (0, %d)", current, expected, latestVersion)
 	}
 	// Status is a read-only probe: it must not create the goose version table.
 	var created bool
@@ -88,8 +104,8 @@ func TestMigrationStatus_AsAppRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goose_db_version as mypark_app: %v", err)
 	}
-	if current != baselineVersion {
-		t.Errorf("current = %d, want %d", current, baselineVersion)
+	if current != latestVersion {
+		t.Errorf("current = %d, want %d", current, latestVersion)
 	}
 	// And it must not be able to run DDL.
 	_, err = conn.Exec(t.Context(), "create table app_should_not_create (id int)")
