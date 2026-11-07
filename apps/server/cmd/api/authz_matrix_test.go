@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -207,11 +208,16 @@ func TestAuthzMatrix(t *testing.T) {
 					}
 					continue
 				}
-				// Passed the gates: the handler decides, but never with a gate code.
-				if slices.Contains(gateCodes, errCode(body)) || rec.Code >= http.StatusInternalServerError ||
-					rec.Code == http.StatusNotFound && errCode(body) == string(errcodes.HTTPNotFound) {
-					t.Errorf("%s: got %d %q, want the request to reach the handler (body %s)",
-						r.name, rec.Code, errCode(body), rec.Body)
+				// Passed the gates. A protected route must succeed for a valid
+				// request; a public one only has to reach its handler.
+				if rt.Policy.Public {
+					if slices.Contains(gateCodes, errCode(body)) || rec.Code >= http.StatusInternalServerError ||
+						rec.Code == http.StatusNotFound && errCode(body) == string(errcodes.HTTPNotFound) {
+						t.Errorf("%s: got %d %q, want the request to reach the handler (body %s)",
+							r.name, rec.Code, errCode(body), rec.Body)
+					}
+				} else if rec.Code < 200 || rec.Code >= 300 {
+					t.Errorf("%s: got %d %q, want 2xx (body %s)", r.name, rec.Code, errCode(body), rec.Body)
 				}
 			}
 		})
@@ -267,15 +273,14 @@ func TestEveryServedPatternIsRegisteredOrAllowListed(t *testing.T) {
 		}
 	}
 
-	// Direct registrations on a ServeMux are allowed only in the router and
-	// in the health feature (the allow-list above).
+	// Any 2-argument Handle/HandleFunc call with a literal pattern registers
+	// straight on a mux, whatever the receiver is called. router.Router.Handle
+	// takes 3 arguments and router.go passes a variable, so neither matches.
+	// The health feature may register only the allow-listed probes.
 	root := filepath.Join("..", "..")
-	allowedFiles := map[string]bool{
-		filepath.Join("internal", "transport", "http", "router", "router.go"): true,
-		filepath.Join("internal", "features", "health", "handler.go"):         true,
-	}
+	healthFile := filepath.Join("internal", "features", "health", "handler.go")
 	var found []string
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{filepath.Join("cmd", "api"), "internal"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, de os.DirEntry, err error) error {
 			if err != nil || de.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return err
@@ -287,19 +292,25 @@ func TestEveryServedPatternIsRegisteredOrAllowListed(t *testing.T) {
 			}
 			ast.Inspect(file, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
-				if !ok {
+				if !ok || len(call.Args) != 2 {
 					return true
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
 				if !ok || (sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc") {
 					return true
 				}
-				if len(call.Args) != 2 || !isMuxReceiver(sel.X) {
+				lit, ok := call.Args[0].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
 					return true
 				}
-				if !allowedFiles[rel] {
-					found = append(found, rel+": "+sel.Sel.Name)
+				pattern, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					pattern = lit.Value
 				}
+				if rel == healthFile && allowList[pattern] {
+					return true
+				}
+				found = append(found, rel+": "+sel.Sel.Name+"("+lit.Value+")")
 				return true
 			})
 			return nil
@@ -309,20 +320,8 @@ func TestEveryServedPatternIsRegisteredOrAllowListed(t *testing.T) {
 		}
 	}
 	for _, f := range found {
-		t.Errorf("direct mux registration outside router/health: %s", f)
+		t.Errorf("direct mux registration outside the router and the health allow-list: %s", f)
 	}
-}
-
-// isMuxReceiver reports whether x names a ServeMux: the variable "mux", a
-// field "mux", or the package-level http default mux.
-func isMuxReceiver(x ast.Expr) bool {
-	switch v := x.(type) {
-	case *ast.Ident:
-		return v.Name == "mux" || v.Name == "http"
-	case *ast.SelectorExpr:
-		return v.Sel.Name == "mux"
-	}
-	return false
 }
 
 // specPolicy restates the access policy of each route from spec section 8
