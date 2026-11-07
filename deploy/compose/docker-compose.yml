@@ -76,6 +76,14 @@ services:
     image: mypark/seed:${VERSION:-dev}
     environment:
       DATABASE_URL: *app-url
+      APP_ENV: ${APP_ENV:-development}
+      # First admin, created only while no admin exists. The password is the
+      # dev-only config.DevSeedAdminPassword; the seed refuses it when
+      # APP_ENV=production.
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@mypark.local}
+      SEED_ADMIN_FIRST_NAME: ${SEED_ADMIN_FIRST_NAME:-MyPark}
+      SEED_ADMIN_LAST_NAME: ${SEED_ADMIN_LAST_NAME:-Admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-mypark-dev-admin-2026}
     depends_on:
       postgres:
         condition: service_healthy
