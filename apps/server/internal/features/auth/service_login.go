@@ -19,6 +19,7 @@ import (
 const (
 	StatusActive    = "active"
 	StatusSuspended = "suspended"
+	StatusDeleted   = "deleted"
 )
 
 // maxUserAgent bounds the stored user agent.

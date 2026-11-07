@@ -115,3 +115,25 @@ where id = @id and revoked_at is null;
 update auth_sessions
 set revoked_at = @now, revoked_reason = @reason
 where user_id = @user_id and revoked_at is null;
+
+-- name: LockRefreshToken :one
+-- The presented token with its session and user. The token and session rows
+-- are locked, so two requests with one token serialize and the second sees
+-- rotated_at (spec 7.4). The user is read, not locked.
+select t.id as token_id, t.rotated_at, t.expires_at as token_expires_at,
+       s.id as session_id, s.public_id as session_public_id, s.revoked_at,
+       s.absolute_expires_at,
+       u.id as user_id, u.public_id as user_public_id, u.email, u.first_name, u.last_name,
+       u.phone, u.role, u.status, u.locale, u.email_verified_at, u.terms_version,
+       u.terms_accepted_at, u.privacy_version, u.privacy_accepted_at, u.created_at as user_created_at
+from refresh_tokens t
+join auth_sessions s on s.id = t.session_id
+join users u on u.id = s.user_id
+where t.token_hash = @token_hash
+for update of t, s;
+
+-- name: RotateRefreshToken :exec
+update refresh_tokens set rotated_at = @now where id = @id and rotated_at is null;
+
+-- name: TouchAuthSession :exec
+update auth_sessions set last_used_at = @now where id = @id;

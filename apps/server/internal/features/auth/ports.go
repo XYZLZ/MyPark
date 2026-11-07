@@ -48,6 +48,7 @@ type CodeAttempt struct {
 type Repo interface {
 	LoginRepo
 	SessionRepo
+	RefreshRepo
 
 	// LockUserByEmail returns the non-deleted user with this email, locked.
 	LockUserByEmail(ctx context.Context, email string) (UserRow, bool, error)
@@ -141,4 +142,28 @@ type SessionRepo interface {
 	// RevokeUserSessions revokes every live session of a user and returns how
 	// many it revoked.
 	RevokeUserSessions(ctx context.Context, userID int64, reason string, now time.Time) (int, error)
+}
+
+// RefreshRow is a refresh token with its session and user, as the refresh
+// transaction reads them. Snapshot.Found is set by the service.
+type RefreshRow struct {
+	Snapshot        RefreshSnapshot
+	TokenID         int64
+	SessionID       int64
+	SessionPublicID uuid.UUID
+	User            UserRow
+	View            UserView
+}
+
+// RefreshRepo is the part of the persistence port used by refresh rotation.
+type RefreshRepo interface {
+	// LockRefreshToken returns the token with this hash with its session and
+	// user. The token and session rows stay locked until the transaction
+	// ends, so concurrent presentations of one token serialize. found is
+	// false for an unknown hash.
+	LockRefreshToken(ctx context.Context, hash []byte) (row RefreshRow, found bool, err error)
+	// RotateRefreshToken marks a token used.
+	RotateRefreshToken(ctx context.Context, tokenID int64, now time.Time) error
+	// TouchSession records the session as used.
+	TouchSession(ctx context.Context, sessionID int64, now time.Time) error
 }

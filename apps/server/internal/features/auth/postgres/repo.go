@@ -266,3 +266,44 @@ func timePtr(t pgtype.Timestamptz) *time.Time {
 	}
 	return &t.Time
 }
+
+// LockRefreshToken implements auth.Repo.
+func (r *Repo) LockRefreshToken(ctx context.Context, hash []byte) (auth.RefreshRow, bool, error) {
+	row, err := r.q(ctx).LockRefreshToken(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.RefreshRow{}, false, nil
+	}
+	if err != nil {
+		return auth.RefreshRow{}, false, safeError("auth: lock refresh token", err)
+	}
+	role, _ := authz.ParseRole(row.Role)
+	return auth.RefreshRow{
+		Snapshot: auth.RefreshSnapshot{
+			TokenRotatedAt: timePtr(row.RotatedAt), SessionRevokedAt: timePtr(row.RevokedAt),
+			TokenExpiresAt: row.TokenExpiresAt.Time, SessionAbsoluteExpiresAt: row.AbsoluteExpiresAt.Time,
+			UserStatus: row.Status,
+		},
+		TokenID: row.TokenID, SessionID: row.SessionID, SessionPublicID: row.SessionPublicID,
+		User: auth.UserRow{ID: row.UserID, PublicID: row.UserPublicID, Role: row.Role, Status: row.Status, Locale: row.Locale},
+		View: auth.UserView{
+			PublicID: row.UserPublicID, Email: row.Email, FirstName: row.FirstName, LastName: row.LastName,
+			Phone: strPtr(row.Phone), Role: role, Status: row.Status, Locale: row.Locale,
+			EmailVerifiedAt: timePtr(row.EmailVerifiedAt),
+			TermsVersion:    strPtr(row.TermsVersion), TermsAcceptedAt: timePtr(row.TermsAcceptedAt),
+			PrivacyVersion: strPtr(row.PrivacyVersion), PrivacyAcceptedAt: timePtr(row.PrivacyAcceptedAt),
+			CreatedAt: row.UserCreatedAt.Time,
+		},
+	}, true, nil
+}
+
+// RotateRefreshToken implements auth.Repo.
+func (r *Repo) RotateRefreshToken(ctx context.Context, tokenID int64, now time.Time) error {
+	err := r.q(ctx).RotateRefreshToken(ctx, dbgen.RotateRefreshTokenParams{ID: tokenID, Now: ts(now)})
+	return safeError("auth: rotate refresh token", err)
+}
+
+// TouchSession implements auth.Repo.
+func (r *Repo) TouchSession(ctx context.Context, sessionID int64, now time.Time) error {
+	err := r.q(ctx).TouchAuthSession(ctx, dbgen.TouchAuthSessionParams{ID: sessionID, Now: ts(now)})
+	return safeError("auth: touch session", err)
+}

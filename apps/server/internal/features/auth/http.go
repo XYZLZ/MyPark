@@ -37,6 +37,7 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/auth/verify", router.Policy{Public: true, Limit: &ratelimit.CodeSubmitIP}, h.verify)
 	r.Handle("POST /v1/auth/verify/resend", router.Policy{Public: true, Limit: &ratelimit.CodeRequestIP}, h.resend)
 	r.Handle("POST /v1/auth/login", router.Policy{Public: true}, h.login)
+	r.Handle("POST /v1/auth/refresh", router.Policy{Public: true, Limit: &ratelimit.RefreshIP}, h.refresh)
 	// Logout stays open to a driver who still owes a legal re-acceptance.
 	signedIn := router.Policy{Roles: router.AnyRole, LegalExempt: true}
 	r.Handle("POST /v1/auth/logout", signedIn, h.logout)
@@ -62,6 +63,11 @@ type (
 	resendRequest struct {
 		Email string `json:"email" validate:"required,email,max=254"`
 	}
+	// refreshRequest carries no validation rule on purpose: an empty or
+	// malformed token is a 401 auth.refresh_invalid, never a 422.
+	refreshRequest struct {
+		RefreshToken secret.String `json:"refresh_token"`
+	}
 	loginRequest struct {
 		Email      string        `json:"email" validate:"required,email,max=254"`
 		Password   secret.String `json:"password" validate:"required,max=128"`
@@ -78,9 +84,10 @@ func (q *registerRequest) normalize() {
 	q.Phone = strings.TrimSpace(q.Phone)
 }
 
-func (q *verifyRequest) normalize() { q.Email = NormalizeEmail(q.Email) }
-func (q *resendRequest) normalize() { q.Email = NormalizeEmail(q.Email) }
-func (q *loginRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
+func (q *verifyRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
+func (q *resendRequest) normalize()  { q.Email = NormalizeEmail(q.Email) }
+func (q *loginRequest) normalize()   { q.Email = NormalizeEmail(q.Email) }
+func (q *refreshRequest) normalize() {}
 
 // decode reads the JSON body, normalizes it, then validates it, so a blank
 // name fails validation instead of reaching a database CHECK.
@@ -184,6 +191,19 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			Email: req.Email, Password: req.Password, ClientKind: ClientKind(req.ClientKind),
 			IP: ip, UserAgent: r.UserAgent(),
 		})
+	}
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.OK(w, r, http.StatusOK, newTokenResponse(pair))
+}
+
+func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
+	req, err := decode[refreshRequest](h, r)
+	var pair TokenPair
+	if err == nil {
+		pair, err = h.svc.Refresh(r.Context(), req.RefreshToken, reqctx.ClientIP(r.Context()))
 	}
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)

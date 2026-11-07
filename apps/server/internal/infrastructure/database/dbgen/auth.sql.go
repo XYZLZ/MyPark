@@ -343,6 +343,78 @@ func (q *Queries) LockPendingDriverByEmail(ctx context.Context, email string) (L
 	return i, err
 }
 
+const lockRefreshToken = `-- name: LockRefreshToken :one
+select t.id as token_id, t.rotated_at, t.expires_at as token_expires_at,
+       s.id as session_id, s.public_id as session_public_id, s.revoked_at,
+       s.absolute_expires_at,
+       u.id as user_id, u.public_id as user_public_id, u.email, u.first_name, u.last_name,
+       u.phone, u.role, u.status, u.locale, u.email_verified_at, u.terms_version,
+       u.terms_accepted_at, u.privacy_version, u.privacy_accepted_at, u.created_at as user_created_at
+from refresh_tokens t
+join auth_sessions s on s.id = t.session_id
+join users u on u.id = s.user_id
+where t.token_hash = $1
+for update of t, s
+`
+
+type LockRefreshTokenRow struct {
+	TokenID           int64
+	RotatedAt         pgtype.Timestamptz
+	TokenExpiresAt    pgtype.Timestamptz
+	SessionID         int64
+	SessionPublicID   uuid.UUID
+	RevokedAt         pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	UserID            int64
+	UserPublicID      uuid.UUID
+	Email             string
+	FirstName         string
+	LastName          string
+	Phone             pgtype.Text
+	Role              string
+	Status            string
+	Locale            string
+	EmailVerifiedAt   pgtype.Timestamptz
+	TermsVersion      pgtype.Text
+	TermsAcceptedAt   pgtype.Timestamptz
+	PrivacyVersion    pgtype.Text
+	PrivacyAcceptedAt pgtype.Timestamptz
+	UserCreatedAt     pgtype.Timestamptz
+}
+
+// The presented token with its session and user. The token and session rows
+// are locked, so two requests with one token serialize and the second sees
+// rotated_at (spec 7.4). The user is read, not locked.
+func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash []byte) (LockRefreshTokenRow, error) {
+	row := q.db.QueryRow(ctx, lockRefreshToken, tokenHash)
+	var i LockRefreshTokenRow
+	err := row.Scan(
+		&i.TokenID,
+		&i.RotatedAt,
+		&i.TokenExpiresAt,
+		&i.SessionID,
+		&i.SessionPublicID,
+		&i.RevokedAt,
+		&i.AbsoluteExpiresAt,
+		&i.UserID,
+		&i.UserPublicID,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.Role,
+		&i.Status,
+		&i.Locale,
+		&i.EmailVerifiedAt,
+		&i.TermsVersion,
+		&i.TermsAcceptedAt,
+		&i.PrivacyVersion,
+		&i.PrivacyAcceptedAt,
+		&i.UserCreatedAt,
+	)
+	return i, err
+}
+
 const lockUserByEmail = `-- name: LockUserByEmail :one
 select id, public_id, role, status, locale
 from users
@@ -483,4 +555,32 @@ func (q *Queries) RevokeUserSessions(ctx context.Context, arg RevokeUserSessions
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateRefreshToken = `-- name: RotateRefreshToken :exec
+update refresh_tokens set rotated_at = $1 where id = $2 and rotated_at is null
+`
+
+type RotateRefreshTokenParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) RotateRefreshToken(ctx context.Context, arg RotateRefreshTokenParams) error {
+	_, err := q.db.Exec(ctx, rotateRefreshToken, arg.Now, arg.ID)
+	return err
+}
+
+const touchAuthSession = `-- name: TouchAuthSession :exec
+update auth_sessions set last_used_at = $1 where id = $2
+`
+
+type TouchAuthSessionParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) TouchAuthSession(ctx context.Context, arg TouchAuthSessionParams) error {
+	_, err := q.db.Exec(ctx, touchAuthSession, arg.Now, arg.ID)
+	return err
 }
