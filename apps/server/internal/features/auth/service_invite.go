@@ -180,7 +180,7 @@ func (s *Service) AcceptInvitation(ctx context.Context, email string, code, pass
 		}
 		uid := u.ID
 		if err := s.recordAudit(ctx, audit.Entry{
-			Action: audit.AdminInvitationAccepted, Actor: audit.ActorAdmin, ActorUserID: &uid,
+			Action: audit.AdminInvitationAccepted, Actor: audit.ActorUser, ActorUserID: &uid,
 			EntityType: "user", EntityID: u.PublicID.String(),
 		}); err != nil {
 			return err

@@ -460,3 +460,29 @@ func TestAdminRoutes_DriverGets403(t *testing.T) {
 		t.Error("a forbidden request created an admin")
 	}
 }
+
+// wantActorKind asserts the actor_kind of the newest audit row of action.
+func (e *env) wantActorKind(action, want string) {
+	e.t.Helper()
+	if got := e.text(`select actor_kind from audit_log where action = $1 order by id desc limit 1`, action); got != want {
+		e.t.Errorf("%s actor_kind = %q, want %q", action, got, want)
+	}
+}
+
+func TestAdminAudit_ActorKinds(t *testing.T) {
+	e := newEnv(t)
+	admin := e.newUser("root@example.com", "admin", "")
+	e.invite(admin.Token, "nora@example.com")
+	e.wantActorKind("admin.created", "admin")
+	e.invite(admin.Token, "nora@example.com")
+	e.wantActorKind("admin.invitation_reissued", "admin")
+	if r := e.accept("nora@example.com", e.inviteCode("nora@example.com"), invitePW); r.Code != http.StatusNoContent {
+		t.Fatalf("accept = %d %s", r.Code, r.Body)
+	}
+	e.wantActorKind("admin.invitation_accepted", "user")
+	var id, nora int64
+	if err := e.db.Super.QueryRow(t.Context(), `select actor_user_id, (select id from users where email='nora@example.com')
+		from audit_log where action='admin.invitation_accepted'`).Scan(&id, &nora); err != nil || id != nora {
+		t.Errorf("actor_user_id = %d, want invitee %d (err %v)", id, nora, err)
+	}
+}
