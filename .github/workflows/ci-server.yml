@@ -106,3 +106,14 @@ jobs:
           TEST_SMTP_ADDR: localhost:1025
           TEST_MAILPIT_API: http://localhost:8025
         run: go test -race ./...
+
+      # Domain statement coverage (OC-35 stands in for the 90% branch rule).
+      - name: Domain coverage gate
+        env:
+          CI: "true"
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+          TEST_SMTP_ADDR: localhost:1025
+          TEST_MAILPIT_API: http://localhost:8025
+        run: |
+          go test -coverprofile=domain.cover ./internal/features/auth/ ./internal/features/vehicles/ ./internal/infrastructure/hashing/
+          sh scripts/covergate.sh domain.cover 90

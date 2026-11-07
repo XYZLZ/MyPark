@@ -9,6 +9,7 @@ node_modules/
 .expo/
 dist/
 coverage/
+*.cover
 
 # Environment files (keep the committed example)
 .env

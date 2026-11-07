@@ -151,6 +151,13 @@ type deps struct {
 // newHandler builds the API router with every feature handler and wraps it
 // in the shared middleware chain (see httpserver.NewHandler).
 func newHandler(d deps) http.Handler {
+	h, _ := newHandlerWithRoutes(d)
+	return h
+}
+
+// newHandlerWithRoutes is newHandler plus the route registry, so tests can
+// check every registered route against its access policy.
+func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	mux := http.NewServeMux()
 	d.health.Register(mux)
 
@@ -196,5 +203,5 @@ func newHandler(d deps) http.Handler {
 	})
 	users.NewHandler(usersSvc, validation.New(), d.log).Register(r)
 
-	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins())
+	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins()), r.Routes()
 }
