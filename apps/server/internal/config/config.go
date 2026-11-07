@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
@@ -270,7 +271,7 @@ func Load(getenv func(string) string) (Config, error) {
 		var err error
 		if seed, err = decodeKey(EnvJWTSigningKey, raw.JWTSigningKey, jwtSeedLen, true); err != nil {
 			errs = append(errs, err)
-		} else if production && raw.JWTSigningKey == DevJWTSigningKey {
+		} else if production && bytes.Equal(seed, devBytes(DevJWTSigningKey)) {
 			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvJWTSigningKey))
 		}
 	}
@@ -278,7 +279,7 @@ func Load(getenv func(string) string) (Config, error) {
 		var err error
 		if pepper, err = decodeKey(EnvAuthCodePepper, raw.AuthCodePepper, minPepperLen, false); err != nil {
 			errs = append(errs, err)
-		} else if production && raw.AuthCodePepper == DevAuthCodePepper {
+		} else if production && bytes.Equal(pepper, devBytes(DevAuthCodePepper)) {
 			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvAuthCodePepper))
 		}
 	}
@@ -291,6 +292,10 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, err)
 	}
 	for kid, key := range extra {
+		if production && key.Equal(devPublicKey()) {
+			errs = append(errs, fmt.Errorf("%s must not contain the development signing key in production", EnvJWTVerifyKeys))
+			continue
+		}
 		if _, dup := verifyKeys[kid]; dup {
 			errs = append(errs, fmt.Errorf("%s repeats the signing key id", EnvJWTVerifyKeys))
 			continue
@@ -326,6 +331,20 @@ func Load(getenv func(string) string) (Config, error) {
 		maxVehiclesPerUser: int(raw.MaxVehiclesPerUser),
 	}, nil
 }
+
+// devBytes decodes a Dev* constant; they are valid base64 by construction.
+func devBytes(b64 string) []byte {
+	b, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		panic("config: invalid dev constant")
+	}
+	return b
+}
+
+// devPublicKey is the public half of DevJWTSigningKey, derived once.
+var devPublicKey = sync.OnceValue(func() ed25519.PublicKey {
+	return ed25519.NewKeyFromSeed(devBytes(DevJWTSigningKey)).Public().(ed25519.PublicKey)
+})
 
 // decodeKey decodes a standard-base64 secret named name. With exact it must
 // be exactly n bytes, otherwise at least n. The error never includes the value.

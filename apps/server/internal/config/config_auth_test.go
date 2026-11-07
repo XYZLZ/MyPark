@@ -207,3 +207,53 @@ func TestComposeDefaultsMatchDevConstants(t *testing.T) {
 		t.Error("compose header still mentions deploy/compose/.env")
 	}
 }
+
+// altPad returns b64 with its last base64 character changed so that only the
+// unused trailing pad bits differ: non-strict decoding yields the same bytes.
+func altPad(t *testing.T, b64 string) string {
+	t.Helper()
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	last := strings.TrimRight(b64, "=")
+	i := strings.IndexByte(alphabet, last[len(last)-1])
+	alt := b64[:len(last)-1] + string(alphabet[i+1]) + b64[len(last):]
+	a, _ := base64.StdEncoding.DecodeString(b64)
+	b, err := base64.StdEncoding.DecodeString(alt)
+	if err != nil || string(a) != string(b) || alt == b64 {
+		t.Fatalf("altPad produced %q; not an alternate encoding of the same bytes (err %v)", alt, err)
+	}
+	return alt
+}
+
+func TestLoad_ProductionRefusesAlternateEncodingOfDevKeys(t *testing.T) {
+	other := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	for name, dev := range map[string]string{"JWT_SIGNING_KEY": config.DevJWTSigningKey, "AUTH_CODE_PEPPER": config.DevAuthCodePepper} {
+		m := map[string]string{
+			"DATABASE_URL": "postgres://x", "APP_ENV": "production",
+			"JWT_SIGNING_KEY": other, "AUTH_CODE_PEPPER": other,
+		}
+		m[name] = altPad(t, dev)
+		_, err := config.Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s alternate encoding accepted in production: %v", name, err)
+		}
+	}
+}
+
+func TestLoad_ProductionRefusesDevPublicKeyInVerifyKeys(t *testing.T) {
+	seed, _ := base64.StdEncoding.DecodeString(config.DevJWTSigningKey)
+	devPub := base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey))
+	other := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	m := map[string]string{
+		"DATABASE_URL": "postgres://x", "APP_ENV": "production",
+		"JWT_SIGNING_KEY": other, "AUTH_CODE_PEPPER": other,
+		"JWT_VERIFY_KEYS": "old-1:" + devPub,
+	}
+	_, err := config.Load(env(m))
+	if err == nil || !strings.Contains(err.Error(), "JWT_VERIFY_KEYS") || strings.Contains(err.Error(), devPub) {
+		t.Fatalf("err = %v; want one naming JWT_VERIFY_KEYS without the value", err)
+	}
+	m["APP_ENV"] = "development"
+	if _, err := config.Load(env(m)); err != nil {
+		t.Errorf("dev public key rejected outside production: %v", err)
+	}
+}
