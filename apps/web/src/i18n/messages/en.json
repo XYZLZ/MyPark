@@ -21,6 +21,77 @@
     "body": "We could not find what you were looking for. The link may be incomplete, or the page may no longer exist.",
     "backHome": "Back to home"
   },
+  "auth": {
+    "fields": {
+      "email": "Email",
+      "password": "Password",
+      "newPassword": "New password",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "phone": "Phone (optional)",
+      "code": "Verification code"
+    },
+    "login": {
+      "title": "Log in",
+      "adminTitle": "Admin log in",
+      "submit": "Log in",
+      "submitting": "Logging in…",
+      "forgot": "Forgot your password?",
+      "register": "Create an account",
+      "sessionEnded": "Your session ended. Log in again."
+    },
+    "register": {
+      "title": "Create your account",
+      "submit": "Sign up",
+      "submitting": "Creating your account…",
+      "phoneHint": "Include the country code, for example +18095551234.",
+      "passwordHint": "At least 10 characters.",
+      "accept": "I accept the <terms>terms</terms> and the <privacy>privacy policy</privacy>.",
+      "haveAccount": "Already have an account?",
+      "logIn": "Log in",
+      "unavailable": {
+        "title": "Sign-up is unavailable",
+        "body": "We could not load the legal texts, so we cannot create accounts right now. Try again in a moment.",
+        "retry": "Try again"
+      }
+    },
+    "verify": {
+      "title": "Verify your email",
+      "intro": "Enter the 6-digit code we sent to your email.",
+      "submit": "Verify",
+      "submitting": "Verifying…",
+      "resend": "Send a new code",
+      "resending": "Sending…",
+      "sent": "If an account exists for that email, we sent a new code."
+    },
+    "forgot": {
+      "title": "Forgot your password?",
+      "intro": "Enter your email and we will send you a code to choose a new password.",
+      "submit": "Send code",
+      "submitting": "Sending…",
+      "sent": "If an account exists for that email, we sent a code.",
+      "haveCode": "I already have a code",
+      "back": "Back to log in"
+    },
+    "reset": {
+      "title": "Choose a new password",
+      "intro": "Enter the code we sent you and your new password.",
+      "submit": "Change password",
+      "submitting": "Saving…"
+    }
+  },
+  "legal": {
+    "demoNotice": "Sample text for an academic demo.",
+    "terms": {
+      "title": "Terms of use",
+      "body": "This service lets you register vehicles and reserve parking spaces in the Zona Colonial. You agree to provide accurate information and to use the service only for your own vehicles."
+    },
+    "privacy": {
+      "title": "Privacy policy",
+      "body": "We store your name, email, phone number and vehicle plates to run the service. We do not share them with third parties, and you can delete your account at any time."
+    },
+    "backHome": "Back to home"
+  },
   "errors": {
     "fallback": "Something went wrong. Please try again.",
     "auth": {

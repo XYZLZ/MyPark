@@ -11,12 +11,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hookform/resolvers": "7.0.3",
     "@mypark/contracts": "*",
     "@tanstack/react-query": "5.106.1",
     "next": "16.4.5",
     "next-intl": "4.14.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "react-hook-form": "7.91.0",
     "server-only": "0.0.1",
     "zod": "4.6.7",
     "zustand": "5.1.0"

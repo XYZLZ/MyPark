@@ -16,7 +16,17 @@ export function Link({
   return <a href={`/${locale ?? current}${href === '/' ? '' : href}`} {...rest} />;
 }
 
+/** The one router every `useRouter()` call returns, so a test can assert on `push` and `refresh`. */
+export const router = {
+  push: vi.fn(),
+  replace: vi.fn(),
+  refresh: vi.fn(),
+  back: vi.fn(),
+  forward: vi.fn(),
+  prefetch: vi.fn(),
+};
+
 export const usePathname = vi.fn(() => '/');
-export const useRouter = vi.fn();
+export const useRouter = vi.fn(() => router);
 export const redirect = vi.fn();
 export const getPathname = vi.fn();

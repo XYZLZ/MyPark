@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
+
+beforeEach(() => {
+  // Keeps implementations (the shared test router), drops recorded calls.
+  vi.clearAllMocks();
+});
 
 afterEach(() => {
   cleanup();
