@@ -14,6 +14,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/audit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 )
 
 // refreshed is what the refresh transaction hands back: the decision and,
@@ -41,8 +42,15 @@ func (s *Service) Refresh(ctx context.Context, token secret.String, _ netip.Addr
 	if !ok {
 		return TokenPair{}, apperr.Unauthenticated(errcodes.AuthRefreshInvalid)
 	}
+	// Read the legal versions before the rotation: once it commits the
+	// presented token is spent, so nothing after it may fail on a transient
+	// error and force a logout. The lookup is cached.
+	cur, err := s.d.Legal.Versions(ctx)
+	if err != nil {
+		return TokenPair{}, fmt.Errorf("auth: current legal versions: %w", err)
+	}
 	var res refreshed
-	err := s.d.Tx.InTx(ctx, func(ctx context.Context) error {
+	err = s.d.Tx.InTx(ctx, func(ctx context.Context) error {
 		var err error
 		res, err = s.rotate(ctx, hash)
 		return err
@@ -57,7 +65,7 @@ func (s *Service) Refresh(ctx context.Context, token secret.String, _ netip.Addr
 	default:
 		return TokenPair{}, apperr.Unauthenticated(errcodes.AuthSessionRevoked)
 	}
-	return s.refreshPair(ctx, res)
+	return s.refreshPair(res, cur)
 }
 
 // hashRefreshToken decodes a presented token and returns its SHA-256. It
@@ -133,15 +141,11 @@ func (s *Service) auditReuse(ctx context.Context, row RefreshRow) error {
 }
 
 // refreshPair signs the access token and builds the answer after the
-// transaction committed. The legal lookup stays outside the transaction.
-func (s *Service) refreshPair(ctx context.Context, res refreshed) (TokenPair, error) {
+// transaction committed, from the legal versions read before it.
+func (s *Service) refreshPair(res refreshed, cur legal.Versions) (TokenPair, error) {
 	u := res.row.User
 	pending := false
 	if u.Role == RoleDriver {
-		cur, err := s.d.Legal.Versions(ctx)
-		if err != nil {
-			return TokenPair{}, fmt.Errorf("auth: current legal versions: %w", err)
-		}
 		pending = legalOutdated(res.row.View.TermsVersion, res.row.View.PrivacyVersion, cur)
 	}
 	role, _ := authz.ParseRole(u.Role)

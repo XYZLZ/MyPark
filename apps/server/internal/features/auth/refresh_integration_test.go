@@ -1,8 +1,10 @@
 package auth_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,6 +13,8 @@ import (
 	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/audit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 )
 
 const pathRefresh = "/v1/auth/refresh"
@@ -297,5 +301,40 @@ func TestRefresh_MalformedTokenIsInvalid(t *testing.T) {
 	e.wantUnauthorized(e.post(pathRefresh, map[string]any{}), "auth.refresh_invalid")
 	if n := e.count(`select count(*) from audit_log where action = $1`, audit.AuthRefreshReuseDetected); n != 0 {
 		t.Errorf("malformed tokens must not audit, rows = %d", n)
+	}
+}
+
+// flakyLegal is a legal.Current whose Versions can be switched to fail.
+type flakyLegal struct {
+	legal.Current
+	fail atomic.Bool
+}
+
+func (f *flakyLegal) Versions(ctx context.Context) (legal.Versions, error) {
+	if f.fail.Load() {
+		return legal.Versions{}, errors.New("legal store down")
+	}
+	return f.Current.Versions(ctx)
+}
+
+// A failure to read the legal versions must not leave the client logged
+// out: it happens before the rotation commits, so the presented token stays
+// valid and works once the lookup recovers.
+func TestRefresh_LegalFailureDoesNotRotate(t *testing.T) {
+	fl := &flakyLegal{}
+	e := newEnv(t, func(d *auth.Deps) {
+		fl.Current = d.Legal
+		d.Legal = fl
+	})
+	e.activeDriver("ana@example.com")
+	first := e.loginPair("ana@example.com")
+
+	fl.fail.Store(true)
+	if rec := e.refresh(first.refresh); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("refresh with legal down = %d %s, want 500", rec.Code, rec.Body)
+	}
+	fl.fail.Store(false)
+	if rec := e.refresh(first.refresh); rec.Code != http.StatusOK {
+		t.Errorf("retry with the same token = %d %s, want 200", rec.Code, rec.Body)
 	}
 }
