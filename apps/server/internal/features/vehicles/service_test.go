@@ -4,11 +4,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles"
+	vehiclespg "github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 )
 
@@ -99,5 +105,55 @@ func TestEraseOwner_RequiresTransaction(t *testing.T) {
 	}
 	if n := e.count(`select count(*) from vehicles where user_id = $1 and plate_normalized = 'ABC123'`, a.ID); n != 1 {
 		t.Errorf("vehicle was scrubbed outside a transaction")
+	}
+}
+
+// barrierRepo holds every UpdateOwned until two have arrived or a short
+// timeout passes, so two updates that read the row before either writes are
+// forced to interleave.
+type barrierRepo struct {
+	vehicles.Repo
+	arrived atomic.Int32
+	both    chan struct{}
+}
+
+func (b *barrierRepo) UpdateOwned(ctx context.Context, ownerID int64, id uuid.UUID, f vehicles.Fields, now time.Time) (vehicles.Record, error) {
+	if b.arrived.Add(1) == 2 {
+		close(b.both)
+	}
+	select {
+	case <-b.both:
+	case <-time.After(300 * time.Millisecond):
+	}
+	return b.Repo.UpdateOwned(ctx, ownerID, id, f, now)
+}
+
+// Two concurrent partial updates on different fields both persist: the
+// second reads the row only after the first committed.
+func TestUpdate_ConcurrentPatchesDoNotLoseFields(t *testing.T) {
+	e := newEnv(t)
+	a := e.newUser("a", authz.RoleDriver)
+	id := uuid.MustParse(e.create(&a, "ABC123"))
+	repo := &barrierRepo{Repo: vehiclespg.NewRepo(e.db.App), both: make(chan struct{})}
+	svc := vehicles.NewService(database.NewTxRunner(e.db.App), repo, vehicles.NoReservations{}, defaultMax, e.clock)
+
+	mk, color := "Honda", "Azul"
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, in := range []vehicles.UpdateInput{{Make: &mk}, {Color: &color}} {
+		wg.Go(func() { _, errs[i] = svc.Update(t.Context(), a.P, id, in) })
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("update %d: %v", i, err)
+		}
+	}
+	got, err := svc.Get(t.Context(), a.P, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Make != mk || got.Color != color {
+		t.Errorf("make=%q color=%q, want %q and %q (lost update)", got.Make, got.Color, mk, color)
 	}
 }

@@ -132,6 +132,18 @@ func (r *Repo) GetOwned(ctx context.Context, ownerID int64, id uuid.UUID) (vehic
 	return record(row(v)), nil
 }
 
+// GetOwnedForUpdate implements vehicles.Repo.
+func (r *Repo) GetOwnedForUpdate(ctx context.Context, ownerID int64, id uuid.UUID) (vehicles.Record, error) {
+	v, err := r.q(ctx).GetVehicleOwnedForUpdate(ctx, dbgen.GetVehicleOwnedForUpdateParams{PublicID: id, OwnerID: ownerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return vehicles.Record{}, vehicles.ErrNotFound
+	}
+	if err != nil {
+		return vehicles.Record{}, safeError("vehicles: get for update", err)
+	}
+	return record(row(v)), nil
+}
+
 // UpdateOwned implements vehicles.Repo.
 func (r *Repo) UpdateOwned(ctx context.Context, ownerID int64, id uuid.UUID, f vehicles.Fields, now time.Time) (vehicles.Record, error) {
 	v, err := r.q(ctx).UpdateVehicleOwned(ctx, dbgen.UpdateVehicleOwnedParams{

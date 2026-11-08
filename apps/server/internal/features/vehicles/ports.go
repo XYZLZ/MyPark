@@ -57,6 +57,9 @@ type Repo interface {
 	Insert(ctx context.Context, ownerID int64, f Fields, now time.Time) (Record, error)
 	ListOwned(ctx context.Context, ownerID int64) ([]Record, error)
 	GetOwned(ctx context.Context, ownerID int64, id uuid.UUID) (Record, error)
+	// GetOwnedForUpdate is GetOwned with the row locked until the
+	// transaction ends.
+	GetOwnedForUpdate(ctx context.Context, ownerID int64, id uuid.UUID) (Record, error)
 	// UpdateOwned returns ErrNotFound or ErrPlateTaken.
 	UpdateOwned(ctx context.Context, ownerID int64, id uuid.UUID, f Fields, now time.Time) (Record, error)
 	SoftDeleteOwned(ctx context.Context, ownerID int64, id uuid.UUID, now time.Time) error

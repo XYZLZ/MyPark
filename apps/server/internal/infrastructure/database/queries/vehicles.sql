@@ -24,6 +24,14 @@ select id, public_id, plate_normalized, plate_display, make, model, color, creat
 from vehicles
 where public_id = @public_id and user_id = @owner_id and deleted_at is null;
 
+-- name: GetVehicleOwnedForUpdate :one
+-- The same row, locked until the transaction ends, so concurrent updates and
+-- deletes of one vehicle read it one after another.
+select id, public_id, plate_normalized, plate_display, make, model, color, created_at, updated_at
+from vehicles
+where public_id = @public_id and user_id = @owner_id and deleted_at is null
+for update;
+
 -- name: UpdateVehicleOwned :one
 update vehicles
 set plate_normalized = @plate_normalized,

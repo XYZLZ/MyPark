@@ -85,6 +85,49 @@ func (q *Queries) GetVehicleOwned(ctx context.Context, arg GetVehicleOwnedParams
 	return i, err
 }
 
+const getVehicleOwnedForUpdate = `-- name: GetVehicleOwnedForUpdate :one
+select id, public_id, plate_normalized, plate_display, make, model, color, created_at, updated_at
+from vehicles
+where public_id = $1 and user_id = $2 and deleted_at is null
+for update
+`
+
+type GetVehicleOwnedForUpdateParams struct {
+	PublicID uuid.UUID
+	OwnerID  int64
+}
+
+type GetVehicleOwnedForUpdateRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	PlateNormalized string
+	PlateDisplay    string
+	Make            string
+	Model           string
+	Color           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+// The same row, locked until the transaction ends, so concurrent updates and
+// deletes of one vehicle read it one after another.
+func (q *Queries) GetVehicleOwnedForUpdate(ctx context.Context, arg GetVehicleOwnedForUpdateParams) (GetVehicleOwnedForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getVehicleOwnedForUpdate, arg.PublicID, arg.OwnerID)
+	var i GetVehicleOwnedForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.PlateNormalized,
+		&i.PlateDisplay,
+		&i.Make,
+		&i.Model,
+		&i.Color,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertVehicle = `-- name: InsertVehicle :one
 insert into vehicles (user_id, plate_normalized, plate_display, make, model, color, created_at, updated_at)
 values ($1, $2, $3, $4, $5, $6, $7, $7)

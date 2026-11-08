@@ -126,14 +126,15 @@ func (s *Service) Get(ctx context.Context, p authz.Principal, id uuid.UUID) (Veh
 }
 
 // Update applies a partial update to one of the caller's vehicles. A plate
-// change is re-normalized and may fail with vehicle.plate_taken.
+// change is re-normalized and may fail with vehicle.plate_taken. The row is
+// read locked, so a concurrent update of other fields is never overwritten.
 func (s *Service) Update(ctx context.Context, p authz.Principal, id uuid.UUID, in UpdateInput) (Vehicle, error) {
 	if err := requireDriver(p); err != nil {
 		return Vehicle{}, err
 	}
 	var out Vehicle
 	err := s.tx.InTx(ctx, func(ctx context.Context) error {
-		cur, err := s.repo.GetOwned(ctx, p.UserID, id)
+		cur, err := s.repo.GetOwnedForUpdate(ctx, p.UserID, id)
 		if err != nil {
 			return mapRepoErr(err)
 		}
@@ -175,7 +176,7 @@ func (s *Service) Delete(ctx context.Context, p authz.Principal, id uuid.UUID) e
 		return err
 	}
 	return s.tx.InTx(ctx, func(ctx context.Context) error {
-		rec, err := s.repo.GetOwned(ctx, p.UserID, id)
+		rec, err := s.repo.GetOwnedForUpdate(ctx, p.UserID, id)
 		if err != nil {
 			return mapRepoErr(err)
 		}
