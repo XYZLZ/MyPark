@@ -1105,7 +1105,7 @@ components:
                 error:
                   code: validation.failed
                   message: validation failed
-                  details: { fields: [{ field: code, rule: len, param: "6" }] }
+                  details: { fields: [{ field: code, rule: code6 }] }
                 meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
             codeInvalid:
               summary: The code is wrong, expired or already used.

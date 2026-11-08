@@ -78,6 +78,25 @@ function malformed(status?: number): ApiError {
   return new ApiError({ code: MALFORMED_CODE, message: 'malformed envelope', status });
 }
 
+/** Throws the ApiError of an error envelope, or `internal.unexpected` for a body that is not an object. */
+function rejectNonSuccess(body: unknown, status?: number): asserts body is object {
+  if (typeof body !== 'object' || body === null || ('data' in body && 'error' in body)) {
+    throw malformed(status);
+  }
+  if ('error' in body) {
+    const parsed = errorEnvelopeSchema.safeParse(body);
+    if (!parsed.success) throw malformed(status);
+    const { error, meta } = parsed.data;
+    throw new ApiError({
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      requestId: meta.request_id,
+      status,
+    });
+  }
+}
+
 /**
  * Returns a parser for a response body. It returns `data` when the body is a
  * success envelope whose `data` parses with `schema`, throws an ApiError built
@@ -87,23 +106,34 @@ function malformed(status?: number): ApiError {
 export function parseEnvelope<S extends z.ZodType>(schema: S): (body: unknown, status?: number) => z.output<S> {
   const success = successEnvelope(schema);
   return (body, status) => {
-    if (typeof body !== 'object' || body === null || ('data' in body && 'error' in body)) {
-      throw malformed(status);
-    }
-    if ('error' in body) {
-      const parsed = errorEnvelopeSchema.safeParse(body);
-      if (!parsed.success) throw malformed(status);
-      const { error, meta } = parsed.data;
-      throw new ApiError({
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        requestId: meta.request_id,
-        status,
-      });
-    }
+    rejectNonSuccess(body, status);
     const parsed = success.safeParse(body);
     if (!parsed.success) throw malformed(status);
     return (parsed.data as { data: z.output<S> }).data;
   };
+}
+
+/** Like parseEnvelope for list responses: returns the items and `meta.page` (which `parseEnvelope` drops). */
+export function parseListEnvelope<S extends z.ZodType>(
+  schema: S,
+): (body: unknown, status?: number) => { items: z.output<S>[]; page: Page } {
+  const list = listEnvelope(schema);
+  return (body, status) => {
+    rejectNonSuccess(body, status);
+    const parsed = list.safeParse(body);
+    if (!parsed.success) throw malformed(status);
+    const { data, meta } = parsed.data as { data: z.output<S>[]; meta: { page: Page } };
+    return { items: data, page: meta.page };
+  };
+}
+
+/**
+ * For 204 responses only. Returns on a 204, throws the ApiError of an error
+ * envelope, and throws `internal.unexpected` for anything else. A 202 carries a
+ * body and must be parsed with parseEnvelope.
+ */
+export function parseNoContent(body: unknown, status: number): void {
+  if (status === 204) return;
+  rejectNonSuccess(body, status);
+  throw malformed(status);
 }

@@ -1,6 +1,8 @@
 import { expect, test } from 'vitest';
 import { z } from 'zod';
-import { ApiError, listEnvelope, parseEnvelope } from './envelope';
+import { listBody, errorBody, successBody, vehicleFixture } from './fixtures/m1';
+import { ApiError, listEnvelope, parseEnvelope, parseListEnvelope, parseNoContent } from './envelope';
+import { vehicleSchema } from './m1/vehicle';
 
 const schema = z.object({ a: z.number() });
 
@@ -54,4 +56,43 @@ test('listEnvelope requires meta.page with nullable next_cursor', () => {
   expect(list.safeParse({ data: [], meta: { ...meta, page: { limit: 5, next_cursor: 'c' } } }).success).toBe(true);
   expect(list.safeParse({ data: [], meta: { request_id: 'r' } }).success).toBe(false);
   expect(list.safeParse({ data: [], meta: { request_id: 'r', page: { limit: 5 } } }).success).toBe(false);
+});
+
+test('parseListEnvelope returns items and page', () => {
+  expect(parseListEnvelope(vehicleSchema)(listBody([vehicleFixture], 5))).toEqual({
+    items: [vehicleFixture],
+    page: { limit: 5, next_cursor: null },
+  });
+});
+
+test('parseListEnvelope throws the ApiError from an error envelope', () => {
+  const err = thrown(() => parseListEnvelope(vehicleSchema)(errorBody('auth.unauthenticated'), 401));
+  expect(err).toBeInstanceOf(ApiError);
+  expect(err).toMatchObject({ code: 'auth.unauthenticated', status: 401 });
+});
+
+test('parseListEnvelope rejects a single-object body and a missing page', () => {
+  expect(thrown(() => parseListEnvelope(vehicleSchema)(successBody(vehicleFixture)))).toMatchObject({ code: 'internal.unexpected' });
+  const noPage = { data: [], meta: { request_id: 'r' } };
+  expect(thrown(() => parseListEnvelope(vehicleSchema)(noPage))).toMatchObject({ code: 'internal.unexpected' });
+});
+
+test('parseNoContent accepts a 204 with no body', () => {
+  expect(parseNoContent(undefined, 204)).toBeUndefined();
+  expect(parseNoContent(null, 204)).toBeUndefined();
+});
+
+test('parseNoContent throws the envelope error on 409', () => {
+  const err = thrown(() => parseNoContent(errorBody('vehicle.in_use'), 409));
+  expect(err).toBeInstanceOf(ApiError);
+  expect(err).toMatchObject({ code: 'vehicle.in_use', status: 409 });
+});
+
+test('parseNoContent treats a non-envelope error body as internal.unexpected', () => {
+  expect(thrown(() => parseNoContent('<html>', 502))).toMatchObject({ code: 'internal.unexpected', status: 502 });
+});
+
+test('parseNoContent does not accept a 202 with a body', () => {
+  const body = successBody({ status: 'accepted' });
+  expect(thrown(() => parseNoContent(body, 202))).toMatchObject({ code: 'internal.unexpected', status: 202 });
 });
