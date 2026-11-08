@@ -2,10 +2,14 @@ import 'server-only';
 import {
   ApiError,
   legalCurrentSchema,
+  parseListEnvelope,
   parseEnvelope,
   userSchema,
+  vehicleSchema,
   type LegalCurrent,
+  type Page,
   type User,
+  type Vehicle,
 } from '@mypark/contracts';
 import { cookies, headers } from 'next/headers';
 import { cache } from 'react';
@@ -76,3 +80,11 @@ export const getMe = cache(async (): Promise<User> => serverFetch('/v1/me', pars
 export const getLegalCurrent = cache(
   async (): Promise<LegalCurrent> => serverFetch('/v1/legal/current', parseEnvelope(legalCurrentSchema), { auth: false }),
 );
+
+export async function listVehicles(): Promise<{ items: Vehicle[]; page: Page }> {
+  return serverFetch('/v1/vehicles', parseListEnvelope(vehicleSchema));
+}
+
+export async function getVehicle(id: string): Promise<Vehicle> {
+  return serverFetch(`/v1/vehicles/${encodeURIComponent(id)}`, parseEnvelope(vehicleSchema));
+}

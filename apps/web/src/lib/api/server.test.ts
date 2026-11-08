@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { ApiError, parseEnvelope, userSchema } from '@mypark/contracts';
-import { legalCurrentFixture, successBody, userFixture } from '@mypark/contracts/fixtures';
+import { legalCurrentFixture, listBody, successBody, userFixture, vehicleFixture } from '@mypark/contracts/fixtures';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const state = { cookies: {} as Record<string, string>, headers: {} as Record<string, string> };
@@ -23,6 +23,23 @@ beforeEach(() => {
 });
 
 const callHeaders = (n = 0) => new Headers(fetchMock.mock.calls[n]![1]?.headers);
+
+describe('vehicle reads', () => {
+  test('listVehicles returns items and page', async () => {
+    fetchMock.mockResolvedValue(Response.json(listBody([vehicleFixture], 5)));
+    const { listVehicles } = await import('./server');
+    expect(await listVehicles()).toEqual({ items: [vehicleFixture], page: { limit: 5, next_cursor: null } });
+    expect(String(fetchMock.mock.calls[0]![0])).toBe('http://api.test/v1/vehicles');
+    expect(callHeaders().get('authorization')).toBe('Bearer access-1');
+  });
+
+  test('getVehicle encodes the id', async () => {
+    fetchMock.mockResolvedValue(Response.json(successBody(vehicleFixture)));
+    const { getVehicle } = await import('./server');
+    expect(await getVehicle('a/b?c')).toEqual(vehicleFixture);
+    expect(String(fetchMock.mock.calls[0]![0])).toBe('http://api.test/v1/vehicles/a%2Fb%3Fc');
+  });
+});
 
 describe('serverFetch', () => {
   test('getMe sends the bearer from cookies, no-store and a 5 s timeout', async () => {

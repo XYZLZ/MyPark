@@ -80,6 +80,44 @@
       "submitting": "Saving…"
     }
   },
+  "vehicles": {
+    "title": "My vehicles",
+    "count": "{count} of {limit}",
+    "add": "Add vehicle",
+    "capReached": "You reached the limit of {limit} vehicles. Delete one to add another.",
+    "empty": {
+      "title": "Add your first car",
+      "body": "Register your plate so you can reserve a space."
+    },
+    "edit": "Edit",
+    "editFor": "Edit {plate}",
+    "delete": {
+      "action": "Delete",
+      "actionFor": "Delete {plate}",
+      "confirm": "Delete vehicle {plate}?",
+      "confirmAction": "Yes, delete",
+      "deleting": "Deleting…",
+      "cancel": "Cancel"
+    },
+    "loading": "Updating your vehicles",
+    "loadError": {
+      "title": "We could not load your vehicles",
+      "retry": "Try again"
+    },
+    "form": {
+      "createTitle": "Add vehicle",
+      "editTitle": "Edit vehicle",
+      "plate": "Plate",
+      "plateHint": "Type it any way you like: spaces and dashes are ignored.",
+      "make": "Make",
+      "model": "Model",
+      "color": "Color",
+      "create": "Save vehicle",
+      "save": "Save changes",
+      "saving": "Saving…",
+      "cancel": "Cancel"
+    }
+  },
   "legal": {
     "demoNotice": "Sample text for an academic demo.",
     "terms": {

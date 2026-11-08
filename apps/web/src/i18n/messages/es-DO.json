@@ -80,6 +80,44 @@
       "submitting": "Guardando…"
     }
   },
+  "vehicles": {
+    "title": "Mis vehículos",
+    "count": "{count} de {limit}",
+    "add": "Agregar vehículo",
+    "capReached": "Llegaste al límite de {limit} vehículos. Elimina uno para agregar otro.",
+    "empty": {
+      "title": "Agrega tu primer vehículo",
+      "body": "Registra tu placa para poder reservar un espacio."
+    },
+    "edit": "Editar",
+    "editFor": "Editar {plate}",
+    "delete": {
+      "action": "Eliminar",
+      "actionFor": "Eliminar {plate}",
+      "confirm": "¿Eliminar el vehículo {plate}?",
+      "confirmAction": "Sí, eliminar",
+      "deleting": "Eliminando…",
+      "cancel": "Cancelar"
+    },
+    "loading": "Actualizando tus vehículos",
+    "loadError": {
+      "title": "No pudimos cargar tus vehículos",
+      "retry": "Intentar de nuevo"
+    },
+    "form": {
+      "createTitle": "Agregar vehículo",
+      "editTitle": "Editar vehículo",
+      "plate": "Placa",
+      "plateHint": "Escríbela como quieras: ignoramos espacios y guiones.",
+      "make": "Marca",
+      "model": "Modelo",
+      "color": "Color",
+      "create": "Guardar vehículo",
+      "save": "Guardar cambios",
+      "saving": "Guardando…",
+      "cancel": "Cancelar"
+    }
+  },
   "legal": {
     "demoNotice": "Texto de ejemplo para una demostración académica.",
     "terms": {
