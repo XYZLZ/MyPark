@@ -156,3 +156,27 @@ func TestPurge_RemovesExpired(t *testing.T) {
 		t.Fatalf("remaining rows = %d, %v; want 1", left, err)
 	}
 }
+
+// Two instances whose clocks straddle a window boundary share one bucket:
+// a hit from the instance that is behind must not reset the newer window's
+// count, or a client alternating between them is never throttled.
+func TestPostgres_SkewedOlderHitDoesNotResetCount(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	ahead := ratelimit.NewPostgres(db.App, testsupport.NewFakeClock(start.Add(time.Minute)))
+	behind := ratelimit.NewPostgres(db.App, testsupport.NewFakeClock(start))
+	for i := range 5 {
+		if d, err := ahead.Allow(t.Context(), ratelimit.LoginIPEmail, "k"); err != nil || !d.Allowed {
+			t.Fatalf("attempt %d = %+v, %v; want allowed", i+1, d, err)
+		}
+	}
+	d, err := behind.Allow(t.Context(), ratelimit.LoginIPEmail, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Allowed {
+		t.Error("sixth attempt from the lagging instance allowed: the count was reset")
+	}
+	if d, _ := ahead.Allow(t.Context(), ratelimit.LoginIPEmail, "k"); d.Allowed {
+		t.Error("seventh attempt allowed after the lagging hit")
+	}
+}
