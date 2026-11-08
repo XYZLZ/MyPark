@@ -205,8 +205,8 @@ func TestRefresh_ConcurrentSameToken(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("concurrent refreshes did not finish in 10s (deadlock?)")
 	}
-	if ok.Load() > 1 || other.Load() != 0 || ok.Load()+rejected.Load() != 20 {
-		t.Errorf("ok=%d rejected=%d other=%d, want at most one success and the rest session_revoked",
+	if ok.Load() != 1 || other.Load() != 0 || rejected.Load() != 19 {
+		t.Errorf("ok=%d rejected=%d other=%d, want exactly one success and the rest session_revoked",
 			ok.Load(), rejected.Load(), other.Load())
 	}
 	if got := e.reason(sid); got != "reuse_detected" {
