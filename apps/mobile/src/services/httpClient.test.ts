@@ -6,7 +6,6 @@ import {
   DEFAULT_TIMEOUT_MS,
   REFRESH_TIMEOUT_MS,
   createHttpClient,
-  getApiHealth,
   unwrap,
   type AuthAdapter,
   type RefreshResult,
@@ -18,38 +17,6 @@ function jsonResponse(status: number, body: unknown): Response {
     headers: { 'Content-Type': 'application/json' },
   });
 }
-
-test('shows unavailable on network error', async () => {
-  const client = createHttpClient('http://x', jest.fn().mockRejectedValue(new TypeError('Network request failed')));
-  expect(await getApiHealth(client)).toBe('unavailable');
-});
-
-test('createHttpClient rejects on network errors', async () => {
-  const client = createHttpClient('http://x', jest.fn().mockRejectedValue(new TypeError('Network request failed')));
-  await expect(client.get('/readyz')).rejects.toThrow('Network request failed');
-});
-
-test('getApiHealth probes /readyz and reports healthy', async () => {
-  const fetchImpl = jest
-    .fn()
-    .mockResolvedValue(jsonResponse(200, { data: { status: 'ready', checks: { database: 'ok', migrations: 'ok' } }, meta: { request_id: 'r1' } }));
-  const client = createHttpClient('http://api.test', fetchImpl);
-  expect(await getApiHealth(client)).toBe('healthy');
-  expect(fetchImpl).toHaveBeenCalledWith('http://api.test/readyz', expect.objectContaining({ method: 'GET' }));
-});
-
-test('getApiHealth reports not_ready on a 503 health.not_ready envelope', async () => {
-  const body = { error: { code: 'health.not_ready', message: 'migrations behind', details: {} }, meta: { request_id: 'r1' } };
-  const client = createHttpClient('http://api.test', jest.fn().mockResolvedValue(jsonResponse(503, body)));
-  expect(await getApiHealth(client)).toBe('not_ready');
-});
-
-test('a non-JSON body resolves instead of rejecting and maps to unavailable', async () => {
-  const fetchImpl = jest.fn().mockResolvedValue(new Response('<html>Bad gateway</html>', { status: 502 }));
-  const client = createHttpClient('http://api.test', fetchImpl);
-  await expect(client.get('/readyz')).resolves.toEqual({ status: 502, body: undefined });
-  expect(await getApiHealth(client)).toBe('unavailable');
-});
 
 function hangingFetch() {
   return jest.fn(
@@ -64,18 +31,7 @@ test('the production default timeout is 3000 ms', () => {
   expect(DEFAULT_TIMEOUT_MS).toBe(3000);
 });
 
-test('a request that exceeds the timeout is aborted and maps to unavailable', async () => {
-  const client = createHttpClient('http://api.test', hangingFetch(), { timeoutMs: 10 });
-  await expect(client.get('/readyz')).rejects.toThrow('Aborted');
-  expect(await getApiHealth(client)).toBe('unavailable');
-});
-
-test('a per-request timeout overrides the client default', async () => {
-  const client = createHttpClient('http://api.test', hangingFetch(), { timeoutMs: 60_000 });
-  await expect(client.get('/readyz', { timeoutMs: 10 })).rejects.toThrow('Aborted');
-});
-
-test('an abort during the body read rejects instead of resolving with an empty body', async () => {
+test('an abort during the body read rejects with client.timeout instead of resolving an empty body', async () => {
   // Headers arrive, then the body stalls until the timeout aborts the request.
   const stalledBody = jest.fn(async (_url: string, init?: RequestInit) => {
     const res = new Response(null, { status: 200 });
@@ -88,8 +44,13 @@ test('an abort during the body read rejects instead of resolving with an empty b
     return res;
   });
   const client = createHttpClient('http://api.test', stalledBody, { timeoutMs: 10 });
-  await expect(client.get('/readyz')).rejects.toThrow('Aborted');
-  expect(await getApiHealth(client)).toBe('unavailable');
+  await expect(client.request({ method: 'GET', path: '/x' })).rejects.toMatchObject({ code: 'client.timeout' });
+});
+
+test('a non-JSON body resolves with an undefined body instead of rejecting', async () => {
+  const fetchImpl = jest.fn().mockResolvedValue(new Response('<html>Bad gateway</html>', { status: 502 }));
+  const client = createHttpClient('http://api.test', fetchImpl);
+  await expect(client.request({ method: 'GET', path: '/x' })).resolves.toMatchObject({ status: 502, body: undefined });
 });
 
 // ---------------------------------------------------------------------------

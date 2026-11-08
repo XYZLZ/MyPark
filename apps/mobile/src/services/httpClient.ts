@@ -1,5 +1,5 @@
 import { fetch } from "expo/fetch";
-import { ApiError, toHealthState, type ApiHealthState, type ClientErrorCode } from '@mypark/contracts';
+import { ApiError, type ClientErrorCode } from '@mypark/contracts';
 
 export const DEFAULT_TIMEOUT_MS = 3000;
 /** Login, register, reset and `DELETE /v1/me`: argon2 sits behind a 4-slot semaphore (CC-16). */
@@ -37,8 +37,6 @@ export type AuthAdapter = {
 };
 
 export type HttpClient = {
-  /** Resolves with any HTTP status. Rejects only on network failure or timeout. */
-  get(path: string, init?: { timeoutMs?: number }): Promise<HttpResponse>;
   /**
    * Resolves with any HTTP status. Rejects with an ApiError for `client.network`,
    * `client.timeout` and refresh failures.
@@ -173,29 +171,5 @@ export function createHttpClient(
       await settle(res);
       return res;
     },
-
-    async get(path, init) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), init?.timeoutMs ?? defaultTimeoutMs);
-      try {
-        const res = await fetchImpl(`${root}${path}`, {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-          signal: controller.signal,
-        });
-        return { status: res.status, body: await readJson(res, controller.signal) };
-      } finally {
-        clearTimeout(timer);
-      }
-    },
   };
-}
-
-/** Probes /readyz. Never throws: every outcome maps to an ApiHealthState. */
-export async function getApiHealth(client: HttpClient): Promise<ApiHealthState> {
-  try {
-    return toHealthState(await client.get('/readyz'));
-  } catch {
-    return toHealthState({ networkError: true });
-  }
 }

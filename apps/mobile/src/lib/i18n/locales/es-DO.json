@@ -1,12 +1,9 @@
 {
   "common": {
     "appName": "MyPark · Banreservas Zona Colonial",
-    "loading": "Cargando…"
-  },
-  "health": {
-    "healthy": "API: operativa",
-    "not_ready": "API: iniciando",
-    "unavailable": "API: no disponible"
+    "loading": "Cargando…",
+    "retry": "Reintentar",
+    "logOut": "Cerrar sesión"
   },
   "errors": {
     "fallback": "Algo salió mal. Inténtalo de nuevo.",
@@ -69,5 +66,13 @@
     "password_common": "Esa contraseña es muy común. Elige otra.",
     "plate": "Usa solo letras y números, de 2 a 10 caracteres.",
     "unknown": "Revisa este campo."
+  },
+  "session": {
+    "ended": "Tu sesión terminó. Inicia sesión de nuevo.",
+    "storageFailed": "No pudimos guardar tu sesión en este dispositivo. La próxima vez que abras la app tendrás que iniciar sesión."
+  },
+  "restoreFailed": {
+    "title": "No pudimos verificar tu sesión",
+    "body": "Revisa tu conexión e inténtalo de nuevo. Tu sesión sigue guardada en este dispositivo hasta que cierres sesión."
   }
 }

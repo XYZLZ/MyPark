@@ -1,5 +1,5 @@
-/** Used when EXPO_PUBLIC_API_URL is unset. On a physical device this is unreachable, so the
- * health screen shows the localized "unavailable" state instead of crashing. */
+/** Used when EXPO_PUBLIC_API_URL is unset. On a physical device this is unreachable, so requests
+ * fail with a localized client.network error instead of crashing. */
 export const DEFAULT_API_URL = 'http://localhost:8080';
 
 /**

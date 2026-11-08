@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 
-/** Placeholder for the sign-in / sign-up flow (M1). */
+/** Signed-out flow: welcome, login, sign up, verify and the legal pages (Task 10). */
 export default function AuthLayout() {
   return <Stack screenOptions={{ headerShown: false }} />;
 }
