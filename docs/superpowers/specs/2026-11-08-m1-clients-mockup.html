@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="es-DO">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyPark M1 screens v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@600&display=swap" rel="stylesheet">
+<style>
+  /* One token set, shared by web and mobile. Brand values match both apps today. */
+  :root {
+    --brand-primary: #1c4a78;
+    --brand-primary-strong: #163b63;
+    --brand-primary-tint: #e3eef8;
+    --brand-accent: #f2a431;
+    --brand-action: #1ba7ea;
+    --brand-action-hover: #41b6ef;
+    --brand-action-press: #1095d6;
+    --brand-action-contrast: #0e2747;
+    --ink: #14233d;
+    --ink-muted: #4f5d76;
+    --surface: #ffffff;
+    --surface-sunken: #f1f4f9;
+    --hairline: #dde3ec;
+    --control-line: #7f8ca3;
+    --danger: #b3261e;
+    --danger-tint: #fbeae9;
+    --disabled-bg: #e3e7ee;
+    --disabled-ink: #5f6c83;
+
+    --r-control: 12px;
+    --r-panel: 16px;
+    --r-plate: 10px;
+    --r-pill: 999px;
+    --t: 180ms cubic-bezier(.22, 1, .36, 1);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #d9dfe9; color: var(--ink); font: 400 16px/1.45 Barlow, system-ui, sans-serif; }
+  h1, h2, h3 { text-wrap: balance; }
+  .board { max-width: 1320px; margin: 0 auto; padding: 32px 16px 64px; }
+  .board > h1 { font-size: 26px; line-height: 1.2; font-weight: 700; margin: 0 0 4px; }
+  .board > p { margin: 0 0 8px; color: var(--ink-muted); max-width: 68ch; }
+  .row-title { font-size: 20px; font-weight: 600; margin: 36px 0 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .caption { font-size: 14px; color: var(--ink-muted); margin: 8px 0 0; max-width: 60ch; }
+
+  /* Controls */
+  label.f { display: block; font-weight: 500; font-size: 14px; margin-bottom: 12px; }
+  label.f .opt { font-weight: 400; color: var(--ink-muted); }
+  .input { display: block; width: 100%; margin-top: 5px; height: 46px; padding: 0 14px; font: inherit; color: var(--ink);
+           background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--r-control);
+           transition: border-color var(--t), box-shadow var(--t); }
+  .input:hover { border-color: var(--ink-muted); }
+  .input:focus, .input.is-focus { outline: 0; border-color: var(--brand-primary); box-shadow: 0 0 0 3px var(--brand-primary-tint); }
+  .input.bad { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-tint); }
+  .err { display: block; color: var(--danger); font-size: 14px; font-weight: 500; margin-top: 5px; }
+
+  .go, .alt { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 48px; padding: 0 22px;
+              border-radius: var(--r-pill); font: 600 16px Barlow, sans-serif; cursor: pointer;
+              transition: background-color var(--t), transform var(--t), color var(--t), box-shadow var(--t); }
+  .go { border: 0; background: var(--brand-action); color: var(--brand-action-contrast); }
+  .go:hover, .go.is-hover { background: var(--brand-action-hover); }
+  .go:active, .go.is-press { background: var(--brand-action-press); transform: scale(.98); }
+  .go.is-focus, .go:focus-visible { outline: 0; box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--brand-primary); }
+  .go:disabled { background: var(--disabled-bg); color: var(--disabled-ink); cursor: not-allowed; }
+  .alt { background: transparent; color: inherit; border: 1.5px solid currentColor; }
+  .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(14,39,71,.28); border-top-color: var(--brand-action-contrast); animation: s 800ms linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+
+  a { color: var(--brand-primary); font-weight: 500; text-underline-offset: 2px; border-radius: 4px; }
+  a:focus-visible { outline: 3px solid var(--brand-primary); outline-offset: 2px; }
+  .title { font-size: 24px; line-height: 1.2; font-weight: 700; margin: 0 0 16px; }
+  .small { font-size: 14px; color: var(--ink-muted); }
+
+  /* The parking sign: one mark in both apps */
+  .sign { display: inline-grid; place-items: center; background: #fff; color: var(--brand-primary); font-weight: 700; line-height: 1; }
+  .sign.sm { width: 26px; height: 26px; border-radius: 8px; font-size: 18px; }
+  .sign.lg { width: 112px; height: 112px; border-radius: 24px; font-size: 80px; }
+
+  /* The plate */
+  .plate { display: inline-flex; flex-direction: column; width: 142px; background: #fff; border: 1.5px solid var(--ink); border-radius: var(--r-plate); overflow: hidden; }
+  .plate i { display: block; height: 8px; background: var(--brand-primary); }
+  .plate b { font: 600 29px/1 "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: .03em; text-align: center; padding: 8px 4px 9px; color: var(--ink); }
+
+  /* Web frame */
+  .web { width: min(100%, 600px); background: var(--surface-sunken); border-radius: var(--r-panel); overflow: hidden; }
+  .web.wide { width: min(100%, 820px); }
+  .bar { background: var(--brand-primary); color: #fff; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 18px; }
+  .bar .name { font-weight: 600; }
+  .bar nav { margin-left: auto; display: flex; gap: 4px; font-size: 14px; align-items: center; }
+  .bar nav a, .bar nav span { color: #fff; padding: 5px 11px; border-radius: var(--r-pill); text-decoration: none; }
+  .bar nav .on { background: rgba(255,255,255,.17); font-weight: 600; }
+
+  /* Bay: two painted lines, rounded, behind the panel */
+  .lot { position: relative; display: flex; justify-content: center; background: var(--brand-primary-strong); padding: 28px 16px; min-height: 480px; }
+  .bay { position: relative; width: min(100%, 346px); display: flex; }
+  .bay::before, .bay::after { content: ""; position: absolute; top: -28px; bottom: -28px; width: 6px; border-radius: 3px; background: rgba(233,237,244,.26); }
+  .bay::before { left: -14px; } .bay::after { right: -14px; }
+  .parked { flex: 1; background: var(--surface); padding: 26px 22px; border-radius: var(--r-panel); align-self: start; }
+
+  /* Vehicles */
+  .page { padding: 24px; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .head .title { margin: 0; }
+  .head .go { width: auto; height: 44px; }
+  .list { background: var(--surface); border-radius: var(--r-panel); padding: 2px 18px; }
+  .car { display: flex; align-items: center; gap: 18px; padding: 14px 0; flex-wrap: wrap; }
+  .car + .car { border-top: 1px solid var(--hairline); }
+  .who { flex: 1 1 130px; }
+  .who strong { display: block; font-weight: 600; }
+  .who span { color: var(--ink-muted); font-size: 14px; }
+  .acts { display: flex; gap: 4px; font-size: 14px; }
+  .acts a { padding: 7px 12px; border-radius: var(--r-pill); text-decoration: none; }
+  .acts a:hover { background: var(--brand-primary-tint); }
+  .acts a.del { color: var(--danger); }
+  .acts a.del:hover { background: var(--danger-tint); }
+
+  /* Phone */
+  .phone { width: 300px; height: 620px; border: 9px solid #17233a; border-radius: 40px; background: var(--surface); overflow: hidden; display: flex; flex-direction: column; flex: 0 0 auto; }
+  .scr { flex: 1; display: flex; flex-direction: column; padding: 24px 18px 18px; min-height: 0; }
+  .scr.sunk { background: var(--surface-sunken); }
+  .tabs { display: flex; gap: 6px; padding: 8px 12px 12px; border-top: 1px solid var(--hairline); background: var(--surface); }
+  .tabs span { flex: 1; text-align: center; padding: 8px 0; font-size: 14px; font-weight: 500; color: var(--ink-muted); border-radius: var(--r-pill); }
+  .tabs span.on { color: var(--brand-primary); font-weight: 600; background: var(--brand-primary-tint); }
+  .tight label.f { margin-bottom: 9px; }
+  .tight .input { height: 42px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .welcome { flex: 1; display: flex; flex-direction: column; background: var(--brand-primary-strong); color: #fff; padding: 16px 22px 22px; }
+  .welcome .lang { align-self: flex-end; display: flex; gap: 4px; font-size: 14px; }
+  .welcome .lang a, .welcome .lang strong { color: #fff; padding: 5px 11px; border-radius: var(--r-pill); text-decoration: none; }
+  .welcome .lang strong { background: rgba(255,255,255,.17); }
+  .welcome .mark { margin: 56px 0 0; }
+  .welcome h2 { font-size: 28px; line-height: 1.15; font-weight: 700; margin: 26px 0 6px; }
+  .welcome .where { margin: 0; color: #d3dcec; }
+  .welcome .stack { margin-top: auto; display: grid; gap: 10px; }
+
+  .empty { flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: center; gap: 10px; padding: 0 8px; }
+  .ghostplate { width: 142px; margin: 0 auto 6px; height: 60px; border: 2px dashed var(--control-line); border-radius: var(--r-plate); }
+
+  /* State sheet */
+  .sheet { background: var(--surface); border-radius: var(--r-panel); padding: 20px; width: min(100%, 980px); display: grid; gap: 18px; }
+  .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+  .states div > span { display: block; font-size: 14px; color: var(--ink-muted); margin-bottom: 6px; }
+  .states .input { margin-top: 0; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 14px; }
+  .swatches div { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .swatches i { width: 28px; height: 28px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(20,35,61,.16); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; }
+    .spin { animation-duration: 2.4s; }
+    .go:active, .go.is-press { transform: none; }
+  }
+</style>
+</head>
+<body>
+<main class="board">
+  <h1>MyPark M1, Banreservas reference colors</h1>
+  <p>Web and mobile share one set of colors, shapes and control states. Tell me in the terminal what to change.</p>
+
+  <h2 class="row-title">Shared system</h2>
+  <section class="sheet" aria-label="Shared tokens and control states">
+    <div class="swatches">
+      <div><i style="background:var(--brand-primary)"></i>Primary</div>
+      <div><i style="background:var(--brand-primary-strong)"></i>Primary strong</div>
+      <div><i style="background:var(--brand-primary-tint)"></i>Selected</div>
+      <div><i style="background:var(--brand-action)"></i>Main action</div>
+      <div><i style="background:var(--brand-accent)"></i>Highlight on navy</div>
+      <div><i style="background:var(--surface-sunken)"></i>Page</div>
+      <div><i style="background:var(--danger)"></i>Error</div>
+    </div>
+    <div class="states">
+      <div><span>Default</span><button class="go">Guardar</button></div>
+      <div><span>Hover</span><button class="go is-hover">Guardar</button></div>
+      <div><span>Pressed</span><button class="go is-press">Guardar</button></div>
+      <div><span>Focus</span><button class="go is-focus">Guardar</button></div>
+      <div><span>Loading</span><button class="go" aria-busy="true"><span class="spin"></span>Guardando</button></div>
+      <div><span>Disabled</span><button class="go" disabled>Guardar</button></div>
+    </div>
+    <div class="states">
+      <div><span>Field</span><input class="input" value="Toyota" aria-label="Field"></div>
+      <div><span>Field focus</span><input class="input is-focus" value="Toyota" aria-label="Field focus"></div>
+      <div><span>Field error</span><input class="input bad" value="A1" aria-label="Field error"></div>
+      <div><span>Field disabled</span><input class="input" value="Toyota" disabled aria-label="Field disabled" style="background:var(--disabled-bg);color:var(--disabled-ink);border-color:var(--hairline)"></div>
+    </div>
+  </section>
+
+  <h2 class="row-title">Web</h2>
+  <div class="row">
+    <div style="flex:1 1 420px;max-width:600px">
+      <section class="web">
+        <div class="bar"><span class="sign sm" aria-hidden="true">P</span><span class="name">MyPark · Banreservas Zona Colonial</span>
+          <nav><span class="on">ES</span><a href="#">EN</a></nav></div>
+        <div class="lot"><div class="bay">
+          <form class="parked" onsubmit="return false">
+            <h3 class="title">Iniciar sesión</h3>
+            <label class="f">Correo<input class="input" type="email" value="ana.perez@correo.com"></label>
+            <label class="f">Contraseña<input class="input" type="password" value="contrasena"></label>
+            <button class="go">Iniciar sesión</button>
+            <p style="margin:14px 0 4px"><a href="#">Olvidé mi contraseña</a></p>
+            <p style="margin:0">¿No tienes cuenta? <a href="#">Crear cuenta</a></p>
+          </form>
+        </div></div>
+      </section>
+      <p class="caption">Login. The bay is now two faint rounded lines behind a soft panel.</p>
+    </div>
+
+    <div style="flex:1 1 420px;max-width:600px">
+      <section class="web">
+        <div class="bar"><span class="sign sm" aria-hidden="true">P</span><span class="name">MyPark · Banreservas Zona Colonial</span>
+          <nav><span class="on">ES</span><a href="#">EN</a></nav></div>
+        <div class="lot" style="padding-top:18px;padding-bottom:18px"><div class="bay">
+          <form class="parked tight" style="padding:20px" onsubmit="return false">
+            <h3 class="title" style="margin-bottom:12px">Crear cuenta</h3>
+            <div class="two"><label class="f">Nombre<input class="input" value="Ana"></label>
+            <label class="f">Apellidos<input class="input" value="Pérez Rosario"></label></div>
+            <label class="f">Correo<input class="input" type="email" value="ana.perez@correo.com"></label>
+            <label class="f">Teléfono <span class="opt">(opcional)</span><input class="input" value="+1 809 "></label>
+            <label class="f">Contraseña<input class="input bad" type="password" value="password1">
+              <span class="err">Esa contraseña es muy común. Elige otra.</span></label>
+            <label class="small" style="display:flex;gap:8px;margin:0 0 12px"><input type="checkbox" checked><span>Acepto los <a href="#">términos</a> y la <a href="#">política de privacidad</a></span></label>
+            <button class="go">Crear cuenta</button>
+          </form>
+        </div></div>
+      </section>
+      <p class="caption">Sign-up, with a field error.</p>
+    </div>
+
+    <div style="flex:1 1 100%">
+      <section class="web wide">
+        <div class="bar"><span class="sign sm" aria-hidden="true">P</span><span class="name">MyPark · Banreservas Zona Colonial</span>
+          <nav><a href="#" class="on">Vehículos</a><a href="#">Perfil</a><span>ES</span><a href="#">EN</a></nav></div>
+        <div class="page">
+          <div class="head"><div><h3 class="title">Mis vehículos</h3><span class="small">2 de 5</span></div><button class="go">Agregar vehículo</button></div>
+          <div class="list">
+            <div class="car"><span class="plate"><i></i><b>A123456</b></span>
+              <div class="who"><strong>Toyota Corolla</strong><span>Gris</span></div>
+              <div class="acts"><a href="#">Editar</a><a href="#" class="del">Eliminar</a></div></div>
+            <div class="car"><span class="plate"><i></i><b>G408821</b></span>
+              <div class="who"><strong>Honda CR-V</strong><span>Azul oscuro</span></div>
+              <div class="acts"><a href="#">Editar</a><a href="#" class="del">Eliminar</a></div></div>
+          </div>
+        </div>
+      </section>
+      <p class="caption">Vehicles. One soft panel holds the list, and rows are separated by hairlines.</p>
+    </div>
+  </div>
+
+  <h2 class="row-title">Mobile</h2>
+  <div class="row">
+    <div>
+      <div class="phone"><div class="welcome">
+        <div class="lang"><strong>ES</strong><a href="#">EN</a></div>
+        <div class="mark"><span class="sign lg" aria-hidden="true">P</span></div>
+        <h2>Tu parqueo en la <span style="color:var(--brand-accent)">Zona Colonial</span></h2>
+        <p class="where">Banreservas, Santo Domingo</p>
+        <div class="stack"><button class="go">Crear cuenta</button><button class="alt">Iniciar sesión</button></div>
+      </div></div>
+      <p class="caption">Welcome, with the parking sign as the one mark.</p>
+    </div>
+
+    <div>
+      <div class="phone"><div class="scr">
+        <h3 class="title">Iniciar sesión</h3>
+        <label class="f">Correo<input class="input" type="email" value="ana.perez@correo.com"></label>
+        <label class="f">Contraseña<input class="input" type="password" value="contrasena"></label>
+        <p style="margin:0 0 16px"><a href="#">Olvidé mi contraseña</a></p>
+        <div style="margin-top:auto"><button class="go">Iniciar sesión</button>
+        <p style="margin:12px 0 0;text-align:center">¿No tienes cuenta? <a href="#">Crear cuenta</a></p></div>
+      </div></div>
+      <p class="caption">Login.</p>
+    </div>
+
+    <div>
+      <div class="phone"><div class="scr tight">
+        <h3 class="title" style="margin-bottom:10px">Crear cuenta</h3>
+        <div class="two"><label class="f">Nombre<input class="input" value="Ana"></label>
+        <label class="f">Apellidos<input class="input" value="Pérez R."></label></div>
+        <label class="f">Correo<input class="input" type="email" value="ana.perez@correo.com"></label>
+        <label class="f">Teléfono <span class="opt">(opcional)</span><input class="input" value="+1 809 "></label>
+        <label class="f">Contraseña<input class="input" type="password" value="contrasena"></label>
+        <label class="small" style="display:flex;gap:8px;margin:2px 0 0"><input type="checkbox" checked><span>Acepto los <a href="#">términos</a> y la <a href="#">política de privacidad</a></span></label>
+        <div style="margin-top:auto"><button class="go">Crear cuenta</button></div>
+      </div></div>
+      <p class="caption">Sign-up.</p>
+    </div>
+
+    <div>
+      <div class="phone"><div class="scr sunk">
+        <h3 class="title" style="margin-bottom:2px">Mis vehículos</h3>
+        <span class="small" style="margin-bottom:12px">2 de 5</span>
+        <div class="list" style="padding:2px 14px">
+          <div class="car" style="padding:12px 0;gap:6px"><span class="plate"><i></i><b>A123456</b></span>
+            <div class="who"><strong>Toyota Corolla</strong><span>Gris</span></div></div>
+          <div class="car" style="padding:12px 0;gap:6px"><span class="plate"><i></i><b>G408821</b></span>
+            <div class="who"><strong>Honda CR-V</strong><span>Azul oscuro</span></div></div>
+        </div>
+        <div style="margin-top:auto"><button class="go">Agregar vehículo</button></div>
+      </div>
+      <div class="tabs"><span class="on">Vehículos</span><span>Perfil</span></div></div>
+      <p class="caption">Vehicles. Tap a plate to edit or remove it.</p>
+    </div>
+
+    <div>
+      <div class="phone"><div class="scr sunk">
+        <h3 class="title">Mis vehículos</h3>
+        <div class="empty">
+          <div class="ghostplate"></div>
+          <p style="margin:0;font-weight:600">Aún no tienes vehículos</p>
+          <p class="small" style="margin:0">Agrega tu placa para poder reservar.</p>
+        </div>
+        <button class="go">Agregar vehículo</button>
+      </div>
+      <div class="tabs"><span class="on">Vehículos</span><span>Perfil</span></div></div>
+      <p class="caption">First login, with no cars yet.</p>
+    </div>
+  </div>
+</main>
+</body>
+</html>
