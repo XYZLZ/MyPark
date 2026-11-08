@@ -1,19 +1,17 @@
-import { connection } from 'next/server';
+import { cookies } from 'next/headers';
 import { setRequestLocale } from 'next-intl/server';
-import { HealthStatus } from '@/features/health/HealthStatus';
-import { getApiHealth } from '@/lib/api/server';
+import { PublicHome } from '@/features/home/PublicHome';
 
 type HomePageProps = { params: Promise<{ locale: string }> };
 
-// Container: reads the API health on every request and hands it to the
-// presentational HealthStatus.
+// Container: only the presence of a session cookie picks the actions (CC-24).
+// It is a hint, not a check: the guards on protected pages verify the session.
 export default async function HomePage({ params }: HomePageProps) {
   const { locale } = await params;
   setRequestLocale(locale);
 
-  // Render per request: a build-time prerender would freeze a stale health.
-  await connection();
-  const state = await getApiHealth();
+  const store = await cookies();
+  const signedIn = store.has('mp_access') || store.has('mp_refresh');
 
-  return <HealthStatus state={state} />;
+  return <PublicHome signedIn={signedIn} />;
 }

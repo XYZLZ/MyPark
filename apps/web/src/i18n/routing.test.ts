@@ -35,3 +35,23 @@ describe('unsupportedLocaleRedirect', () => {
     expect(unsupportedLocaleRedirect('/dashboard')).toBeNull();
   });
 });
+
+describe('locale fixes', () => {
+  test('resolveLocale maps base languages', () => {
+    expect(resolveLocale('en-US')).toBe('en');
+    expect(resolveLocale('es-MX')).toBe('es-DO');
+    expect(resolveLocale('fr-FR')).toBe('es-DO');
+  });
+
+  test('/me and /qr are not treated as locales', () => {
+    expect(unsupportedLocaleRedirect('/me')).toBeNull();
+    expect(unsupportedLocaleRedirect('/qr')).toBeNull();
+    expect(unsupportedLocaleRedirect('/qr/abc')).toBeNull();
+  });
+
+  test('a real but unsupported locale still redirects', () => {
+    expect(unsupportedLocaleRedirect('/fr')).toBe('/es-DO');
+    expect(unsupportedLocaleRedirect('/en-US/lots')).toBe('/en/lots');
+    expect(unsupportedLocaleRedirect('/es-MX')).toBe('/es-DO');
+  });
+});

@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 
-import { brand } from '@/design/tokens';
+import { tokens } from '@/design/tokens';
 import { initI18n, pickLanguage } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settings';
 
@@ -32,8 +32,8 @@ export default function RootLayout() {
         <StatusBar style="light" />
         <Stack
           screenOptions={{
-            headerStyle: { backgroundColor: brand.primary },
-            headerTintColor: brand.primaryContrast,
+            headerStyle: { backgroundColor: tokens.brandPrimary },
+            headerTintColor: tokens.brandPrimaryContrast,
           }}
         >
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />

@@ -1,10 +1,24 @@
 {
   "common": {
-    "appName": "MyPark · Banreservas Zona Colonial"
+    "appName": "MyPark · Banreservas Zona Colonial",
+    "skipToContent": "Saltar al contenido principal",
+    "language": {
+      "label": "Idioma",
+      "es-DO": "Español",
+      "en": "English"
+    }
   },
-  "health": {
-    "healthy": "API: operativa",
-    "not_ready": "API: iniciando",
-    "unavailable": "API: no disponible"
+  "home": {
+    "title": "Parqueo en la Zona Colonial",
+    "subtitle": "Crea tu cuenta y registra tus vehículos para reservar un espacio.",
+    "signedInSubtitle": "Administra los vehículos de tu cuenta.",
+    "logIn": "Iniciar sesión",
+    "signUp": "Crear cuenta",
+    "vehicles": "Vehículos"
+  },
+  "notFound": {
+    "title": "Página no encontrada",
+    "body": "No encontramos lo que buscas. Es posible que el enlace esté incompleto o que la página ya no exista.",
+    "backHome": "Volver al inicio"
   }
 }

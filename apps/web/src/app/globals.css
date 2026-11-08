@@ -1,6 +1,25 @@
 @import 'tailwindcss';
 @import '../design/tokens.css';
 
-body {
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+/* The font variables are set on <html> by next/font in the locale layout. */
+@theme inline {
+  --font-sans: var(--font-barlow), system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-plate: var(--font-barlow-semi-condensed), var(--font-barlow), system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+/* Motion conveys state only; users who ask for less get none (spec §11). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+    scale: none !important;
+    scroll-behavior: auto !important;
+  }
 }

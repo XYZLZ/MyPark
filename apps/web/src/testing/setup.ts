@@ -7,3 +7,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
+
+// The real navigation helpers need the Next.js router; see testing/navigation.tsx.
+vi.mock('@/i18n/navigation', async () => await import('./navigation'));

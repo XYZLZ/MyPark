@@ -31,7 +31,7 @@ describe('request config', () => {
     const config = await loadConfig();
 
     expect(config.locale).toBe('en');
-    expect((config.messages as { health: { healthy: string } }).health.healthy).toBe('API: healthy');
+    expect((config.messages as { common: { appName: string } }).common.appName).toBe('MyPark · Banreservas Zona Colonial');
   });
 
   test('falls back to es-DO for unknown root param', async () => {

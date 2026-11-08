@@ -176,6 +176,7 @@ The facility belongs to Banreservas. The product is **MyPark**, shown as "MyPark
 | Go modules | `go mod tidy` must be clean. Prefer the standard library. A new dependency needs a one-line justification in the PR |
 | Audit | `npm audit --omit=dev` and `govulncheck` run in CI. High/critical findings block release |
 | Licenses | Only OSI-approved permissive licenses (MIT, Apache-2.0, BSD, ISC) without approval |
+| Fonts | Barlow and Barlow Semi Condensed (SIL Open Font License 1.1) are loaded through `next/font/google` on web, and `@expo-google-fonts/barlow` and `@expo-google-fonts/barlow-semi-condensed` on mobile. OFL-1.1 is not on the permissive list above; approved by user decision 17 (X8). Fonts are not modified or sold on their own |
 
 ### 2.7 Security baseline (OWASP ASVS Level 1)
 

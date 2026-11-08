@@ -1,19 +1,54 @@
 /*
- * Brand tokens. Tailwind generates utilities from them
- * (bg-brand-primary, text-brand-primary-contrast, ...).
- *
- * Placeholder pairs checked for WCAG 2.2 AA (normal text, 4.5:1):
- *   brand-primary-contrast on brand-primary: 10.93:1
- *   brand-accent-contrast on brand-accent:    7.39:1
- *   brand-accent on brand-primary (UI, 3:1):  4.65:1
+ * Design tokens (spec §9.1). Same names and values in
+ * apps/web/src/design/tokens.css, apps/mobile/src/global.css and
+ * apps/mobile/src/design/tokens.ts; `npm run check:tokens` enforces it and
+ * checks the contrast pairs of §9.2. Tailwind generates utilities from them
+ * (bg-brand-primary, text-ink, rounded-control, ...). Light theme only.
  */
 @theme {
   /* TODO(brand): replace with official Banreservas value */
-  --color-brand-primary: #0b3a7e;
+  --color-brand-primary: #1c4a78;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-primary-strong: #163b63;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-primary-tint: #e3eef8;
   /* TODO(brand): replace with official Banreservas value */
   --color-brand-primary-contrast: #ffffff;
   /* TODO(brand): replace with official Banreservas value */
-  --color-brand-accent: #f39200;
+  --color-brand-accent: #f2a431;
   /* TODO(brand): replace with official Banreservas value */
-  --color-brand-accent-contrast: #1a1a1a;
+  --color-brand-accent-contrast: #14233d;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-action: #1ba7ea;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-action-hover: #41b6ef;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-action-press: #1196d7;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-action-contrast: #0e2747;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-ink: #14233d;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-ink-muted: #4f5d76;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-surface: #ffffff;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-surface-sunken: #f1f4f9;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-hairline: #dde3ec;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-control-line: #7f8ca3;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-danger: #b3261e;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-danger-tint: #fbeae9;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-disabled-bg: #e3e7ee;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-disabled-ink: #5f6c83;
+  --radius-control: 12px;
+  --radius-panel: 16px;
+  --radius-plate: 10px;
+  --motion-duration: 180ms;
+  --motion-ease: cubic-bezier(.22, 1, .36, 1);
 }
