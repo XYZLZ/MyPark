@@ -114,6 +114,30 @@ describe('VehiclesScreen', () => {
     expect(fetchMock.mock.calls[1]![1]!.method ?? 'GET').toBe('GET');
   });
 
+  test('after a delete, focus moves to the heading and the outcome is announced', async () => {
+    scripted({ get: () => jsonResponse(200, listBody([car(2)], 5)) });
+    renderScreen([car(1), car(2)]);
+    expect(screen.getByRole('status', { hidden: true })).toBeEmptyDOMElement();
+
+    confirmDelete('A123451');
+
+    await waitFor(() => expect(screen.getByText('Vehicle deleted')).toBeInTheDocument());
+    expect(screen.getByText('Vehicle deleted').closest('[role="status"]')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: V.title })).toHaveFocus();
+    await screen.findByText('A123452');
+    expect(screen.getByRole('heading', { name: V.title })).toHaveFocus();
+  });
+
+  test('a failed delete announces nothing', async () => {
+    scripted({ delete: () => jsonResponse(409, errorBody('vehicle.in_use')) });
+    renderScreen([car(1)]);
+
+    confirmDelete('A123451');
+
+    await screen.findByRole('alert');
+    expect(screen.queryByText('Vehicle deleted')).not.toBeInTheDocument();
+  });
+
   test('double click on confirm sends one DELETE', async () => {
     const fetchMock = scripted({ get: () => jsonResponse(200, listBody([], 5)) });
     renderScreen([car(1)]);

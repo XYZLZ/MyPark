@@ -8,12 +8,15 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t('title') };
 }
 
+// Outside the component so the render stays pure: this is the moment the RSC data was read.
+const timestamp = () => Date.now();
+
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function VehiclesPage({ searchParams }: { searchParams: SearchParams }) {
   const { notice } = await searchParams;
   const initial = await listVehicles();
-  const fetchedAt = Date.now();
+  const fetchedAt = timestamp();
 
   return (
     <VehiclesScreen

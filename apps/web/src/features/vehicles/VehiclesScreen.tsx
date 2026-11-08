@@ -27,7 +27,9 @@ export function VehiclesScreen({
   const translate: Translator = useTranslations();
   const queryClient = useQueryClient();
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState(false);
   const inFlight = useRef(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   const list = useQuery({
     queryKey: VEHICLES_QUERY_KEY,
@@ -40,6 +42,9 @@ export function VehiclesScreen({
     mutationFn: deleteVehicle,
     onSuccess: () => {
       setConfirmingId(null);
+      setDeleted(true);
+      // The row is about to disappear; focus a stable target instead of letting it fall to the body.
+      headingRef.current?.focus();
       void queryClient.invalidateQueries({ queryKey: VEHICLES_QUERY_KEY });
     },
     onError: (error) => {
@@ -63,6 +68,7 @@ export function VehiclesScreen({
 
   function askDelete(id: string) {
     remove.reset();
+    setDeleted(false);
     setConfirmingId(id);
   }
 
@@ -92,8 +98,12 @@ export function VehiclesScreen({
 
   return (
     <div>
-      <PageHeader title={t('title')} action={items.length > 0 ? addAction : undefined} />
+      <PageHeader title={t('title')} titleRef={headingRef} action={items.length > 0 ? addAction : undefined} />
       <p className="-mt-2 mb-4 text-sm text-ink-muted">{t('count', { count: items.length, limit: page.limit })}</p>
+      {/* Always mounted, so assistive tech announces the text when it appears. */}
+      <div role="status" className={deleted ? 'mb-4 rounded-control border border-brand-primary/30 bg-brand-primary-tint p-3 text-sm text-ink' : 'sr-only'}>
+        {deleted ? t('deleted') : null}
+      </div>
 
       {notice === 'vehicle_not_found' ? <Banner tone="error">{translate('errors.vehicle.not_found')}</Banner> : null}
       {deleteFailure ? <Banner tone="error">{deleteFailure}</Banner> : null}

@@ -26,8 +26,20 @@ export function VehicleForm({ mode, vehicle }: { mode: 'create' | 'edit'; vehicl
     },
     submit: async (values) => {
       // The plate goes as typed; the server normalizes it.
-      await (mode === 'edit' && vehicle ? updateVehicle(vehicle.id, values) : createVehicle(values));
-      await queryClient.invalidateQueries({ queryKey: VEHICLES_QUERY_KEY });
+      if (mode === 'edit' && vehicle) {
+        // PATCH is partial: sending only what changed keeps a concurrent edit of another field
+        // intact and skips re-validating an untouched plate.
+        const changes = Object.fromEntries(
+          (Object.keys(values) as VehicleField[]).filter((name) => values[name] !== vehicle[name]).map((name) => [name, values[name]]),
+        );
+        if (Object.keys(changes).length > 0) {
+          await updateVehicle(vehicle.id, changes);
+          await queryClient.invalidateQueries({ queryKey: VEHICLES_QUERY_KEY });
+        }
+      } else {
+        await createVehicle(values);
+        await queryClient.invalidateQueries({ queryKey: VEHICLES_QUERY_KEY });
+      }
       router.push('/vehicles');
     },
   });

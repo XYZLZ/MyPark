@@ -99,6 +99,7 @@
       "deleting": "Eliminando…",
       "cancel": "Cancelar"
     },
+    "deleted": "Vehículo eliminado",
     "loading": "Actualizando tus vehículos",
     "loadError": {
       "title": "No pudimos cargar tus vehículos",

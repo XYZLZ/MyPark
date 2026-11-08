@@ -99,6 +99,7 @@
       "deleting": "Deleting…",
       "cancel": "Cancel"
     },
+    "deleted": "Vehicle deleted",
     "loading": "Updating your vehicles",
     "loadError": {
       "title": "We could not load your vehicles",

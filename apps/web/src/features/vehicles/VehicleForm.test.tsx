@@ -131,7 +131,30 @@ describe('VehicleForm', () => {
     await waitFor(() => expect(router.push).toHaveBeenCalledWith('/vehicles'));
     expect(fetchMock.mock.calls[0]![0]).toBe(`/api/v1/vehicles/${vehicleFixture.id}`);
     expect(fetchMock.mock.calls[0]![1]!.method).toBe('PATCH');
-    expect(sentBody(fetchMock)).toEqual({ plate: 'A123456', make: 'Kia', model: 'Rio', color: 'Blue' });
+    expect(sentBody(fetchMock)).toEqual({ color: 'Blue' });
+  });
+
+  test('edit with no changes sends no request and returns to the list', async () => {
+    const fetchMock = stubFetch(jsonResponse(200, successBody(vehicleFixture)));
+    renderWithProviders(<VehicleForm mode="edit" vehicle={vehicleFixture} />, { locale: 'en' });
+
+    fireEvent.click(screen.getByRole('button', { name: F.save }));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/vehicles'));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('editing a field back to its original value sends nothing for it', async () => {
+    const fetchMock = stubFetch(jsonResponse(200, successBody(vehicleFixture)));
+    renderWithProviders(<VehicleForm mode="edit" vehicle={vehicleFixture} />, { locale: 'en' });
+    fill(F.make, 'Honda');
+    fill(F.make, 'Kia');
+    fill(F.model, 'Civic');
+
+    fireEvent.click(screen.getByRole('button', { name: F.save }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(sentBody(fetchMock)).toEqual({ model: 'Civic' });
   });
 
   test('success invalidates vehicles and returns to the list', async () => {

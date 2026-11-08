@@ -21,7 +21,7 @@ export function createVehicle(input: VehicleInputValues): Promise<Vehicle> {
   return apiFetch('/api/v1/vehicles', parseVehicle, { method: 'POST', body: input });
 }
 
-export function updateVehicle(id: string, input: VehicleInputValues): Promise<Vehicle> {
+export function updateVehicle(id: string, input: Partial<VehicleInputValues>): Promise<Vehicle> {
   return apiFetch(`/api/v1/vehicles/${encodeURIComponent(id)}`, parseVehicle, { method: 'PATCH', body: input });
 }
 
