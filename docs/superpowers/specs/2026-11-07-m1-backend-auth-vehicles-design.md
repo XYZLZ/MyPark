@@ -1,12 +1,26 @@
 # M1 Track A — Backend Auth + Vehicles: Design
 
-**Status:** approved by the user on 2026-11-07, after the builder check (OC-38/39 come from it) · **Date:** 2026-11-07 · **Milestone:** M1 (Nov 16 – Nov 20) · **Track:** A (Go backend only)
+**Status:** implemented on branch `feat/m1-backend` (approved by the user on 2026-11-07, after the builder check; OC-38/39 come from it). See "Changes during implementation" below for where the code differs from the original design · **Date:** 2026-11-07 · **Milestone:** M1 (Nov 16 – Nov 20) · **Track:** A (Go backend only)
 
 This document designs the Go side of M1: accounts, sessions, roles and authorization, vehicles, the email outbox, the audit log, rate limits, the first-admin seed, and the M0 follow-ups. **Authentication, authorization and roles are the center of gravity.** Every other part is shaped so it cannot weaken them.
 
 > **How to read this.** §1–§3 explain *why* and what is fixed. §4–§13 are the design. §14 covers the M0 follow-ups. §15–§17 cover testing, build order and what is left to the builder. Decisions the user made are labeled **(user)**. Decisions this document makes are labeled **(our call)** and collected in §2.2 for review.
 >
 > **Sources:** `docs/spec.md` (§2, §3.1, §3.2, §3.11, §4, §8 M1, §10), `docs/architecture.md` (§4, §5, §10, §11, §14, §16, §17), `docs/policies.md` (§1.8, §2.3–§2.7), the M0 plan `docs/superpowers/plans/2026-11-06-m0-foundations.md`, and the code under `apps/server`.
+
+### Changes during implementation
+
+The code is the source of truth. These deltas were decided while building and are already folded into the sections named below.
+
+| Area | Original design | As built | Section |
+|---|---|---|---|
+| List payloads | `{items, next_cursor}` inside `data` | The array is `data` itself, with `meta.page = {limit, next_cursor}` (vehicles and admins included) | §6.0, §6.1 |
+| Second logout | "idempotent" 204 | The session check runs on every request, so a revoked session gets 401. Clients treat 401 on logout as success | §6.1, §7.4 |
+| `JWT_VERIFY_KEYS` | `kid=base64pubkey` | `kid:base64(32-byte Ed25519 public key)`, comma-separated | §7.2 |
+| Refresh, inactive user | Revoke the session for any non-active user | Deleted: revoke with `account_deleted`. Suspended or pending: 401 `auth.session_revoked` with no write | §7.4 |
+| `DELETE /v1/me` throttle | Not listed | Rule `delete_account_user`: 5 per 15 min per user, fails closed | §10.1 |
+| Seed admin variables | `SEED_ADMIN_NAME` | `SEED_ADMIN_FIRST_NAME` and `SEED_ADMIN_LAST_NAME` (user decision §2.1 item 7) | §13.1, OC-20 |
+| Vehicle audit | Unspecified | Vehicle CRUD writes no audit rows in M1 | §12 |
 
 ---
 
@@ -85,7 +99,7 @@ M1 is the first milestone with users. Everything later depends on its identity m
 | OC-5 | Strict reuse detection with **no grace window**. Clients must single-flight refresh. This is a Track B requirement for the BFF too | §7.4 |
 | OC-6 | Writes that must survive a failing request (family revocation, code attempt increments, failed-login audit) commit first. The error is returned **after** the commit | §4.5 |
 | OC-7 | JWT library `github.com/golang-jwt/jwt/v5`, pinned to `EdDSA` with issuer, audience and `exp` required, instead of hand-rolled JWT code | §7.2 |
-| OC-8 | Dev JWT key: an inline compose default (a dev-only Ed25519 seed, `kid=dev-1`), same pattern as the dev DB passwords. Config **refuses the known dev key when `APP_ENV=production`**. Rotation uses `kid` and a list of extra verify keys | §7.2 |
+| OC-8 | Dev JWT key: an inline compose default (a dev-only Ed25519 seed, `kid` `dev-1`), same pattern as the dev DB passwords. Config **refuses the known dev key when `APP_ENV=production`**. Rotation uses `kid` and a list of extra verify keys | §7.2 |
 | OC-9 | Verification, reset and invite codes are stored as **HMAC-SHA256 with a server pepper** (`AUTH_CODE_PEPPER`), not bare SHA-256, because 10^6 codes reverse instantly offline | §7.5 |
 | OC-10 | The outbox payload holds the plaintext code until delivery, then the code is **scrubbed** (on `sent` or `dead`). Codes expire in 15 min, so no payload encryption in M1 | §11.3 |
 | OC-11 | All code failures (wrong, expired, consumed, too many attempts, unknown email) return one code, `auth.code_invalid`, so the endpoint can't confirm that an account exists | §7.5 |
@@ -97,7 +111,7 @@ M1 is the first milestone with users. Everything later depends on its identity m
 | OC-17 | `DELETE /v1/me` requires the current password. A wrong password returns `403 auth.password_incorrect`, not a 401, so clients don't loop on refresh | §6 |
 | OC-18 | Account deletion anonymizes **immediately**, in the same transaction (meets the "within 30 days" rule), soft-deletes the vehicles and revokes all sessions | §7.8 |
 | OC-19 | Admin invitations: an admin creates an admin (`pending_verification`, no password). The invitee gets a 6-digit `admin_invite` code (**48 h** TTL, 5 attempts) and sets a password with `POST /v1/auth/invitations/accept`. No promotion of existing drivers in M1 | §13.2 |
-| OC-20 | First admin: `cmd/seed` reads `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` and `SEED_ADMIN_NAME`, with inline compose dev defaults. It is **insert-if-no-admin-exists**, never overwrites, and refuses the dev default password in production | §13.1 |
+| OC-20 | First admin: `cmd/seed` reads `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_FIRST_NAME` and `SEED_ADMIN_LAST_NAME`, with inline compose dev defaults. It is **insert-if-no-admin-exists**, never overwrites, and refuses the dev default password in production | §13.1 |
 | OC-21 | Rate-limit storage is a Postgres **UNLOGGED** fixed-window counter table with hashed keys, behind a `Limiter` port. It is correct across instances. M2 may add an in-memory adapter for the device API | §10 |
 | OC-22 | Client IP comes from `X-Forwarded-For` **only** when the TCP peer is in `TRUSTED_PROXY_CIDRS`. The web BFF must forward the browser IP (Track B contract item) | §10.3 |
 | OC-23 | Extra limits beyond policies §2.7: login 20/hour per email (any IP), code emails 5/hour per email, refresh 60/min per IP, vehicle writes 20/min per user | §10.1 |
@@ -410,7 +424,7 @@ Every response body from the backend has this shape. The **Success** column in �
 | `POST /v1/auth/verify/resend` | public, RL | `{email}` | 202, always | — |
 | `POST /v1/auth/login` | public, RL | `{email, password, client_kind:"web"\|"mobile"}` | 200 `TokenResponse` | `auth.invalid_credentials` 401, `auth.email_not_verified` 403, `auth.account_suspended` 403 |
 | `POST /v1/auth/refresh` | public, RL | `{refresh_token}` | 200 `TokenResponse` | `auth.refresh_invalid` 401, `auth.session_revoked` 401 |
-| `POST /v1/auth/logout` | any role | — | 204 (idempotent) | `auth.unauthenticated` 401 |
+| `POST /v1/auth/logout` | any role | — | 204. A second call with the same token gets 401, because the session check rejects the revoked session. Clients treat 401 on logout as success | `auth.unauthenticated` 401, `auth.session_revoked` 401 |
 | `POST /v1/auth/logout-all` | any role | — | 204 | `auth.unauthenticated` 401 |
 | `POST /v1/auth/password/forgot` | public, RL | `{email}` | 202, always | — |
 | `POST /v1/auth/password/reset` | public, RL | `{email, code, new_password}` | 204 | `auth.code_invalid` 422 |
@@ -419,12 +433,12 @@ Every response body from the backend has this shape. The **Success** column in �
 | `PATCH /v1/me` | driver, admin | `{first_name?, last_name?, phone? (null clears), locale?}` | 200 `User` | — |
 | `DELETE /v1/me` | driver; legal-exempt | `{password}` | 204 | `auth.password_incorrect` 403 |
 | `POST /v1/me/legal-acceptance` | driver; legal-exempt | `{terms_version, privacy_version}` | 204 | `legal.version_outdated` 409 |
-| `GET /v1/vehicles` | driver | — | 200 `{items: Vehicle[]}` (≤ 5, no pagination) | — |
+| `GET /v1/vehicles` | driver | — | 200 `Vehicle[]` as `data` (≤ 5, `meta.page.next_cursor` null) | — |
 | `POST /v1/vehicles` | driver, RL | `{plate, make, model, color}` | 201 `Vehicle` | `vehicle.plate_taken` 409, `vehicle.limit_reached` 409 |
 | `GET /v1/vehicles/{id}` | driver, owner | — | 200 `Vehicle` | `vehicle.not_found` 404 |
 | `PATCH /v1/vehicles/{id}` | driver, owner, RL | `{plate?, make?, model?, color?}` | 200 `Vehicle` | `vehicle.not_found` 404, `vehicle.plate_taken` 409 |
 | `DELETE /v1/vehicles/{id}` | driver, owner, RL | — | 204 | `vehicle.not_found` 404, `vehicle.in_use` 409 (active from M3) |
-| `GET /v1/admin/admins` | admin | `?limit=50&cursor=` (keyset) | 200 `{items: AdminUser[], next_cursor}` | — |
+| `GET /v1/admin/admins` | admin | `?limit=50&cursor=` (keyset) | 200 `AdminUser[]` as `data`, with `meta.page.next_cursor` | — |
 | `POST /v1/admin/admins` | admin | `{email, first_name, last_name, locale?}` | 201 `AdminUser` (`status:"pending_verification"`); 200 when re-inviting a pending invitee (OC-39) | `user.email_taken` 409 (active/suspended only) |
 
 Every bearer route can also return `auth.unauthenticated` 401, `auth.session_revoked` 401, `auth.account_suspended` 403, `auth.forbidden` 403 (role), and `legal.acceptance_required` 403 (drivers on non-exempt routes). "RL" means a rate limit applies (§10.1).
@@ -520,7 +534,7 @@ Track B adds `errors.<code>` keys in es-DO and en for every code (policies §2.8
 |---|---|---|
 | `JWT_SIGNING_KEY` | base64 Ed25519 **seed** (32 bytes). Required | an inline dev seed |
 | `JWT_KEY_ID` | `kid` for the signing key. Required | `dev-1` |
-| `JWT_VERIFY_KEYS` | Optional `kid=base64pubkey,…` for keys being rotated out | empty |
+| `JWT_VERIFY_KEYS` | Optional `kid:base64(32-byte Ed25519 public key),…` for keys being rotated out | empty |
 
   `config.Load` fails when `APP_ENV=production` and `JWT_SIGNING_KEY` equals the committed dev seed. The same check applies to `AUTH_CODE_PEPPER`. Rotation: deploy the new signing key, keep the old public key in `JWT_VERIFY_KEYS` for ≥ 15 min, then drop it. A restart **does not** log users out, because refresh tokens are opaque rows in the DB.
 
@@ -551,13 +565,15 @@ t.rotated_at not null  (REUSE)           → update auth_sessions set revoked_at
                                            outcome reuse            (401 auth.session_revoked)
 t.expires_at <= now or s.absolute_expires_at <= now
                                          → outcome invalid          (401 auth.refresh_invalid)
-user status not active                   → revoke session, outcome revoked
+user status not active                   → deleted: revoke session (account_deleted), outcome revoked (401 auth.session_revoked)
+                                           suspended/pending: NO write, outcome revoked (401 auth.session_revoked)
 else                                     → t.rotated_at = now; insert successor (expires = min(now+30d, absolute));
                                            s.last_used_at = now; outcome ok → new access + refresh
 ```
 
 - `for update` serializes concurrent refreshes of the same token. The second one sees `rotated_at` and **revokes the family**. That is intended (OC-5). The mobile client single-flights refresh (architecture §5). **The web BFF must also single-flight per session.** Concurrent `proxy.ts` or RSC refreshes with one cookie will trip reuse detection and log the user out. Track B must design for this. Alternative considered: a 10 s grace window that tolerates a second use. It was rejected, because the successor token can't be returned again (only its hash is stored), so the grace would need a second live successor, which weakens detection.
-- **Logout**: revoke the session from the principal's `sid` (`logout`). **Logout-all**: revoke every non-revoked session of the user (`logout_all`). Both are idempotent and audited.
+- **Logout**: revoke the session from the principal's `sid` (`logout`). **Logout-all**: revoke every non-revoked session of the user (`logout_all`). Both are audited. They are not idempotent on the wire: the per-request session check (§7.3) rejects a revoked session, so a second logout with the same token returns `401`. Clients treat 401 on logout as success.
+- **Refresh for an inactive user.** `auth_sessions.revoked_reason` is limited by a CHECK to `logout`, `logout_all`, `password_reset`, `reuse_detected` and `account_deleted`, so only a deleted account has a truthful reason. Deleted: the session is revoked with `account_deleted`. Suspended or pending: the request gets `401 auth.session_revoked` and nothing is written, so a later reactivation keeps the session. M4's suspend action must revoke the user's sessions explicitly.
 
 ### 7.5 Codes (verification, reset, invite)
 
@@ -696,7 +712,8 @@ r.Handle("POST /v1/vehicles", router.Policy{Roles: driverOnly, Limit: &limits.Ve
 | `code_request_email` (our call) | 5 / hour | `code_e:` lower(email) | register, verify/resend, password/forgot |
 | `code_submit_ip` (our call) | 10 / min | `codesub:` ip | verify, password/reset, invitations/accept |
 | `refresh_ip` (our call) | 60 / min | `refresh:` ip | refresh |
-| `vehicle_write_user` (our call) | 20 / min | `veh:` user id | POST, PATCH and DELETE vehicles |
+| `vehicle_write_user` (our call) | 20 / min | `veh:` user id | POST, PATCH and DELETE vehicles (fails open) |
+| `delete_account_user` (our call) | 5 / 15 min | `delme:` user id | `DELETE /v1/me` (verifies the password, so a stolen access token must not brute-force it). Fails closed |
 
 `reservation create 10/min per user` (M3) and `device API 100/s per device` (M2) reuse the same `Limiter` port. Every attempt counts, successful or not, so the behavior doesn't reveal which attempts failed.
 
@@ -765,7 +782,7 @@ The entry is written by `audit.Recorder.Record` **in the action's transaction**.
 | `admin.invitation_accepted` | user | user | — |
 | `admin.seeded` | system | user | — |
 
-Never stored: passwords, hashes, codes, tokens, emails, names, phones or plates. Vehicle CRUD is not audited in M1 (not a security event, our call). The audit `ip` is the resolved client IP. Retention is two years, and the purge is deferred (§16.3).
+Never stored: passwords, hashes, codes, tokens, emails, names, phones or plates. Vehicle CRUD is not audited in M1 (not a security event, our call). Account deletion erases the owner's vehicles inside its own transaction (`vehicles.OwnerEraser`) and is audited once as `user.deleted`. The audit `ip` is the resolved client IP. Retention is two years, and the purge is deferred (§16.3).
 
 ---
 
@@ -773,7 +790,7 @@ Never stored: passwords, hashes, codes, tokens, emails, names, phones or plates.
 
 ### 13.1 First admin (`cmd/seed`, OC-20)
 
-- Env: `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME`, `APP_ENV`. Compose inline dev defaults: `admin@mypark.local`, a dev-only password of ≥ 10 characters that is not on the common list, and `MyPark Admin`.
+- Env: `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_FIRST_NAME`, `SEED_ADMIN_LAST_NAME`, `APP_ENV`. Compose inline dev defaults: `admin@mypark.local`, a dev-only password of ≥ 10 characters that is not on the common list, `MyPark` and `Admin`.
 - Behavior, in the seed transaction: if **any** non-deleted admin exists → do nothing (log `admin seed skipped`). Otherwise validate the password against the same policy as register, hash it, insert an `admin` that is `active` and `email_verified_at = now()`, with no legal versions (exempt), and audit `admin.seeded`.
 - If the variables are unset → skip with a warning (not an error). With `APP_ENV=production`, the known dev default password is refused (non-zero exit). The seed never re-hashes or overwrites, so a compose restart is a no-op. The password is never logged.
 

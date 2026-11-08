@@ -58,8 +58,23 @@ To run the mobile app, point `EXPO_PUBLIC_API_URL` at the API as the device sees
 (cd apps/mobile && EXPO_PUBLIC_API_URL=http://<LAN-IP>:8080 npx expo start)
 ```
 
-No `.env` file is needed: every variable has an inline dev-only default. Override values in
-`deploy/compose/.env` or in your shell. Never reuse the dev credentials outside local development.
+No `.env` file is needed: every variable has an inline dev-only default in
+`deploy/compose/docker-compose.yml`. Override any of them in your shell, for example
+`SEED_ADMIN_PASSWORD='another-long-dev-password' docker compose -f deploy/compose/docker-compose.yml up -d --build`.
+Never reuse the dev credentials outside local development.
+
+Auth and seed variables (M1):
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_FIRST_NAME`, `SEED_ADMIN_LAST_NAME`, `SEED_ADMIN_PASSWORD` | seed | First admin, created only when no admin exists. Dev defaults: `admin@mypark.local`, `MyPark`, `Admin` |
+| `JWT_SIGNING_KEY`, `JWT_KEY_ID` | api | Ed25519 seed (base64) and its `kid` |
+| `JWT_VERIFY_KEYS` | api | Optional `kid:base64(public key)` pairs, comma-separated, for keys being rotated out |
+| `AUTH_CODE_PEPPER` | api | Pepper (at least 32 bytes) for hashing one-time codes |
+| `TRUSTED_PROXY_CIDRS`, `MAX_VEHICLES_PER_USER` | api | Proxies allowed to set `X-Forwarded-For`, and the per-driver vehicle cap |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS` | worker | Outgoing email; defaults send to Mailpit |
+
+With `APP_ENV=production` the api and seed refuse the committed dev signing key, pepper and seed password.
 
 Install JavaScript dependencies from the repo root:
 

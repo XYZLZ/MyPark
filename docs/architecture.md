@@ -173,10 +173,10 @@ Every response uses one baseline envelope (decided 2026-11-07, see the M1 backen
 
 | Group | Endpoints (abridged) | Auth |
 |---|---|---|
-| Auth | `POST /v1/auth/register`, `/verify`, `/login`, `/refresh`, `/logout`, `/logout-all`, `/password/forgot`, `/password/reset` | public / bearer |
+| Auth | `POST /v1/auth/register`, `/verify`, `/verify/resend`, `/login`, `/refresh`, `/logout`, `/logout-all`, `/password/forgot`, `/password/reset`, `/invitations/accept` | public / bearer |
 | Legal | `GET /v1/legal/current` (current terms + privacy versions); `register` requires `accepted_terms_version` + `accepted_privacy_version`; `POST /v1/me/legal-acceptance` re-accepts after a version bump | public / driver |
-| Me | `GET/PATCH /v1/me`, `DELETE /v1/me` | driver |
-| Vehicles | `GET/POST /v1/vehicles`, `PATCH/DELETE /v1/vehicles/{id}` | driver |
+| Me | `GET/PATCH /v1/me`, `DELETE /v1/me` (password re-check, rate limited 5 per 15 min per user) | driver (`GET` also admin) |
+| Vehicles | `GET/POST /v1/vehicles`, `GET/PATCH/DELETE /v1/vehicles/{id}` | driver |
 | Lot (public) | `GET /v1/lots/{id}`, `GET /v1/lots/{id}/availability`, `GET /v1/lots/{id}/availability/stream` (SSE), `GET /v1/lots/{id}/tariff` | public |
 | Reservations | `POST /v1/reservations/quote`, `POST /v1/reservations`, `GET /v1/reservations`, `GET /v1/reservations/{id}`, `PATCH /v1/reservations/{id}` (change vehicle until arrival), `POST /v1/reservations/{id}/pay`, `POST /v1/reservations/{id}/cancel`, `GET /v1/reservations/{id}/qr` | driver |
 | Payments | `GET /v1/payments`, `GET /v1/payments/{id}` | driver |
@@ -209,7 +209,7 @@ Pagination is **keyset**: `?limit=50&cursor=<opaque>`, where the cursor encodes 
 | Per-request session check | Every authenticated request runs `Authenticator.Authenticate`: verify the JWT, then **one indexed query** joins the session and its user. A revoked or absolutely expired session, a suspended, deleted or unverified user, and a role that differs from the database all fail at once, so logout, password reset and account deletion take effect immediately, not after the 15-min token expiry (spec 7.3, OC-4). The database role is authoritative. Failures are `401 auth.unauthenticated` or `auth.session_revoked`, and `403 auth.account_suspended` |
 | No refresh grace window | Presenting a rotated refresh token revokes the whole session (OC-5). Clients must single-flight refresh. The mobile HTTP client does, and the **web BFF must single-flight per session** too: concurrent `proxy.ts` or RSC refreshes with one cookie trip reuse detection and log the user out |
 | Client IP | The rate limiter and the audit log use the IP resolved by `middleware.ClientIP`: the TCP peer, or the left-most `X-Forwarded-For` entry **only when the peer is in `TRUSTED_PROXY_CIDRS`** (OC-22). The web BFF must forward the browser IP in `X-Forwarded-For`, and its address must be in that list |
-| Legal gate | A driver whose accepted terms or privacy version is not the current one gets `403 legal.acceptance_required` (with the current versions in `details`) on every route except those registered `LegalExempt` (logout, logout-all, legal acceptance). Admins are exempt (OC-15). The current versions are cached for 60 s and refreshed by one shared query |
+| Legal gate | A driver whose accepted terms or privacy version is not the current one gets `403 legal.acceptance_required` (with the current versions in `details`) on every route except those registered `LegalExempt`: `GET /v1/me`, `DELETE /v1/me`, `POST /v1/me/legal-acceptance`, logout and logout-all (spec §8.5). Admins are exempt (OC-15). The current versions are cached for 60 s and refreshed by one shared query |
 | Logout | `POST /v1/auth/logout` revokes the session in the token (`logout`). `POST /v1/auth/logout-all` revokes every live session of the user (`logout_all`). Both answer 204 and are audited. A second logout with the same token is rejected by the session check with 401 |
 | Authorization | Role check in middleware (`driver` / `admin`) + ownership check in each use case (a driver only sees their own resources) |
 
@@ -364,6 +364,8 @@ type PaymentGateway interface {
 
 Running several worker replicas is safe because every job claims rows with `SKIP LOCKED` or is idempotent by unique key.
 
+**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). The rest arrive with their milestones.
+
 ---
 
 ## 11. Data model
@@ -381,7 +383,7 @@ Conventions (from supabase-postgres-best-practices):
 | Table | Key columns | Constraints and indexes |
 |---|---|---|
 | `users` | id, public_id, email `citext`, password_hash, first_name, last_name, phone, role, status, locale, email_verified_at, terms_version, terms_accepted_at, privacy_version, privacy_accepted_at, reservation_blocked_until, created_at, updated_at, deleted_at | `unique(email) where deleted_at is null`; `role in ('driver','admin')`; `status in ('pending_verification','active','suspended','deleted')`; `locale in ('es-DO','en')` |
-| `auth_codes` | id, user_id, purpose, code_hash, expires_at, attempts, consumed_at, created_at | `purpose in ('verify_email','reset_password','admin_invite')`; `attempts between 0 and 5`; `unique(user_id, purpose) where consumed_at is null`; idx(user_id); idx(expires_at) |
+| `auth_codes` | id, user_id, purpose, code_hash, expires_at, attempts, consumed_at, created_at | `purpose in ('verify_email','reset_password','admin_invite')`; `attempts between 0 and 5`; `unique(user_id, purpose) where consumed_at is null`; idx(user_id); idx(expires_at). `code_hash` is an HMAC-SHA256 with the pepper |
 | `auth_sessions` | id, public_id (JWT `sid`), user_id, client_kind, created_at, last_used_at, absolute_expires_at, revoked_at, revoked_reason, created_ip, user_agent | one row per login (a refresh-token family); `client_kind in ('web','mobile')`; `(revoked_at is null) = (revoked_reason is null)`; idx(user_id); idx(user_id) where revoked_at is null |
 | `refresh_tokens` | id, session_id, token_hash, created_at, expires_at, rotated_at | `unique(token_hash)`; idx(session_id); idx(expires_at); a non-null `rotated_at` on presentation means reuse |
 | `vehicles` | id, public_id, user_id, plate_normalized, plate_display, make, model, color, deleted_at | `unique(plate_normalized) where deleted_at is null`; idx(user_id) |
@@ -401,8 +403,9 @@ Conventions (from supabase-postgres-best-practices):
 | `employee_cards` | id, public_id, lot_id, card_uid_hash, holder_name, employee_code, status, created_by | `unique(card_uid_hash)`; `status in ('active','revoked')` |
 | `occupancy_snapshots` | lot_id, captured_at, occupied, available, effective_holds, sensor_occupied, capacity | PK(lot_id, captured_at); BRIN(captured_at) |
 | `reconciliation_alerts` | id, lot_id, kind, details jsonb, opened_at, resolved_at, resolved_by, resolution_note | idx(lot_id) where resolved_at is null |
-| `outbox_messages` | id, kind, dedupe_key, payload jsonb, status, attempts, available_at, last_error | `unique(dedupe_key)`; idx(available_at) where status='pending' |
-| `audit_log` | id, at, actor_user_id, actor_kind, action, entity_type, entity_id, before jsonb, after jsonb, ip, request_id | idx(at desc); idx(actor_user_id); append-only |
+| `outbox_messages` | id, kind, template, locale, to_address `citext`, user_id, payload jsonb, dedupe_key, status, attempts, last_error, available_at, created_at, sent_at | `unique(dedupe_key)`; `status in ('pending','sending','sent','dead')`; idx(user_id); idx(available_at) where status in ('pending','sending'). The plaintext `payload.code` is scrubbed once sent or dead |
+| `rate_limit_counters` | key `bytea` PK (SHA-256 of the rule key), window_start, count, expires_at | `UNLOGGED`; idx(expires_at); purged by the worker every minute (ADR-12) |
+| `audit_log` | id, occurred_at, actor_user_id, actor_kind, action, entity_type, entity_id, before jsonb, after jsonb, ip, request_id | idx(occurred_at desc); idx(actor_user_id); idx(entity_type, entity_id); append-only |
 
 ### 11.2 QR tokens
 
