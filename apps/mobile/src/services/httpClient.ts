@@ -30,6 +30,8 @@ export type AuthAdapter = {
   getAccessToken(): string | null;
   /** Must share one in-flight refresh between concurrent callers: refresh tokens are single-use. */
   refresh(): Promise<RefreshResult>;
+  /** The in-flight refresh, if any. Requests wait for it before sending so they do not use an expired token. */
+  pendingRefresh?(): Promise<unknown> | null;
   onSessionRevoked(): Promise<void>;
   onLegalRequired(): void;
 };
@@ -141,21 +143,32 @@ export function createHttpClient(
     },
 
     async request(req) {
-      if (!req.auth || !adapter) return send(req, null);
-      let res = await send(req, adapter.getAccessToken());
+      const auth = adapter;
+      if (!req.auth || !auth) return send(req, null);
+      // A refresh already running means the stored token is expired: wait instead of spending a 401 on it.
+      await auth.pendingRefresh?.()?.catch(() => undefined);
+      const sent = auth.getAccessToken();
+      let res = await send(req, sent);
       if (res.status === 401 && errorCode(res.body) === 'auth.unauthenticated') {
-        const outcome = await adapter.refresh();
-        if (outcome.kind === 'unavailable') throw new ApiError({ code: outcome.code, message: outcome.code });
-        if (outcome.kind === 'rate_limited') {
-          throw new ApiError({
-            code: 'rate_limit.exceeded',
-            message: 'refresh rate limited',
-            details: { retry_after_seconds: outcome.retryAfterSeconds },
-          });
+        const current = auth.getAccessToken();
+        if (current !== null && current !== sent) {
+          // Another request already rotated the token while this one was in flight: reuse it, never rotate twice.
+          res = await send(req, current);
+        } else if (current !== null) {
+          const outcome = await auth.refresh();
+          if (outcome.kind === 'unavailable') throw new ApiError({ code: outcome.code, message: outcome.code });
+          if (outcome.kind === 'rate_limited') {
+            throw new ApiError({
+              code: 'rate_limit.exceeded',
+              message: 'refresh rate limited',
+              details: { retry_after_seconds: outcome.retryAfterSeconds },
+            });
+          }
+          // 'ended': the session layer already signed out, so hand back the 401.
+          // 'refreshed': retry once; a second 401 is returned as is.
+          if (outcome.kind === 'refreshed') res = await send(req, auth.getAccessToken());
         }
-        // 'ended': the session layer already signed out, so hand back the 401.
-        // 'refreshed': retry once; a second 401 is returned as is.
-        if (outcome.kind === 'refreshed') res = await send(req, adapter.getAccessToken());
+        // current === null: signed out meanwhile, hand back the 401.
       }
       await settle(res);
       return res;

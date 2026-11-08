@@ -327,3 +327,77 @@ describe('401 handling', () => {
     expect(adapter.onLegalRequired).toHaveBeenCalledTimes(1);
   });
 });
+
+const flushMicrotasks = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+};
+
+describe('late 401s after a refresh already ran', () => {
+  const unauthenticated = () => jsonResponse(401, errorBody('auth.unauthenticated'));
+
+  test('a 401 that resolves after the refresh completed does not refresh again and retries with the new bearer', async () => {
+    let token = 'old';
+    const adapter = makeAdapter({
+      getAccessToken: jest.fn(() => token),
+      refresh: jest.fn(async () => {
+        token = 'new';
+        return { kind: 'refreshed' } as RefreshResult;
+      }),
+    });
+    let release: (r: Response) => void = () => undefined;
+    const fetchImpl = jest
+      .fn()
+      // Request B leaves with the old token and its 401 arrives late.
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+      .mockResolvedValueOnce(jsonResponse(200, { data: 'ok' }));
+    const client = createHttpClient('http://api.test', fetchImpl);
+    client.setAuthAdapter(adapter);
+    const pending = client.request({ method: 'GET', path: '/v1/vehicles', auth: true });
+    await flushMicrotasks(); // B is on the wire with the old token
+    await adapter.refresh(); // request A's refresh settles first
+    release(unauthenticated());
+    expect((await pending).status).toBe(200);
+    expect(adapter.refresh).toHaveBeenCalledTimes(1);
+    expect(headerOf(fetchImpl.mock.calls[0], 'Authorization')).toBe('Bearer old');
+    expect(headerOf(fetchImpl.mock.calls[1], 'Authorization')).toBe('Bearer new');
+  });
+
+  test('a late 401 after the session was cleared returns the 401 without refreshing', async () => {
+    let token: string | null = 'old';
+    const adapter = makeAdapter({ getAccessToken: jest.fn(() => token) });
+    let release: (r: Response) => void = () => undefined;
+    const fetchImpl = jest.fn().mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)));
+    const client = createHttpClient('http://api.test', fetchImpl);
+    client.setAuthAdapter(adapter);
+    const pending = client.request({ method: 'GET', path: '/v1/me', auth: true });
+    await flushMicrotasks();
+    token = null;
+    release(unauthenticated());
+    expect((await pending).status).toBe(401);
+    expect(adapter.refresh).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a request started during a refresh waits for it and sends the new bearer', async () => {
+    let token = 'old';
+    let finish: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => {
+      finish = () => {
+        token = 'new';
+        resolve();
+      };
+    });
+    const adapter = makeAdapter({ getAccessToken: jest.fn(() => token), pendingRefresh: jest.fn(() => inFlight) });
+    const fetchImpl = jest.fn().mockResolvedValue(jsonResponse(200, { data: 'ok' }));
+    const client = createHttpClient('http://api.test', fetchImpl);
+    client.setAuthAdapter(adapter);
+    const pending = client.request({ method: 'GET', path: '/v1/me', auth: true });
+    await Promise.resolve();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    finish();
+    await pending;
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(headerOf(fetchImpl.mock.calls[0], 'Authorization')).toBe('Bearer new');
+    expect(adapter.refresh).not.toHaveBeenCalled();
+  });
+});
