@@ -131,6 +131,55 @@ export function checkCatalog(options = CATALOG_DEFAULTS) {
     }
   }
 
+  problems.push(...checkPlaceholders(apps));
+  return problems;
+}
+
+function flattenEntries(obj, prefix = '') {
+  return Object.entries(obj).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return isPlainObject(value) ? flattenEntries(value, path) : [[path, value]];
+  });
+}
+
+/** Placeholder names of a message, or null when it uses the wrong brace style for its app. */
+function placeholders(app, text) {
+  if (typeof text !== 'string') return [];
+  const pattern = app === 'web' ? /\{(\w+)\}/g : /\{\{(\w+)\}\}/g;
+  const names = [...text.matchAll(pattern)].map((m) => m[1]);
+  if (/[{}]/.test(text.replace(pattern, ''))) return null;
+  return [...new Set(names)].sort();
+}
+
+/** Placeholder names must match across all four files, in each app's own brace style. */
+function checkPlaceholders(apps) {
+  const problems = [];
+  const byKey = new Map();
+  for (const [app, locales] of Object.entries(apps)) {
+    for (const [file, messages] of Object.entries(locales)) {
+      for (const [key, text] of flattenEntries(messages)) {
+        if (!key.startsWith('errors.') && !key.startsWith('validation.')) continue;
+        const names = placeholders(app, text);
+        const label = `${app}/${file}`;
+        if (names === null) {
+          problems.push(`${label} ${key} uses the wrong placeholder style (web {name}, mobile {{name}})`);
+          continue;
+        }
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push({ label, names });
+      }
+    }
+  }
+  for (const [key, entries] of byKey) {
+    const reference = entries[0].names.join(',');
+    for (const { label, names } of entries.slice(1)) {
+      if (names.join(',') !== reference) {
+        problems.push(
+          `${key} placeholders differ: ${entries[0].label} has [${reference}], ${label} has [${names.join(',')}]`,
+        );
+      }
+    }
+  }
   return problems;
 }
 

@@ -1,22 +1,31 @@
 import { ApiError } from '@mypark/contracts';
 import { describe, expect, test } from 'vitest';
+import en from '@/i18n/messages/en.json';
 import esDO from '@/i18n/messages/es-DO.json';
 import { translateError, translateFieldMessage, type Translator } from './translate-error';
 
-function lookup(key: string): string | undefined {
-  let node: unknown = esDO;
-  for (const part of key.split('.')) {
-    if (typeof node !== 'object' || node === null) return undefined;
-    node = (node as Record<string, unknown>)[part];
-  }
-  return typeof node === 'string' ? node : undefined;
+function makeTranslator(messages: unknown): Translator {
+  const lookup = (key: string): string | undefined => {
+    let node: unknown = messages;
+    for (const part of key.split('.')) {
+      if (typeof node !== 'object' || node === null) return undefined;
+      node = (node as Record<string, unknown>)[part];
+    }
+    return typeof node === 'string' ? node : undefined;
+  };
+  return Object.assign(
+    (key: string, values: Record<string, string | number> = {}) =>
+      (lookup(key) ?? `MISSING:${key}`).replace(/\{(\w+)\}/g, (_, name: string) => {
+        // A placeholder with no value would reach the user as a raw token, so fail loudly.
+        if (!(name in values)) throw new Error(`${key}: no value passed for {${name}}`);
+        return String(values[name]);
+      }),
+    { has: (key: string) => lookup(key) !== undefined },
+  );
 }
 
-const t: Translator = Object.assign(
-  (key: string, values: Record<string, string | number> = {}) =>
-    (lookup(key) ?? `MISSING:${key}`).replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`)),
-  { has: (key: string) => lookup(key) !== undefined },
-);
+const t = makeTranslator(esDO);
+const tEn = makeTranslator(en);
 
 const apiError = (code: string, details: Record<string, unknown> = {}) =>
   new ApiError({ code, message: 'secret server text', details });
@@ -57,4 +66,16 @@ describe('translateFieldMessage', () => {
 
   test('an unknown errors: code uses errors.fallback', () =>
     expect(translateFieldMessage(t, 'errors:nope.nope')).toBe('Algo salió mal. Inténtalo de nuevo.'));
+});
+
+describe('english interpolation', () => {
+  test('min fills {param}', () => expect(translateFieldMessage(tEn, 'min:10')).toBe('Must be at least 10 characters.'));
+
+  test('limit_reached fills {limit}', () =>
+    expect(translateError(tEn, apiError('vehicle.limit_reached', { limit: 5 }))).toBe(
+      'You reached the limit of 5 vehicles.',
+    ));
+
+  test('a placeholder with no value fails instead of leaking a raw token', () =>
+    expect(() => translateError(tEn, apiError('rate_limit.exceeded'))).toThrow(/no value passed for \{seconds\}/));
 });

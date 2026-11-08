@@ -79,7 +79,8 @@ function writeCatalogFixture(name, overrides = {}) {
   mkdirSync(mobileDir, { recursive: true });
   const files = { web: catalog(), mobile: catalog(), ...overrides };
   for (const locale of ['es-DO', 'en']) {
-    writeFileSync(join(webDir, `${locale}.json`), JSON.stringify(files.web));
+    const web = locale === 'en' && files.webEn ? files.webEn : files.web;
+    writeFileSync(join(webDir, `${locale}.json`), JSON.stringify(web));
     writeFileSync(join(mobileDir, `${locale}.json`), JSON.stringify(files.mobile));
   }
   const errorCodesFile = join(base, 'error-codes.ts');
@@ -136,3 +137,41 @@ test('checkCatalog reports errors.* drift between web and mobile', () => {
 });
 
 test('checkCatalog passes on the real repo', () => assert.deepEqual(checkCatalog(), []));
+
+function withMessage(text) {
+  const messages = catalog();
+  messages.validation.required = text;
+  return messages;
+}
+
+test('checkCatalog passes when placeholders match in each app\'s own style', () => {
+  const problems = checkCatalog(
+    writeCatalogFixture('placeholders-ok', { web: withMessage('At least {param}'), mobile: withMessage('At least {{param}}') }),
+  );
+  assert.deepEqual(problems, []);
+});
+
+test('checkCatalog reports a mistyped placeholder name in one locale', () => {
+  const problems = checkCatalog(
+    writeCatalogFixture('placeholders-typo', {
+      web: withMessage('At least {param}'),
+      webEn: withMessage('At least {parm}'),
+      mobile: withMessage('At least {{param}}'),
+    }),
+  );
+  assert.ok(problems.some((p) => /validation\.required placeholders differ/.test(p) && /web\/en\.json/.test(p)), problems.join('\n'));
+});
+
+test('checkCatalog reports a mobile string that uses web brace style', () => {
+  const problems = checkCatalog(
+    writeCatalogFixture('placeholders-style', { web: withMessage('At least {param}'), mobile: withMessage('At least {param}') }),
+  );
+  assert.ok(problems.some((p) => /mobile\/.*validation\.required.*wrong placeholder style/.test(p)), problems.join('\n'));
+});
+
+test('checkCatalog reports a web string that uses mobile brace style', () => {
+  const problems = checkCatalog(
+    writeCatalogFixture('placeholders-style-web', { web: withMessage('At least {{param}}'), mobile: withMessage('At least {{param}}') }),
+  );
+  assert.ok(problems.some((p) => /web\/.*validation\.required.*wrong placeholder style/.test(p)), problems.join('\n'));
+});
