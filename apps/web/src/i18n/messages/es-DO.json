@@ -6,6 +6,11 @@
       "label": "Idioma",
       "es-DO": "Español",
       "en": "English"
+    },
+    "nav": {
+      "label": "Navegación principal",
+      "vehicles": "Vehículos",
+      "profile": "Perfil"
     }
   },
   "home": {
@@ -118,6 +123,70 @@
       "saving": "Guardando…",
       "cancel": "Cancelar"
     }
+  },
+  "profile": {
+    "title": "Mi perfil",
+    "emailHint": "Tu correo no se puede cambiar.",
+    "save": "Guardar cambios",
+    "saving": "Guardando…",
+    "saved": "Cambios guardados.",
+    "password": {
+      "title": "Contraseña",
+      "body": "Para cambiar tu contraseña te enviamos un código a tu correo.",
+      "link": "Cambiar mi contraseña"
+    },
+    "sessionTitle": "Sesión",
+    "danger": {
+      "title": "Eliminar cuenta",
+      "body": "Se eliminan de forma permanente tu cuenta, tus datos personales y tus vehículos. No se puede deshacer.",
+      "submit": "Eliminar mi cuenta",
+      "submitting": "Eliminando…"
+    }
+  },
+  "session": {
+    "logout": "Cerrar sesión",
+    "logoutAll": "Cerrar sesión en todos los dispositivos",
+    "loggingOut": "Cerrando sesión…",
+    "unavailable": {
+      "title": "Tu sesión no está disponible por ahora",
+      "body": "No pudimos renovar tu sesión en este momento. Tu cuenta está a salvo. Inténtalo de nuevo en un momento.",
+      "retry": "Intentar de nuevo"
+    }
+  },
+  "legalGate": {
+    "title": "Actualizamos nuestros textos legales",
+    "body": "Para seguir usando MyPark, lee y acepta los textos vigentes.",
+    "terms": "Términos de uso",
+    "privacy": "Política de privacidad",
+    "version": "Versión {version}",
+    "accept": "Aceptar y continuar",
+    "accepting": "Aceptando…",
+    "otherTitle": "¿Prefieres no aceptar?",
+    "otherBody": "Puedes cerrar sesión o eliminar tu cuenta."
+  },
+  "accountBlocked": {
+    "title": "Tu cuenta está suspendida",
+    "body": "No puedes usar MyPark mientras tu cuenta esté suspendida. Contacta a soporte para más información."
+  },
+  "forbidden": {
+    "title": "No tienes acceso",
+    "body": "Esta sección es solo para administradores.",
+    "backHome": "Volver al inicio"
+  },
+  "errorPage": {
+    "title": "Algo salió mal",
+    "retry": "Intentar de nuevo"
+  },
+  "admin": {
+    "title": "Administración",
+    "greeting": "Hola, {name}.",
+    "body": "Estás en el área de administración de MyPark."
+  },
+  "acceptInvitation": {
+    "title": "Activa tu cuenta de administración",
+    "intro": "Ingresa el código de tu invitación y elige una contraseña.",
+    "submit": "Activar cuenta",
+    "submitting": "Activando…"
   },
   "legal": {
     "demoNotice": "Texto de ejemplo para una demostración académica.",

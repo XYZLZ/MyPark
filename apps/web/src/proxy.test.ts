@@ -106,3 +106,29 @@ describe('proxy routing', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 });
+
+describe('proxy page guard', () => {
+  test('the page guard runs after the refresh', async () => {
+    // Access lapsed, refresh succeeds: the guard sees the new cookies, so no redirect to login.
+    const kept = await proxy(get('/es-DO/vehicles', EXPIRED));
+    expect(kept.headers.get('location')).toBeNull();
+    expect(kept.cookies.get('mp_access')?.value).toBe('access-1');
+
+    // Refresh ends the session: the guard sees no cookies, redirects, and the redirect still clears them.
+    refresh.mockResolvedValue({ kind: 'ended' });
+    const ended = await proxy(get('/es-DO/vehicles', EXPIRED));
+    expect(new URL(ended.headers.get('location') ?? '').pathname).toBe('/es-DO/login');
+    expect(ended.cookies.get('mp_refresh')).toMatchObject({ value: '', maxAge: 0 });
+  });
+
+  test('a freshly refreshed session is sent away from login', async () => {
+    const res = await proxy(get('/es-DO/login', EXPIRED));
+    expect(new URL(res.headers.get('location') ?? '').pathname).toBe('/es-DO/vehicles');
+    expect(res.cookies.get('mp_access')?.value).toBe('access-1');
+  });
+
+  test('API routes are never page-guarded', async () => {
+    const res = await proxy(get('/api/v1/vehicles'));
+    expect(res.headers.get('location')).toBeNull();
+  });
+});

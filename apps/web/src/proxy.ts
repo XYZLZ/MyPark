@@ -2,6 +2,7 @@ import createMiddleware from 'next-intl/middleware';
 import { NextRequest, NextResponse } from 'next/server';
 import { routing, unsupportedLocaleRedirect } from './i18n/routing';
 import { applySetCookies, withSessionCookieHeader } from './lib/session/cookies';
+import { guardPublicAndProtected } from './lib/session/page-guard';
 import { ensureSession } from './lib/session/refresh';
 
 const intl = createMiddleware(routing);
@@ -27,9 +28,12 @@ export default async function proxy(request: NextRequest): Promise<NextResponse>
 
   const session = await ensureSession(request);
   const headers = withSessionCookieHeader(request, session);
-  const response = isApi
-    ? NextResponse.next({ request: { headers } })
-    : intl(new NextRequest(request, { headers }));
+  const pageRequest = isApi ? null : new NextRequest(request, { headers });
+
+  // The page guard runs after the refresh, so it sees the cookies the page will see (spec 5.6).
+  // A redirect still carries the refresh outcome, e.g. cookies cleared by an ended session.
+  const guarded = pageRequest ? guardPublicAndProtected(pageRequest) : null;
+  const response = guarded ?? (pageRequest ? intl(pageRequest) : NextResponse.next({ request: { headers } }));
 
   applySetCookies(response, session);
   return response;

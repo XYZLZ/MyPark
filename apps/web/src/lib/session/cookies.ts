@@ -53,6 +53,11 @@ export function clearSessionCookies(res: NextResponse): void {
   }
 }
 
+/** Drops only the access cookie, so the next request makes the proxy refresh (spec 5.6). */
+export function clearAccessCookie(res: NextResponse): void {
+  res.cookies.set(ACCESS_COOKIE, '', { ...sessionCookie(), maxAge: 0 });
+}
+
 /** Readable by JS on purpose: the client echoes it in `X-CSRF-Token` (double submit). */
 export function setCsrfCookie(res: NextResponse, value: string): void {
   res.cookies.set(CSRF_COOKIE, value, {

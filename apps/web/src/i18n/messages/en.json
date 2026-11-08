@@ -6,6 +6,11 @@
       "label": "Language",
       "es-DO": "Español",
       "en": "English"
+    },
+    "nav": {
+      "label": "Main navigation",
+      "vehicles": "Vehicles",
+      "profile": "Profile"
     }
   },
   "home": {
@@ -118,6 +123,70 @@
       "saving": "Saving…",
       "cancel": "Cancel"
     }
+  },
+  "profile": {
+    "title": "My profile",
+    "emailHint": "Your email cannot be changed.",
+    "save": "Save changes",
+    "saving": "Saving…",
+    "saved": "Changes saved.",
+    "password": {
+      "title": "Password",
+      "body": "To change your password we send a code to your email.",
+      "link": "Change my password"
+    },
+    "sessionTitle": "Session",
+    "danger": {
+      "title": "Delete account",
+      "body": "This permanently deletes your account, your personal data and your vehicles. It cannot be undone.",
+      "submit": "Delete my account",
+      "submitting": "Deleting…"
+    }
+  },
+  "session": {
+    "logout": "Log out",
+    "logoutAll": "Log out on all devices",
+    "loggingOut": "Logging out…",
+    "unavailable": {
+      "title": "Your session is temporarily unavailable",
+      "body": "We could not refresh your session right now. Your account is safe. Try again in a moment.",
+      "retry": "Try again"
+    }
+  },
+  "legalGate": {
+    "title": "We updated our legal texts",
+    "body": "To keep using MyPark, read and accept the current texts.",
+    "terms": "Terms of use",
+    "privacy": "Privacy policy",
+    "version": "Version {version}",
+    "accept": "Accept and continue",
+    "accepting": "Accepting…",
+    "otherTitle": "Prefer not to accept?",
+    "otherBody": "You can log out or delete your account."
+  },
+  "accountBlocked": {
+    "title": "Your account is suspended",
+    "body": "You cannot use MyPark while your account is suspended. Contact support for more information."
+  },
+  "forbidden": {
+    "title": "You do not have access",
+    "body": "This section is only for administrators.",
+    "backHome": "Back to home"
+  },
+  "errorPage": {
+    "title": "Something went wrong",
+    "retry": "Try again"
+  },
+  "admin": {
+    "title": "Administration",
+    "greeting": "Hello, {name}.",
+    "body": "You are in the MyPark administration area."
+  },
+  "acceptInvitation": {
+    "title": "Activate your administrator account",
+    "intro": "Enter the code from your invitation and choose a password.",
+    "submit": "Activate account",
+    "submitting": "Activating…"
   },
   "legal": {
     "demoNotice": "Sample text for an academic demo.",

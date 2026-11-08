@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   turbopack: { root: monorepoRoot },
   // @mypark/contracts ships TypeScript source with no build step.
   transpilePackages: ['@mypark/contracts'],
+  // `forbidden()` for a real 403 on the admin area (CC-7).
+  experimental: { authInterrupts: true },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },
