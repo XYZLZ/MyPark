@@ -243,20 +243,21 @@ func TestVehicles_ChecksAndActivePlateUniqueness(t *testing.T) {
 	uid := newUserID(t, pool, "a@x.do")
 	const ins = `insert into vehicles (user_id, plate_normalized, plate_display, make, model, color)
 		values ($1, $2, $3, $4, 'Corolla', 'Gris')`
-	for name, tc := range map[string]struct {
-		norm, disp, make string
-		want             string
+	// A slice, not a map: "duplicate active" depends on "valid" having run first.
+	for _, tc := range []struct {
+		name, norm, disp, make string
+		want                   string
 	}{
-		"lowercase normalized": {"abc123", "abc123", "Toyota", sqlStateCheckViolation},
-		"one char":             {"A", "A1", "Toyota", sqlStateCheckViolation},
-		"eleven chars":         {"ABCDEFGHIJK", "ABCDEFGHIJK", "Toyota", sqlStateCheckViolation},
-		"empty make":           {"ABC123", "ABC123", "", sqlStateCheckViolation},
-		"display too long":     {"ABC123", strings.Repeat("-", 16), "Toyota", sqlStateCheckViolation},
-		"valid":                {"ABC123", "abc-123", "Toyota", ""},
-		"duplicate active":     {"ABC123", "ABC 123", "Toyota", sqlStateUniqueViolation},
+		{"lowercase normalized", "abc123", "abc123", "Toyota", sqlStateCheckViolation},
+		{"one char", "A", "A1", "Toyota", sqlStateCheckViolation},
+		{"eleven chars", "ABCDEFGHIJK", "ABCDEFGHIJK", "Toyota", sqlStateCheckViolation},
+		{"empty make", "ABC123", "ABC123", "", sqlStateCheckViolation},
+		{"display too long", "ABC123", strings.Repeat("-", 16), "Toyota", sqlStateCheckViolation},
+		{"valid", "ABC123", "abc-123", "Toyota", ""},
+		{"duplicate active", "ABC123", "ABC 123", "Toyota", sqlStateUniqueViolation},
 	} {
 		if got := execCode(t, pool, ins, uid, tc.norm, tc.disp, tc.make); got != tc.want {
-			t.Errorf("%s: SQLSTATE = %q, want %q", name, got, tc.want)
+			t.Errorf("%s: SQLSTATE = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 	if got := execCode(t, pool, `update vehicles set deleted_at = now() where plate_normalized = 'ABC123'`); got != "" {
