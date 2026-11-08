@@ -49,6 +49,12 @@
   --color-disabled-bg: #e3e7ee;
   /* TODO(brand): replace with official Banreservas value */
   --color-disabled-ink: #5f6c83;
+  /* Barlow: one family per weight on native (spec §9.4). Names match @expo-google-fonts exports. */
+  --font-barlow-regular: Barlow_400Regular;
+  --font-barlow-medium: Barlow_500Medium;
+  --font-barlow-semibold: Barlow_600SemiBold;
+  --font-barlow-bold: Barlow_700Bold;
+  --font-plate: BarlowSemiCondensed_600SemiBold;
   --radius-control: 12px;
   --radius-panel: 16px;
   --radius-plate: 10px;

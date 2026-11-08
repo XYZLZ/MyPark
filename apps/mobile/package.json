@@ -13,6 +13,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@expo-google-fonts/barlow": "0.4.1",
+    "@expo-google-fonts/barlow-semi-condensed": "0.4.1",
+    "@hookform/resolvers": "7.0.3",
     "@mypark/contracts": "*",
     "@tanstack/react-query": "5.106.1",
     "expo": "~58.0.23",
@@ -28,6 +31,7 @@
     "i18next": "26.7.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "react-hook-form": "7.91.0",
     "react-i18next": "17.1.13",
     "react-native": "0.88.1",
     "react-native-gesture-handler": "~3.3.0",
