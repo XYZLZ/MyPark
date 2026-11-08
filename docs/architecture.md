@@ -480,7 +480,7 @@ src/
 | Request ID | Accepts `X-Request-Id` or generates a UUIDv7; echoed in responses and error envelopes |
 | Health | `/healthz` (process alive), `/readyz` (DB reachable, migrations at the expected version, listener connected) |
 | Metrics | Phase 1: counters exposed at `/metrics` (Prometheus text) for events/s, SSE clients and notify latency **(our call)** |
-| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_PRIVATE_KEY`, `SECRETBOX_KEY`, `QR_HMAC_KEY`, `DATABASE_URL`, `SMTP_*` |
+| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`; later phases add `SECRETBOX_KEY` and `QR_HMAC_KEY` |
 
 ---
 
