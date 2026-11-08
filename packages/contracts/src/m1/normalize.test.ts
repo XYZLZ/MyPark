@@ -12,6 +12,14 @@ describe('plates', () => {
     expect(isValidPlate('A12345678901')).toBe(false);
   });
 
+  test('rejects characters the server rejects', () => {
+    expect(isValidPlate('AıB')).toBe(false);
+    expect(isValidPlate('AſB')).toBe(false);
+    expect(isValidPlate('A\tB')).toBe(false);
+    expect(isValidPlate('a-1 23456')).toBe(true);
+    expect(normalizePlate('a-1 23456')).toBe('A123456');
+  });
+
   test('rejects a plate made only of separators', () => {
     expect(isValidPlate('--')).toBe(false);
     const result = vehicleInputSchema.safeParse({ plate: '--', make: 'Kia', model: 'Rio', color: 'Red' });
