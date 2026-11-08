@@ -767,6 +767,27 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
+        /** @description An unexpected server error. The cause is logged server-side and never returned. */
+        InternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "internal.unexpected",
+                 *         "message": "internal error",
+                 *         "details": {}
+                 *       },
+                 *       "meta": {
+                 *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
     };
     parameters: never;
     requestBodies: never;
@@ -796,6 +817,7 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     getReadiness: {
@@ -819,6 +841,7 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
             /** @description The service is not ready. error.code is "health.not_ready". */
             503: {
                 headers: {
@@ -866,6 +889,7 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     register: {
@@ -925,6 +949,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     verifyEmail: {
@@ -952,6 +977,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationOrCodeInvalid"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     resendVerification: {
@@ -973,6 +999,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     login: {
@@ -1035,6 +1062,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     refreshSession: {
@@ -1074,8 +1102,8 @@ export interface operations {
             };
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
-            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     logout: {
@@ -1096,6 +1124,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     logoutAll: {
@@ -1116,6 +1145,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     forgotPassword: {
@@ -1137,6 +1167,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     resetPassword: {
@@ -1164,6 +1195,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationOrCodeInvalid"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     acceptInvitation: {
@@ -1191,6 +1223,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationOrCodeInvalid"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     getMe: {
@@ -1216,6 +1249,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     deleteMe: {
@@ -1252,6 +1286,7 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
         };
     };
     updateMe: {
@@ -1285,6 +1320,7 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
         };
     };
     acceptLegal: {
@@ -1337,6 +1373,7 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
         };
     };
     listVehicles: {
@@ -1362,6 +1399,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["ForbiddenLegal"];
+            500: components["responses"]["InternalError"];
         };
     };
     createVehicle: {
@@ -1405,6 +1443,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     getVehicle: {
@@ -1434,6 +1473,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["ForbiddenLegal"];
             404: components["responses"]["VehicleNotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     deleteVehicle: {
@@ -1480,6 +1520,7 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     updateVehicle: {
@@ -1539,6 +1580,7 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     listAdmins: {
@@ -1570,6 +1612,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
         };
     };
     createAdmin: {
@@ -1636,6 +1679,7 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
         };
     };
 }
