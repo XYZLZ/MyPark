@@ -57,3 +57,13 @@ describe('guardPublicAndProtected', () => {
     expect(guardPublicAndProtected(get('/es-DO/legal/terms'))).toBeNull();
   });
 });
+
+describe('guardPublicAndProtected session_expired', () => {
+  test.each(['/es-DO/login', '/en/register', '/es-DO/admin/login'])('%s?reason=session_expired is not bounced with a live access cookie', (path) => {
+    expect(guardPublicAndProtected(get(`${path}?reason=session_expired`, 'mp_access=a; mp_refresh=r'))).toBeNull();
+  });
+
+  test('any other reason is still bounced', () => {
+    expect(guardPublicAndProtected(get('/es-DO/login?reason=other', 'mp_access=a'))).not.toBeNull();
+  });
+});

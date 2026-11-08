@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { VehicleForm } from '@/features/vehicles/VehicleForm';
 import { redirect } from '@/i18n/navigation';
+import { RefreshOnMount } from '@/features/session/RefreshOnMount';
 import { resolveLocale } from '@/i18n/routing';
 import { getVehicle } from '@/lib/api/server';
 import { requireDriver } from '@/lib/auth/guards';
@@ -16,7 +17,7 @@ export default async function EditVehiclePage({ params }: { params: Promise<{ id
   const { id } = await params;
   const locale = await getLocale();
   const gate = await requireDriver(resolveLocale(locale));
-  if (gate.state !== 'ready') return null;
+  if (gate.state !== 'ready') return <RefreshOnMount />;
 
   let vehicle: Vehicle;
   try {

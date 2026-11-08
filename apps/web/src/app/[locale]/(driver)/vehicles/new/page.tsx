@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { VehicleForm } from '@/features/vehicles/VehicleForm';
+import { RefreshOnMount } from '@/features/session/RefreshOnMount';
 import { resolveLocale } from '@/i18n/routing';
 import { requireDriver } from '@/lib/auth/guards';
 
@@ -11,7 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function NewVehiclePage() {
   const gate = await requireDriver(resolveLocale(await getLocale()));
-  if (gate.state !== 'ready') return null;
+  if (gate.state !== 'ready') return <RefreshOnMount />;
 
   return <VehicleForm mode="create" />;
 }

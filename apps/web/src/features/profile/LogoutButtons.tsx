@@ -11,8 +11,15 @@ import { translateError, type Translator } from '@/lib/i18n/translate-error';
 
 const ROUTES = { this: '/api/v1/auth/logout', both: '/api/v1/auth/logout-all' } as const;
 
-/** Any answer at all means done (PF3): the BFF clears the cookies whatever the status was. */
-const anyStatus = () => undefined;
+/**
+ * Any answer from Go means done (PF3): the BFF clears the cookies whatever the status was,
+ * a 403 `auth.account_suspended` included. The one exception is the BFF's own CSRF denial,
+ * a 403 `auth.forbidden` returned before anything was cleared: the user is still signed in.
+ */
+function parseLogout(body: unknown, status?: number): void {
+  const code = (body as { error?: { code?: unknown } } | undefined)?.error?.code;
+  if (status === 403 && code === 'auth.forbidden') throw new ApiError({ code, message: 'csrf denied', status });
+}
 
 export function LogoutButtons({ scope }: { scope: 'this' | 'both' }) {
   const t = useTranslations();
@@ -27,10 +34,10 @@ export function LogoutButtons({ scope }: { scope: 'this' | 'both' }) {
     setBusy(true);
     setFailure(null);
     try {
-      await apiFetch(ROUTES[scope], anyStatus, { method: 'POST' });
+      await apiFetch(ROUTES[scope], parseLogout, { method: 'POST' });
       hardNavigate(`/${locale}`);
     } catch (error) {
-      // Only a request that never got an answer lands here: nothing was cleared, so stay.
+      // A request that never got an answer, or a CSRF denial: nothing was cleared, so stay.
       const apiError = error instanceof ApiError ? error : new ApiError({ code: 'client.network', message: 'logout failed' });
       setFailure(translateError(t as Translator, apiError));
       inFlight.current = false;

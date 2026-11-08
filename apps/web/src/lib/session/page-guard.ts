@@ -42,7 +42,11 @@ export function guardPublicAndProtected(request: NextRequest): NextResponse | nu
   const access = Boolean(request.cookies.get(ACCESS_COOKIE)?.value);
   const refresh = Boolean(request.cookies.get(REFRESH_COOKIE)?.value);
 
-  if (access && SIGNED_OUT_ONLY.has(path)) return redirectTo(request, `/${locale}/vehicles`);
+  // `/api/session/end` gives up with this reason while the access cookie may still be live:
+  // bouncing it to Vehicles would restart the loop it just ended.
+  const sessionEnded = request.nextUrl.searchParams.get('reason') === 'session_expired';
+
+  if (access && !sessionEnded && SIGNED_OUT_ONLY.has(path)) return redirectTo(request, `/${locale}/vehicles`);
 
   if (access || refresh || path === ADMIN_LOGIN) return null;
   const area = PROTECTED.find(({ prefix }) => isUnder(path, prefix));

@@ -49,6 +49,26 @@ describe('LegalGate', () => {
     expect(router.refresh).toHaveBeenCalledTimes(1);
   });
 
+  test('accepting again after a 409 sends the re-read versions', async () => {
+    const fetchMock = stubFetch(jsonResponse(409, errorBody('legal.version_outdated')), jsonResponse(204));
+    const view = renderGate();
+
+    fireEvent.click(screen.getByRole('button', { name: en.legalGate.accept }));
+    await screen.findByRole('alert');
+    expect(sentBody(fetchMock, 0)).toMatchObject({ terms_version: legalCurrentFixture.terms.version });
+
+    // The server re-render hands the gate new versions as props.
+    const newer = {
+      terms: { ...legalCurrentFixture.terms, version: '2027-01-01' },
+      privacy: { ...legalCurrentFixture.privacy, version: '2027-02-02' },
+    };
+    view.rerender(<LegalGate legal={newer} user={userFixture} />);
+    fireEvent.click(screen.getByRole('button', { name: en.legalGate.accept }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(sentBody(fetchMock, 1)).toEqual({ terms_version: '2027-01-01', privacy_version: '2027-02-02' });
+  });
+
   test('logout works behind the gate', async () => {
     const fetchMock = stubFetch(jsonResponse(204));
     renderGate();

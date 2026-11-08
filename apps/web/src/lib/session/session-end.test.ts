@@ -32,21 +32,58 @@ describe('handleSessionEnd', () => {
     expect(cookies).toMatch(/mp_refresh=;/);
   });
 
-  test('unauthenticated deletes only mp_access and retries next once', async () => {
+  test('unauthenticated deletes only mp_access, sets the retry marker and returns to next', async () => {
     stubFetch(jsonResponse(401, errorBody('auth.unauthenticated')));
     const res = await handleSessionEnd(end({}, LIVE));
     expect(to(res).pathname).toBe('/es-DO/vehicles');
-    expect(to(res).searchParams.get('retried')).toBe('1');
-    const cookies = setCookies(res).join('\n');
-    expect(cookies).toMatch(/mp_access=;/);
-    expect(cookies).not.toMatch(/mp_refresh/);
+    expect(to(res).search).toBe('');
+    const cookies = setCookies(res);
+    expect(cookies.find((c) => c.startsWith('mp_access='))).toMatch(/^mp_access=;.*Max-Age=0/i);
+    expect(cookies.find((c) => c.startsWith('mp_session_retry='))).toMatch(/^mp_session_retry=1;.*Max-Age=60.*HttpOnly/i);
+    expect(cookies.join('\n')).not.toMatch(/mp_refresh/);
   });
 
-  test('a second unauthenticated with retried=1 goes to login without clearing mp_refresh', async () => {
+  test('a second 401 with the marker goes to login, clears the marker and leaves mp_access and mp_refresh alone', async () => {
     stubFetch(jsonResponse(401, errorBody('auth.unauthenticated')));
-    const res = await handleSessionEnd(end({ next: '/es-DO/vehicles?retried=1' }, LIVE));
+    const res = await handleSessionEnd(end({}, `${LIVE}; mp_session_retry=1`));
     expect(to(res).pathname).toBe('/es-DO/login');
-    expect(setCookies(res).join('\n')).not.toMatch(/mp_refresh/);
+    expect(to(res).searchParams.get('reason')).toBe('session_expired');
+    const cookies = setCookies(res).join('\n');
+    expect(cookies).toMatch(/mp_session_retry=;.*Max-Age=0/i);
+    expect(cookies).not.toMatch(/mp_access|mp_refresh/);
+  });
+
+  test.each([
+    ['an unknown code', () => jsonResponse(401, errorBody('auth.something_new'))],
+    ['a malformed body', () => new Response('<html>nope</html>', { status: 401 })],
+  ])('a 401 with %s retries once, leaves mp_access alone, then gives up', async (_name, answer) => {
+    stubFetch(answer());
+    const first = await handleSessionEnd(end({}, LIVE));
+    expect(to(first).pathname).toBe('/es-DO/vehicles');
+    expect(setCookies(first).join('\n')).toMatch(/mp_session_retry=1/);
+    expect(setCookies(first).join('\n')).not.toMatch(/mp_access|mp_refresh/);
+
+    stubFetch(answer());
+    const second = await handleSessionEnd(end({}, `${LIVE}; mp_session_retry=1`));
+    expect(to(second).pathname).toBe('/es-DO/login');
+    expect(setCookies(second).join('\n')).not.toMatch(/mp_access|mp_refresh/);
+  });
+
+  test('session_revoked with the marker still clears both cookies and the marker', async () => {
+    stubFetch(jsonResponse(401, errorBody('auth.session_revoked')));
+    const res = await handleSessionEnd(end({}, `${LIVE}; mp_session_retry=1`));
+    const cookies = setCookies(res).join('\n');
+    expect(cookies).toMatch(/mp_access=;/);
+    expect(cookies).toMatch(/mp_refresh=;/);
+    expect(cookies).toMatch(/mp_session_retry=;/);
+  });
+
+  test('a 200 with the marker returns to next and drops the marker', async () => {
+    stubFetch(jsonResponse(200, successBody(userFixture)));
+    const res = await handleSessionEnd(end({}, `${LIVE}; mp_session_retry=1`));
+    expect(to(res).pathname).toBe('/es-DO/vehicles');
+    expect(setCookies(res).join('\n')).toMatch(/mp_session_retry=;/);
+    expect(setCookies(res).join('\n')).not.toMatch(/mp_access|mp_refresh/);
   });
 
   test('a lapsed access cookie never clears the refresh cookie', async () => {
@@ -79,11 +116,19 @@ describe('handleSessionEnd', () => {
     expect(to(res).pathname).toBe('/es-DO');
   });
 
-  test('session end works for a GET from another site without logging out a valid session', async () => {
-    stubFetch(jsonResponse(200, successBody(userFixture)));
-    const request = new NextRequest(end({}, LIVE), { headers: { cookie: LIVE, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' } });
+
+  test('a link from another site is served like any other: the API sees only the bearer, and nothing is cleared', async () => {
+    const fetchMock = stubFetch(jsonResponse(200, successBody(userFixture)));
+    const request = new NextRequest(end({}, LIVE), {
+      headers: { cookie: LIVE, origin: 'https://evil.example', referer: 'https://evil.example/', 'sec-fetch-site': 'cross-site' },
+    });
     const res = await handleSessionEnd(request);
+
     expect(to(res).pathname).toBe('/es-DO/vehicles');
     expect(setCookies(res)).toEqual([]);
+    const sent = new Headers(fetchMock.mock.calls[0]![1]!.headers);
+    expect(sent.get('authorization')).toBe('Bearer a');
+    expect(sent.get('cookie')).toBeNull();
+    expect(sent.get('origin')).toBeNull();
   });
 });

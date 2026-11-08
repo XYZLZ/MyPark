@@ -33,6 +33,18 @@ describe('LogoutButtons', () => {
     await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith('/en'));
   });
 
+  test('the BFF CSRF denial (403 auth.forbidden) is not a logout: show an error and stay', async () => {
+    stubFetch(jsonResponse(403, errorBody('auth.forbidden')));
+    renderWithProviders(<LogoutButtons scope="this" />, { locale: 'en' });
+
+    fireEvent.click(screen.getByRole('button', { name: en.session.logout }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(en.errors.auth.forbidden);
+    expect(hardNavigate).not.toHaveBeenCalled();
+    // The button is usable again.
+    expect(screen.getByRole('button', { name: en.session.logout })).toBeEnabled();
+  });
+
   test('a double click sends one request', async () => {
     const fetchMock = stubFetch(jsonResponse(204));
     renderWithProviders(<LogoutButtons scope="this" />, { locale: 'en' });

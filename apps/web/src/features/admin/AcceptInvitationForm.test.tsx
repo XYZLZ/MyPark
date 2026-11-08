@@ -61,4 +61,29 @@ describe('AcceptInvitationForm', () => {
     expect(await screen.findByText(en.errors.auth.code_invalid)).toBeInTheDocument();
     expect(screen.getByLabelText(F.code)).toHaveAttribute('aria-invalid', 'true');
   });
+
+  test('a malformed code is rejected on the client before any request', async () => {
+    const fetchMock = stubFetch(jsonResponse(204));
+    renderForm();
+
+    fill(F.email, 'admin@example.do');
+    fill(F.code, '12ab');
+    fill(F.password, 'Sup3rSecret!!');
+    fireEvent.click(screen.getByRole('button', { name: en.acceptInvitation.submit }));
+
+    expect(await screen.findByText(en.validation.code6)).toBeInTheDocument();
+    expect(screen.getByLabelText(F.code)).toHaveAttribute('aria-invalid', 'true');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('429 shows the wait time and locks submit', async () => {
+    stubFetch(jsonResponse(429, errorBody('rate_limit.exceeded', { retry_after_seconds: 42 })));
+    renderForm();
+
+    fillAll();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Try again in 42 s.');
+    expect(screen.getByRole('button', { name: en.acceptInvitation.submit })).toBeDisabled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
 });

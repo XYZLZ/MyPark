@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { VehiclesScreen } from '@/features/vehicles/VehiclesScreen';
+import { RefreshOnMount } from '@/features/session/RefreshOnMount';
 import { resolveLocale } from '@/i18n/routing';
 import { listVehicles } from '@/lib/api/server';
 import { requireDriver } from '@/lib/auth/guards';
@@ -18,8 +19,8 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 export default async function VehiclesPage({ searchParams }: { searchParams: SearchParams }) {
   const { notice } = await searchParams;
   const gate = await requireDriver(resolveLocale(await getLocale()));
-  // The layout shows the gate, the blocked panel or the retry panel instead; no data is read for them.
-  if (gate.state !== 'ready') return null;
+  // No data is read for a non-ready state; a refresh re-runs the layout, which shows the right panel.
+  if (gate.state !== 'ready') return <RefreshOnMount />;
   const initial = await listVehicles();
   const fetchedAt = timestamp();
 

@@ -2,7 +2,14 @@
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RefreshOutcome, TokenPair } from '@/lib/session/cookies';
+import { guardPublicAndProtected } from './lib/session/page-guard';
 import proxy from './proxy';
+
+// The real guard, wrapped so a test can see whether the proxy called it.
+vi.mock('./lib/session/page-guard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/session/page-guard')>();
+  return { guardPublicAndProtected: vi.fn(actual.guardPublicAndProtected) };
+});
 
 // Only the coordinator is replaced: it is installed where the singleton lives.
 const SINGLETON = Symbol.for('mypark.session.refresh');
@@ -127,8 +134,21 @@ describe('proxy page guard', () => {
     expect(res.cookies.get('mp_access')?.value).toBe('access-1');
   });
 
-  test('API routes are never page-guarded', async () => {
-    const res = await proxy(get('/api/v1/vehicles'));
+  test('API routes never reach the page guard, pages always do', async () => {
+    await proxy(get('/api/v1/vehicles'));
+    await proxy(get('/api/session/end'));
+    expect(guardPublicAndProtected).not.toHaveBeenCalled();
+
+    await proxy(get('/es-DO/vehicles', 'mp_access=a'));
+    expect(guardPublicAndProtected).toHaveBeenCalledTimes(1);
+  });
+
+  test('login with reason=session_expired is not bounced, even right after a refresh', async () => {
+    const res = await proxy(get('/es-DO/login?reason=session_expired', EXPIRED));
     expect(res.headers.get('location')).toBeNull();
+    expect(res.cookies.get('mp_access')?.value).toBe('access-1');
+    // Without the reason, the same live session is sent to Vehicles.
+    const bounced = await proxy(get('/es-DO/login', EXPIRED));
+    expect(new URL(bounced.headers.get('location') ?? '').pathname).toBe('/es-DO/vehicles');
   });
 });

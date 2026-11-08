@@ -58,6 +58,18 @@ export function clearAccessCookie(res: NextResponse): void {
   res.cookies.set(ACCESS_COOKIE, '', { ...sessionCookie(), maxAge: 0 });
 }
 
+/** Marks that `/api/session/end` already sent this browser back once, so a second 401 ends the loop. */
+export const SESSION_RETRY_COOKIE = 'mp_session_retry';
+const SESSION_RETRY_SECONDS = 60;
+
+export function setSessionRetryCookie(res: NextResponse): void {
+  res.cookies.set(SESSION_RETRY_COOKIE, '1', { ...sessionCookie(), maxAge: SESSION_RETRY_SECONDS });
+}
+
+export function clearSessionRetryCookie(res: NextResponse): void {
+  res.cookies.set(SESSION_RETRY_COOKIE, '', { ...sessionCookie(), maxAge: 0 });
+}
+
 /** Readable by JS on purpose: the client echoes it in `X-CSRF-Token` (double submit). */
 export function setCsrfCookie(res: NextResponse, value: string): void {
   res.cookies.set(CSRF_COOKIE, value, {
