@@ -3,6 +3,7 @@ import { errorBody, successBody, vehicleFixture } from '@mypark/contracts/fixtur
 import type { NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { bffRequest } from '@/testing/bff-request';
+import { BFF_ENTRIES } from './allowlist';
 import { handleBff } from './handler';
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -51,17 +52,15 @@ describe('routing and CSRF', () => {
   });
 
   const ID = vehicleFixture.id;
-  const mutating: Array<[string, string[]]> = [
-    ['POST', ['auth', 'register']],
-    ['POST', ['auth', 'logout']],
-    ['POST', ['auth', 'logout-all']],
-    ['PATCH', ['me']],
-    ['DELETE', ['me']],
-    ['POST', ['me', 'legal-acceptance']],
-    ['POST', ['vehicles']],
-    ['PATCH', ['vehicles', ID]],
-    ['DELETE', ['vehicles', ID]],
-  ];
+  // Derived from the allow-list so a new mutating route cannot be left out.
+  const mutating: Array<[string, string[]]> = BFF_ENTRIES.filter((e) => e.method !== 'GET').map((e) => [
+    e.method,
+    e.path.split('/').map((part) => (part === ':id' ? ID : part)),
+  ]);
+
+  test('covers all 14 mutating allow-list routes', () => {
+    expect(mutating).toHaveLength(14);
+  });
 
   test.each(mutating)('%s %j requires Origin and a matching CSRF token', async (method, segments) => {
     const path = `/api/v1/${segments.join('/')}`;

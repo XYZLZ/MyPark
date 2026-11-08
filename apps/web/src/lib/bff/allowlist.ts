@@ -12,10 +12,11 @@ export const DEFAULT_TIMEOUT_MS = 5_000;
 const ID = ':id';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type Entry = { method: string; path: string; auth: BffRoute['auth']; timeoutMs?: number; after?: BffRoute['after'] };
+export type Entry = { method: string; path: string; auth: BffRoute['auth']; timeoutMs?: number; after?: BffRoute['after'] };
 
 // Spec 5.5. Paths are relative to /api/v1. Login and session/end have their own handlers.
-const ENTRIES: Entry[] = [
+/** The allow-list itself, exported so tests can iterate every route. */
+export const BFF_ENTRIES: readonly Entry[] = [
   { method: 'POST', path: 'auth/register', auth: 'public', timeoutMs: ARGON2_TIMEOUT_MS },
   { method: 'POST', path: 'auth/verify', auth: 'public' },
   { method: 'POST', path: 'auth/verify/resend', auth: 'public' },
@@ -42,7 +43,7 @@ const ENTRIES: Entry[] = [
  * a separator, a dot-dot or anything else that reshapes the upstream path.
  */
 export function matchBffRoute(method: string, segments: string[]): BffRoute | null {
-  for (const entry of ENTRIES) {
+  for (const entry of BFF_ENTRIES) {
     if (entry.method !== method) continue;
     const pattern = entry.path.split('/');
     if (pattern.length !== segments.length) continue;
