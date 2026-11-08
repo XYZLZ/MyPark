@@ -20,5 +20,67 @@
     "title": "Page not found",
     "body": "We could not find what you were looking for. The link may be incomplete, or the page may no longer exist.",
     "backHome": "Back to home"
+  },
+  "errors": {
+    "fallback": "Something went wrong. Please try again.",
+    "auth": {
+      "account_suspended": "Your account is suspended. Contact support.",
+      "code_invalid": "The code is not valid or has expired.",
+      "email_not_verified": "Verify your email address to continue.",
+      "forbidden": "You do not have permission to do this.",
+      "invalid_credentials": "The email or password is not correct.",
+      "password_incorrect": "The password is not correct.",
+      "refresh_invalid": "Your session ended. Log in again.",
+      "session_revoked": "Your session ended. Log in again.",
+      "unauthenticated": "Log in to continue."
+    },
+    "health": {
+      "not_ready": "The service is starting. Try again in a few seconds."
+    },
+    "http": {
+      "invalid_json": "We could not process the request.",
+      "method_not_allowed": "That action is not allowed.",
+      "not_found": "We could not find what you were looking for.",
+      "payload_too_large": "The request is too large.",
+      "unsupported_media_type": "We could not process the request."
+    },
+    "internal": {
+      "unexpected": "Something went wrong on our side. Please try again."
+    },
+    "legal": {
+      "acceptance_required": "You must accept the terms and the privacy policy to continue.",
+      "version_outdated": "The legal texts changed. Read and accept them again."
+    },
+    "rate_limit": {
+      "exceeded": "Too many attempts. Try again in {seconds} s."
+    },
+    "user": {
+      "email_taken": "We could not complete the sign-up with that email."
+    },
+    "validation": {
+      "failed": "Check the highlighted fields."
+    },
+    "vehicle": {
+      "in_use": "This vehicle is in use and cannot be deleted.",
+      "limit_reached": "You reached the limit of {limit} vehicles.",
+      "not_found": "We could not find that vehicle.",
+      "plate_taken": "That plate is already registered."
+    },
+    "client": {
+      "network": "We could not connect. Check your connection and try again.",
+      "timeout": "The request took too long. Please try again."
+    }
+  },
+  "validation": {
+    "required": "This field is required.",
+    "email": "Enter a valid email address.",
+    "min": "Must be at least {param} characters.",
+    "max": "Must be at most {param} characters.",
+    "oneof": "Choose a valid option.",
+    "phone": "Enter a valid phone number, for example +18095551234.",
+    "code6": "The code has 6 digits.",
+    "password_common": "That password is too common. Choose another.",
+    "plate": "Use only letters and numbers, 2 to 10 characters.",
+    "unknown": "Check this field."
   }
 }

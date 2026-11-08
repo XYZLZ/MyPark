@@ -7,5 +7,67 @@
     "healthy": "API: operativa",
     "not_ready": "API: iniciando",
     "unavailable": "API: no disponible"
+  },
+  "errors": {
+    "fallback": "Algo salió mal. Inténtalo de nuevo.",
+    "auth": {
+      "account_suspended": "Tu cuenta está suspendida. Contacta a soporte.",
+      "code_invalid": "El código no es válido o ya venció.",
+      "email_not_verified": "Verifica tu correo electrónico para continuar.",
+      "forbidden": "No tienes permiso para hacer esto.",
+      "invalid_credentials": "El correo o la contraseña no son correctos.",
+      "password_incorrect": "La contraseña no es correcta.",
+      "refresh_invalid": "Tu sesión terminó. Inicia sesión de nuevo.",
+      "session_revoked": "Tu sesión terminó. Inicia sesión de nuevo.",
+      "unauthenticated": "Inicia sesión para continuar."
+    },
+    "health": {
+      "not_ready": "El servicio está iniciando. Inténtalo en unos segundos."
+    },
+    "http": {
+      "invalid_json": "No pudimos procesar la solicitud.",
+      "method_not_allowed": "Esa acción no está permitida.",
+      "not_found": "No encontramos lo que buscas.",
+      "payload_too_large": "La solicitud es demasiado grande.",
+      "unsupported_media_type": "No pudimos procesar la solicitud."
+    },
+    "internal": {
+      "unexpected": "Algo salió mal de nuestro lado. Inténtalo de nuevo."
+    },
+    "legal": {
+      "acceptance_required": "Debes aceptar los términos y la política de privacidad para continuar.",
+      "version_outdated": "Los textos legales cambiaron. Léelos y acéptalos de nuevo."
+    },
+    "rate_limit": {
+      "exceeded": "Demasiados intentos. Inténtalo de nuevo en {{seconds}} s."
+    },
+    "user": {
+      "email_taken": "No pudimos completar el registro con ese correo."
+    },
+    "validation": {
+      "failed": "Revisa los campos marcados."
+    },
+    "vehicle": {
+      "in_use": "Este vehículo está en uso y no se puede eliminar.",
+      "limit_reached": "Alcanzaste el límite de {{limit}} vehículos.",
+      "not_found": "No encontramos ese vehículo.",
+      "plate_taken": "Esa placa ya está registrada."
+    },
+    "client": {
+      "network": "No pudimos conectar. Revisa tu conexión e inténtalo de nuevo.",
+      "timeout": "La solicitud tardó demasiado. Inténtalo de nuevo."
+    }
+  },
+  "validation": {
+    "required": "Este campo es obligatorio.",
+    "email": "Escribe un correo electrónico válido.",
+    "min": "Debe tener al menos {{param}} caracteres.",
+    "max": "Debe tener como máximo {{param}} caracteres.",
+    "oneof": "Elige una opción válida.",
+    "phone": "Escribe un teléfono válido, por ejemplo +18095551234.",
+    "code6": "El código tiene 6 dígitos.",
+    "password_common": "Esa contraseña es muy común. Elige otra.",
+    "plate": "Usa solo letras y números, de 2 a 10 caracteres.",
+    "unknown": "Revisa este campo."
   }
 }

@@ -72,6 +72,23 @@ describe('Button', () => {
     }
   });
 
+  test('primaryOnDark keeps the primary fill but swaps the focus ring to a 3 px surface ring (CC-11)', () => {
+    render(
+      <>
+        <Button variant="primary">A</Button>
+        <Button variant="primaryOnDark">B</Button>
+      </>,
+    );
+
+    const primary = screen.getByRole('button', { name: 'A' }).className.split(/\s+/);
+    const onDark = screen.getByRole('button', { name: 'B' }).className.split(/\s+/);
+    expect(onDark).toContain('bg-brand-action');
+    expect(onDark).toContain('focus-visible:shadow-[0_0_0_3px_var(--color-surface)]');
+    expect(onDark.join(' ')).not.toContain('color-brand-primary');
+    // The default ring would leave only 2 px of white on navy, because its outer 3 px is navy.
+    expect(primary.join(' ')).toContain('color-brand-primary');
+  });
+
   test('defaults to the primary variant and to type="button"', () => {
     render(<Button>Go</Button>);
 
