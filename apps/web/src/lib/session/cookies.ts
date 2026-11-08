@@ -95,5 +95,6 @@ export function withSessionCookieHeader(request: NextRequest, state: SessionStat
 export function applySetCookies(res: NextResponse, state: SessionState): void {
   if (state.refresh?.kind === 'refreshed') setSessionCookies(res, state.refresh.tokens);
   if (state.refresh?.kind === 'ended') clearSessionCookies(res);
-  if (state.csrf.issued) setCsrfCookie(res, state.csrf.value);
+  // A refresh slides mp_csrf with mp_refresh, so an active session never outlives its token.
+  if (state.csrf.issued || state.refresh?.kind === 'refreshed') setCsrfCookie(res, state.csrf.value);
 }

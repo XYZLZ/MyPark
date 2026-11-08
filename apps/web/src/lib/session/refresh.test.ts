@@ -129,6 +129,30 @@ describe('single flight', () => {
     expect(s.fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  test('flights are keyed per refresh token', async () => {
+    const s = setup();
+    s.hold();
+    const a = s.coordinator.refresh(input({ refreshToken: 'RA' }));
+    const b = s.coordinator.refresh(input({ refreshToken: 'RB' }));
+    expect(s.fetchImpl).toHaveBeenCalledTimes(2);
+    s.release();
+    await Promise.all([a, b]);
+    const bodies = s.fetchImpl.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).refresh_token);
+    expect(bodies.sort()).toEqual(['RA', 'RB']);
+  });
+
+  test('an empty mp_csrf never matches a cache entry or joins a flight', async () => {
+    const s = setup();
+    s.hold();
+    const a = s.coordinator.refresh(input({ csrf: '' }));
+    const b = s.coordinator.refresh(input({ csrf: '' }));
+    s.release();
+    await Promise.all([a, b]);
+    expect(s.fetchImpl).toHaveBeenCalledTimes(2);
+    await s.coordinator.refresh(input({ csrf: '' }));
+    expect(s.fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   test('cache entry expires after 30 s', async () => {
     const s = setup();
     await s.coordinator.refresh(input());

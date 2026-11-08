@@ -50,6 +50,35 @@ describe('routing and CSRF', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  const ID = vehicleFixture.id;
+  const mutating: Array<[string, string[]]> = [
+    ['POST', ['auth', 'register']],
+    ['POST', ['auth', 'logout']],
+    ['POST', ['auth', 'logout-all']],
+    ['PATCH', ['me']],
+    ['DELETE', ['me']],
+    ['POST', ['me', 'legal-acceptance']],
+    ['POST', ['vehicles']],
+    ['PATCH', ['vehicles', ID]],
+    ['DELETE', ['vehicles', ID]],
+  ];
+
+  test.each(mutating)('%s %j requires Origin and a matching CSRF token', async (method, segments) => {
+    const path = `/api/v1/${segments.join('/')}`;
+    const bad: Array<Parameters<typeof bffRequest>[1]> = [
+      { csrf: 'wrong' },
+      { csrf: null },
+      { origin: null },
+      { origin: 'http://evil.example' },
+    ];
+    for (const override of bad) {
+      const res = await handleBff(bffRequest(path, { method, cookies: SESSION, body: {}, ...override }), segments);
+      expect(res.status, `${method} ${path} ${JSON.stringify(override)}`).toBe(403);
+      expect(res.cookies.get('mp_access')).toBeUndefined();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test('reads need no CSRF token', async () => {
     fetchMock.mockResolvedValue(upstreamOk());
     const res = await handleBff(bffRequest('/api/v1/vehicles', { cookies: SESSION, csrf: null, origin: null }), ['vehicles']);
@@ -94,6 +123,19 @@ describe('proxying', () => {
     expect(res.headers.get('x-request-id')).toBe('req-9');
     expect(res.headers.get('content-type')).toContain('application/json');
     expect(await res.json()).toEqual(body);
+  });
+
+  test('never forwards the client Cookie or Authorization to Go', async () => {
+    fetchMock.mockImplementation(async () => upstreamOk());
+    const spoof = { authorization: 'Bearer attacker', 'x-api-key': 'k' };
+    await handleBff(bffRequest('/api/v1/legal/current', { cookies: SESSION, headers: spoof }), ['legal', 'current']);
+    await handleBff(bffRequest('/api/v1/vehicles', { cookies: SESSION, headers: spoof }), ['vehicles']);
+    for (const n of [0, 1]) {
+      expect(upstreamCall(n).headers.has('cookie')).toBe(false);
+      expect(upstreamCall(n).headers.has('x-api-key')).toBe(false);
+    }
+    expect(upstreamCall(0).headers.has('authorization')).toBe(false);
+    expect(upstreamCall(1).headers.get('authorization')).toBe('Bearer access-1');
   });
 
   test('forwards X-Forwarded-For unchanged and omits it when absent', async () => {

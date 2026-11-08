@@ -92,4 +92,12 @@ describe('serverFetch', () => {
     await expect(serverFetch('/v1/me', parseEnvelope(userSchema))).rejects.toMatchObject({ code: 'auth.unauthenticated', status: 401 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  test('an ended session (cookies cleared, value undefined) reports 401, not 503', async () => {
+    const { serverFetch } = await import('./server');
+    // Next merges the proxy's cleared cookies into cookies(): the entry stays, its value is gone.
+    state.cookies = { mp_access: undefined as unknown as string, mp_refresh: undefined as unknown as string };
+    await expect(serverFetch('/v1/me', parseEnvelope(userSchema))).rejects.toMatchObject({ code: 'auth.unauthenticated', status: 401 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

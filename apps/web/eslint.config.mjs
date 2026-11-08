@@ -16,7 +16,7 @@ const eslintConfig = defineConfig([
         {
           patterns: [
             {
-              group: ["**/lib/session/refresh"],
+              group: ["**/session/refresh", "**/session/refresh.ts"],
               message: "Only src/proxy.ts may import the session refresher.",
             },
           ],

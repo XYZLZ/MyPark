@@ -36,7 +36,7 @@ export async function serverFetch<T>(
     const access = cookieStore.get(ACCESS_COOKIE)?.value;
     if (!access) {
       // Access absent with a refresh cookie means the refresh failed transiently (spec 5.3).
-      const transient = cookieStore.get(REFRESH_COOKIE) !== undefined;
+      const transient = Boolean(cookieStore.get(REFRESH_COOKIE)?.value);
       throw new ApiError({
         code: transient ? 'internal.unexpected' : 'auth.unauthenticated',
         message: 'no access token',

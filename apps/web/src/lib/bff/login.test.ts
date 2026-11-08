@@ -55,6 +55,15 @@ describe('handleLogin', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ ...credentials, client_kind: 'web' });
   });
 
+  test('sends only whitelisted fields even when extra fields are posted', async () => {
+    await login({ ...credentials, role: 'admin', client_kind: 'mobile', refresh_token: 'x', extra: { a: 1 } });
+    const init = fetchMock.mock.calls[0]![1]!;
+    expect(JSON.parse(String(init.body))).toEqual({ ...credentials, client_kind: 'web' });
+    const headers = new Headers(init.headers);
+    expect(headers.has('cookie')).toBe(false);
+    expect(headers.has('authorization')).toBe(false);
+  });
+
   test('forwards X-Forwarded-For unchanged and omits it when absent', async () => {
     await login(credentials, { headers: { 'x-forwarded-for': '203.0.113.9' } });
     expect(new Headers(fetchMock.mock.calls[0]![1]?.headers).get('x-forwarded-for')).toBe('203.0.113.9');

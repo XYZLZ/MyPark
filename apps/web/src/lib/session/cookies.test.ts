@@ -132,11 +132,15 @@ describe('withSessionCookieHeader', () => {
 });
 
 describe('applySetCookies', () => {
-  test('sets tokens after a refresh and csrf only when issued', () => {
+  test('sets tokens after a refresh, slides an existing csrf, and sets csrf otherwise only when issued', () => {
     const res = NextResponse.next();
     applySetCookies(res, { refresh: { kind: 'refreshed', tokens }, csrf: { value: 'fresh', issued: true } });
     expect(res.cookies.get(ACCESS_COOKIE)?.value).toBe('access-1');
     expect(res.cookies.get(CSRF_COOKIE)?.value).toBe('fresh');
+
+    const slid = NextResponse.next();
+    applySetCookies(slid, { refresh: { kind: 'refreshed', tokens }, csrf: { value: 'existing', issued: false } });
+    expect(slid.cookies.get(CSRF_COOKIE)).toMatchObject({ value: 'existing', maxAge: CSRF_MAX_AGE_SECONDS });
 
     const quiet = NextResponse.next();
     applySetCookies(quiet, { refresh: null, csrf });

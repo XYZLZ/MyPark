@@ -94,7 +94,7 @@ export function createRefreshCoordinator(deps: { fetchImpl?: typeof fetch; now?:
   return {
     async refresh(input: RefreshInput): Promise<RefreshOutcome> {
       const key = keyOf(input.refreshToken);
-      const csrfMatches = (recorded: string | undefined) => input.csrf !== undefined && recorded === input.csrf;
+      const csrfMatches = (recorded: string | undefined) => !!input.csrf && recorded === input.csrf;
 
       const flight = flights.get(key);
       if (flight && csrfMatches(flight.csrf)) return flight.promise;
