@@ -194,6 +194,10 @@ services:
     environment:
       # Pinned to the compose network: a host-shell API_INTERNAL_URL (localhost) would point the container at itself.
       API_INTERNAL_URL: http://api:8080
+      # Secure cookies only when production (CC-4).
+      APP_ENV: ${APP_ENV:-development}
+      # Origins the BFF accepts on POST, PATCH and DELETE (CSRF check, spec 5.4).
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:
@@ -211,6 +215,11 @@ services:
 networks:
   default:
     name: mypark-internal
+    # Pinned inside TRUSTED_PROXY_CIDRS (172.16.0.0/12) so the API trusts the
+    # web container's X-Forwarded-For (CC-5). Override on a subnet clash.
+    ipam:
+      config:
+        - subnet: "${MYPARK_SUBNET:-172.28.0.0/24}"
 
 volumes:
   pgdata:
