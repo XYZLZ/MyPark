@@ -106,7 +106,7 @@ func (g *Gates) Legal(next http.Handler) http.Handler {
 				httpx.WriteError(w, r, g.log, err)
 				return
 			}
-			e.WithDetails(map[string]any{
+			e = e.WithDetails(map[string]any{
 				"terms_version":   cur.Terms.Version,
 				"privacy_version": cur.Privacy.Version,
 			})

@@ -63,9 +63,7 @@ func (h *Handler) createAdmin(w http.ResponseWriter, r *http.Request) {
 	var admin AdminUser
 	var created bool
 	if err == nil {
-		admin, created, err = h.svc.CreateAdmin(r.Context(), p, CreateAdminInput{
-			Email: req.Email, FirstName: req.FirstName, LastName: req.LastName, Locale: req.Locale,
-		})
+		admin, created, err = h.svc.CreateAdmin(r.Context(), p, CreateAdminInput(req))
 	}
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)

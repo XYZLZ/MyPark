@@ -167,7 +167,7 @@ func TestConfig_StringAndGoStringRedacted(t *testing.T) {
 	pepper, _ := base64.StdEncoding.DecodeString(config.DevAuthCodePepper)
 	leaks := []string{
 		"s3cretpw", config.DevJWTSigningKey, config.DevAuthCodePepper, config.DevSeedAdminPassword,
-		fmt.Sprint(seed), fmt.Sprint(pepper), fmt.Sprintf("%x", seed), fmt.Sprintf("%x", pepper),
+		fmt.Sprintf("%v", seed), fmt.Sprintf("%v", pepper), fmt.Sprintf("%x", seed), fmt.Sprintf("%x", pepper),
 	}
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
 		for _, val := range []any{c, &c} {

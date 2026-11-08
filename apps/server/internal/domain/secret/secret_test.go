@@ -33,7 +33,7 @@ func TestSecret_NeverPrints(t *testing.T) {
 		"%v":    fmt.Sprintf("%v", s),
 		"%+v":   fmt.Sprintf("%+v", s),
 		"%#v":   fmt.Sprintf("%#v", s),
-		"%s":    fmt.Sprintf("%s", s),
+		"%s":    fmt.Sprintf("%s", s), //nolint:staticcheck // S1025: the %s verb is what this test exercises
 		"%v w":  fmt.Sprintf("%v", w),
 		"%+v w": fmt.Sprintf("%+v", w),
 		"json":  string(jb),

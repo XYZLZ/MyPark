@@ -102,8 +102,8 @@ func LoadWorker(getenv func(string) string) (WorkerConfig, error) {
 		errs = append(errs, fmt.Errorf("%s is required and must be a host name", EnvSMTPHost))
 	}
 
-	switch raw := strings.TrimSpace(getenv(EnvSMTPPort)); {
-	case raw == "":
+	switch raw := strings.TrimSpace(getenv(EnvSMTPPort)); raw {
+	case "":
 		errs = append(errs, fmt.Errorf("%s is required", EnvSMTPPort))
 	default:
 		n, err := strconv.Atoi(raw)

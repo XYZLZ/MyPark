@@ -274,7 +274,7 @@ func TestSigner_FormattingIsRedacted(t *testing.T) {
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
 		for _, val := range []any{f.s, *f.s} {
 			out := fmt.Sprintf(verb, val)
-			if strings.Contains(out, fmt.Sprintf("%x", f.seed)) || strings.Contains(out, fmt.Sprint(f.seed)) || strings.Contains(out, fmt.Sprint([]byte(f.priv))) {
+			if strings.Contains(out, fmt.Sprintf("%x", f.seed)) || strings.Contains(out, fmt.Sprintf("%v", f.seed)) || strings.Contains(out, fmt.Sprintf("%v", []byte(f.priv))) {
 				t.Errorf("%s leaks key: %s", verb, out)
 			}
 			if !strings.Contains(out, "[redacted]") {

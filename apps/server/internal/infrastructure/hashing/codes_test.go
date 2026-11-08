@@ -65,7 +65,7 @@ func TestCodeHasher_FormattingIsRedacted(t *testing.T) {
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
 		for _, val := range []any{ch, &ch} {
 			out := fmt.Sprintf(verb, val)
-			if strings.Contains(out, pepper) || strings.Contains(out, fmt.Sprint([]byte(pepper))) {
+			if strings.Contains(out, pepper) || strings.Contains(out, fmt.Sprintf("%v", []byte(pepper))) {
 				t.Errorf("%s leaks pepper: %s", verb, out)
 			}
 			if !strings.Contains(out, "[redacted]") {
