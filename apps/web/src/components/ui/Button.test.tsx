@@ -1,10 +1,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import type { FormEvent } from 'react';
+import type { SubmitEvent } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { Button } from './Button';
 
 function submitSpy() {
-  return vi.fn((event: FormEvent) => event.preventDefault());
+  return vi.fn((event: SubmitEvent) => event.preventDefault());
 }
 
 describe('Button', () => {

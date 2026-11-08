@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Barlow, Barlow_Semi_Condensed } from 'next/font/google';
 import { notFound } from 'next/navigation';
 import { hasLocale, NextIntlClientProvider } from 'next-intl';
-import { getTranslations, setRequestLocale } from 'next-intl/server';
+import { getTranslations } from 'next-intl/server';
 import type { ReactNode } from 'react';
 import { routing } from '@/i18n/routing';
 import { AppProviders } from '@/providers/app-providers';
@@ -43,7 +43,6 @@ export default async function LocaleLayout({ children, params }: LocaleLayoutPro
   const { locale } = await params;
   // The proxy redirects unsupported locales; this guards direct renders.
   if (!hasLocale(routing.locales, locale)) notFound();
-  setRequestLocale(locale);
 
   return (
     <html lang={locale} className={`${barlow.variable} ${barlowSemiCondensed.variable}`}>
