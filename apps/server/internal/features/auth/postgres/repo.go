@@ -245,6 +245,18 @@ func (r *Repo) FindUserForLogin(ctx context.Context, email string) (auth.LoginUs
 	}, true, nil
 }
 
+// LockLoginCredentials implements auth.Repo.
+func (r *Repo) LockLoginCredentials(ctx context.Context, userID int64) (string, string, bool, error) {
+	row, err := r.q(ctx).LockLoginCredentials(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, safeError("auth: lock login credentials", err)
+	}
+	return row.PasswordHash.String, row.Status, true, nil
+}
+
 // RehashPassword implements auth.Repo.
 func (r *Repo) RehashPassword(ctx context.Context, userID int64, oldHash, newHash string, now time.Time) error {
 	err := r.q(ctx).RehashPassword(ctx, dbgen.RehashPasswordParams{

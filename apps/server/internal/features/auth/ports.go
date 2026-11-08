@@ -134,6 +134,10 @@ type LoginRepo interface {
 	// FindUserForLogin returns the non-deleted user with this email, without
 	// locking it.
 	FindUserForLogin(ctx context.Context, email string) (LoginUser, bool, error)
+	// LockLoginCredentials returns the stored hash and status of the
+	// non-deleted user, row-locked until the transaction ends. found is false
+	// for a missing or deleted user; hash is empty when there is no password.
+	LockLoginCredentials(ctx context.Context, userID int64) (hash, status string, found bool, err error)
 	// RehashPassword replaces oldHash with newHash, only while oldHash is
 	// still the stored hash.
 	RehashPassword(ctx context.Context, userID int64, oldHash, newHash string, now time.Time) error

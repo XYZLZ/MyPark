@@ -77,6 +77,15 @@ select id, public_id, email, password_hash, first_name, last_name, phone, role, 
 from users
 where email = @email and deleted_at is null;
 
+-- name: LockLoginCredentials :one
+-- Re-reads the credentials inside the login transaction, row-locked, so a
+-- password reset that committed after the unlocked read is seen and one that
+-- starts later waits and then revokes the new session.
+select password_hash, status
+from users
+where id = @id and deleted_at is null
+for update;
+
 -- name: RehashPassword :exec
 -- Compare-and-set, so a password changed since the login read is never
 -- overwritten by the upgrade.

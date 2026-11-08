@@ -48,12 +48,19 @@ type spyHasher struct {
 
 	mu       sync.Mutex
 	verified []string
+	// onVerify, when set, runs once before the next Verify returns.
+	onVerify func(ctx context.Context, phc string)
 }
 
 func (s *spyHasher) Verify(ctx context.Context, phc, pw string) (bool, bool, error) {
 	s.mu.Lock()
 	s.verified = append(s.verified, phc)
+	hook := s.onVerify
+	s.onVerify = nil
 	s.mu.Unlock()
+	if hook != nil {
+		hook(ctx, phc)
+	}
 	return s.PasswordHasher.Verify(ctx, phc, pw)
 }
 

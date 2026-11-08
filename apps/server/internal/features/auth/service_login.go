@@ -110,8 +110,18 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (TokenPair, error) {
 }
 
 // openSession stores the session and its first refresh token, audits and
-// signs the access token. It runs inside the login transaction.
+// signs the access token. It runs inside the login transaction. It first
+// re-reads the credentials under a row lock: a password reset or status
+// change that committed after the unlocked read refuses the login exactly
+// like a wrong password, so no session outlives the reset's revocation.
 func (s *Service) openSession(ctx context.Context, u LoginUser, in LoginInput, newHash string) (TokenPair, error) {
+	stored, status, found, err := s.d.Repo.LockLoginCredentials(ctx, u.ID)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	if !found || stored == "" || stored != u.PasswordHash || status != StatusActive {
+		return TokenPair{}, apperr.Unauthenticated(errcodes.AuthInvalidCredentials)
+	}
 	now := s.d.Clock.Now()
 	if newHash != "" {
 		if err := s.d.Repo.RehashPassword(ctx, u.ID, u.PasswordHash, newHash, now); err != nil {

@@ -527,6 +527,28 @@ func (q *Queries) LockAdminSeed(ctx context.Context, key int64) error {
 	return err
 }
 
+const lockLoginCredentials = `-- name: LockLoginCredentials :one
+select password_hash, status
+from users
+where id = $1 and deleted_at is null
+for update
+`
+
+type LockLoginCredentialsRow struct {
+	PasswordHash pgtype.Text
+	Status       string
+}
+
+// Re-reads the credentials inside the login transaction, row-locked, so a
+// password reset that committed after the unlocked read is seen and one that
+// starts later waits and then revokes the new session.
+func (q *Queries) LockLoginCredentials(ctx context.Context, id int64) (LockLoginCredentialsRow, error) {
+	row := q.db.QueryRow(ctx, lockLoginCredentials, id)
+	var i LockLoginCredentialsRow
+	err := row.Scan(&i.PasswordHash, &i.Status)
+	return i, err
+}
+
 const lockPendingAdminByEmail = `-- name: LockPendingAdminByEmail :one
 select id, public_id, locale
 from users

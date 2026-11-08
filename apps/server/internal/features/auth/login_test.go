@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
@@ -307,5 +309,28 @@ func TestLogin_InvalidClientKind(t *testing.T) {
 	b["client_kind"] = "desktop"
 	if r := e.post(pathLogin, b); r.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422", r.Code)
+	}
+}
+
+// A reset that commits while a login is between its password check and its
+// transaction must win: the login answers like a wrong password and leaves
+// no live session behind.
+func TestLogin_ResetDuringVerifyWins(t *testing.T) {
+	e := newEnv(t)
+	u := e.activeDriver("ana@example.com")
+	code := e.requestReset("ana@example.com")
+	var resetErr error
+	e.hasher.onVerify = func(ctx context.Context, _ string) {
+		resetErr = e.svc.Reset(ctx, "ana@example.com", secret.String(code), secret.String(newPass))
+	}
+	rec := e.post(pathLogin, loginBody("ana@example.com", loginPassword))
+	if resetErr != nil {
+		t.Fatalf("reset: %v", resetErr)
+	}
+	if rec.Code != http.StatusUnauthorized || rec.errCode() != "auth.invalid_credentials" {
+		t.Errorf("login = %d %s, want 401 auth.invalid_credentials", rec.Code, rec.Body)
+	}
+	if n := e.count(`select count(*) from auth_sessions where user_id=$1 and revoked_at is null`, u.ID); n != 0 {
+		t.Errorf("live sessions = %d, want 0", n)
 	}
 }
