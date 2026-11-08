@@ -449,6 +449,13 @@ src/
 - i18n: **next-intl** with a `[locale]` segment (`es-DO` default, `en`). Error codes map to `errors.<code>` keys.
 - Charts: one charting library for analytics (decided during M4 with the dataviz guidelines).
 - Role guard: `(admin)` layout checks the role server-side. `(driver)` requires a session.
+- **BFF and session (M1).** The browser never sees a token and never calls the Go API directly.
+  - `proxy.ts` is the only place a session is refreshed. It runs for pages, `/api/v1/*` and `/api/session/*`. When `mp_access` is absent and `mp_refresh` is present it calls `POST /v1/auth/refresh` through a single-flight coordinator (`lib/session/refresh.ts`, one in-flight call per refresh token plus a 30 s result cache keyed by the caller's `mp_csrf`), then rewrites the forwarded `Cookie` header so the same request already sees the new tokens. Refresh tokens are single-use, so a second refresh outside this module would revoke the session; ESLint allows only `proxy.ts` to import it.
+  - `app/api/v1/[...path]/route.ts` is an allow-list proxy (`lib/bff/allowlist.ts`): known method and path pairs only, ids must be UUIDs, everything else is `404 http.not_found`. It adds the bearer from the cookie, passes status, body, `Retry-After` and `X-Request-Id` through, never forwards `Set-Cookie`, and uses a 20 s timeout on argon2 routes and 5 s elsewhere. Logout always clears the cookies.
+  - `app/api/auth/login/route.ts` forces `client_kind: "web"`, stores the tokens in cookies and returns only `{user, legal_acceptance_required}`. It sits outside the proxy matcher because a login needs no session.
+  - `/api/session/end` (added with the guards) is the redirect target when a Server Component finds the session over.
+  - Cookies: `mp_access` and `mp_refresh` (httpOnly, SameSite=Lax), and `mp_csrf` (readable by JS, 30 days, rotated at login). `Secure` only when `APP_ENV=production`. POST, PATCH and DELETE need an `Origin` listed in `WEB_ALLOWED_ORIGINS` and an `X-CSRF-Token` equal to `mp_csrf`.
+  - Server Components call Go only through `lib/api/server.ts` (`serverFetch`, `getMe`, `getLegalCurrent`). Run a single `web` replica: the lock is per process.
 
 ## 13. Mobile architecture (Expo SDK 58)
 
