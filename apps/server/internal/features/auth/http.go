@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -137,6 +138,11 @@ func (h *Handler) allow(r *http.Request, rule ratelimit.Rule, key string) error 
 		return err
 	}
 	if !d.Allowed {
+		// Same line as the rate-limit middleware: the rule and the hashed
+		// bucket key, never the raw email or IP.
+		h.log.WarnContext(r.Context(), "ratelimit: throttled",
+			"rule", rule.Name,
+			"key_hash", hex.EncodeToString(ratelimit.HashKey(rule, key)))
 		return apperr.RateLimited(d.RetryAfter)
 	}
 	return nil

@@ -103,6 +103,24 @@ func (l *fakeLimiter) Allow(_ context.Context, rule ratelimit.Rule, key string) 
 	return ratelimit.Decision{Allowed: true}, nil
 }
 
+// syncBuffer is a bytes.Buffer safe for concurrent log writes.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 type failingAudit struct{}
 
 func (failingAudit) Record(context.Context, audit.Entry) error { return io.ErrUnexpectedEOF }
@@ -121,6 +139,8 @@ type env struct {
 	verifier      *jwt.Verifier
 	legal         legal.Current
 	authenticator *auth.Authenticator
+	// logs holds everything the handler and the server logged.
+	logs *syncBuffer
 }
 
 // jwtSeed is the Ed25519 seed of the test signer.
@@ -158,7 +178,8 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 	}
 	svc := auth.NewService(d)
 	lim := &fakeLimiter{}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logs := &syncBuffer{}
+	log := slog.New(slog.NewTextHandler(logs, nil))
 	mux := http.NewServeMux()
 	verifier := jwt.NewVerifier(map[string]ed25519.PublicKey{
 		"test": ed25519.NewKeyFromSeed(jwtSeed).Public().(ed25519.PublicKey),
@@ -176,7 +197,7 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 		w.WriteHeader(http.StatusOK)
 	})
 	return &env{t: t, db: db, clock: clk, hasher: hasher, codes: codes, limiter: lim, svc: svc, signer: signer,
-		verifier: verifier, legal: d.Legal, authenticator: authenticator, h: httpserver.NewHandler(log, mux, nil)}
+		verifier: verifier, legal: d.Legal, authenticator: authenticator, logs: logs, h: httpserver.NewHandler(log, mux, nil)}
 }
 
 type resp struct {

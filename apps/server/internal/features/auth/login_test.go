@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
 	"net/http"
 	"reflect"
 	"strings"
@@ -332,5 +333,40 @@ func TestLogin_ResetDuringVerifyWins(t *testing.T) {
 	}
 	if n := e.count(`select count(*) from auth_sessions where user_id=$1 and revoked_at is null`, u.ID); n != 0 {
 		t.Errorf("live sessions = %d, want 0", n)
+	}
+}
+
+// A throttle decided by the handler is logged like the middleware's: the
+// rule name and the hashed bucket key, never the raw email or IP (spec 10.2).
+func TestLogin_ThrottleLoggedWithHashedKey(t *testing.T) {
+	e := newEnv(t)
+	e.limiter.deny = map[string]time.Duration{ratelimit.LoginIPEmail.Name: time.Minute}
+	if rec := e.post(pathLogin, loginBody("ana@example.com", loginPassword)); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	keys := e.limiter.keysByRule[ratelimit.LoginIPEmail.Name]
+	if len(keys) != 1 {
+		t.Fatalf("keys = %v", keys)
+	}
+	ip, _, _ := strings.Cut(keys[0], "|")
+	var line string
+	for l := range strings.Lines(e.logs.String()) {
+		if strings.Contains(l, "ratelimit: throttled") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no throttle log line in:\n%s", e.logs.String())
+	}
+	want := hex.EncodeToString(ratelimit.HashKey(ratelimit.LoginIPEmail, keys[0]))
+	if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "rule="+ratelimit.LoginIPEmail.Name) ||
+		!strings.Contains(line, "key_hash="+want) {
+		t.Errorf("throttle line = %q, want WARN with rule and key_hash %s", line, want)
+	}
+	if strings.Contains(line, "ana@example.com") || strings.Contains(line, ip) {
+		t.Errorf("throttle line leaks the raw key: %q", line)
+	}
+	if strings.Contains(e.logs.String(), "ana@example.com") {
+		t.Error("logs hold the raw email")
 	}
 }
