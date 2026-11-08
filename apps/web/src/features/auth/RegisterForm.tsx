@@ -51,6 +51,15 @@ export function RegisterForm({ legal }: { legal: LegalCurrent }) {
       form.reset();
       router.push('/verify');
     },
+    onError: (error, _values, form) => {
+      if (error.code === 'legal.version_outdated') {
+        // The versions in `legal` are stale: reload them from the server and ask for a fresh acceptance.
+        form.setValue('accept_legal', false as unknown as true);
+        router.refresh();
+      }
+      // Not handled here: the translated message still shows in the banner.
+      return false;
+    },
   });
   const { register } = form;
 

@@ -1,5 +1,5 @@
 import { adminFixture, errorBody, successBody, userFixture } from '@mypark/contracts/fixtures';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import en from '@/i18n/messages/en.json';
 import { hardNavigate } from '@/lib/browser/navigate';
@@ -115,7 +115,7 @@ describe('LoginForm', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('The email or password is not correct.');
     expect(screen.getAllByRole('alert')).toHaveLength(1);
-    expect(alert).toHaveFocus();
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(hardNavigate).not.toHaveBeenCalled();
   });
 
@@ -213,5 +213,33 @@ describe('LoginForm', () => {
     expect(JSON.stringify(vi.mocked(hardNavigate).mock.calls)).not.toContain(PASSWORD);
     expect(screen.getByTestId('auth-flow').textContent).not.toContain(PASSWORD);
     expect(screen.getByLabelText(L.password)).toHaveValue('');
+  });
+
+  test('the wait message clears and submit re-enables when the wait ends', async () => {
+    vi.useFakeTimers();
+    try {
+      stubFetch(jsonResponse(429, errorBody('rate_limit.exceeded', { retry_after_seconds: 3 })));
+      renderLogin();
+      fillCredentials();
+
+      submit();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent('Try again in 3 s.');
+      expect(screen.getByRole('button', { name: 'Log in' })).toBeDisabled();
+
+      // Each tick is scheduled after the previous render, so advance one second at a time.
+      for (let second = 0; second < 3; second++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+      }
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Log in' })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

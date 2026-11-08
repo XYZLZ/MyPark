@@ -183,4 +183,45 @@ describe('RegisterForm', () => {
     await waitFor(() => expect(router.push).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  test('legal.version_outdated refreshes, unchecks the terms and shows the banner', async () => {
+    stubFetch(jsonResponse(409, errorBody('legal.version_outdated')));
+    const { fillAll, accept, submit } = renderRegister();
+    fillAll();
+    accept();
+
+    submit();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The legal texts changed. Read and accept them again.');
+    expect(router.refresh).toHaveBeenCalledOnce();
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test('after the refresh the next submit sends the new legal versions', async () => {
+    const fetchMock = stubFetch(jsonResponse(409, errorBody('legal.version_outdated')), accepted());
+    const tree = (legal: typeof legalCurrentFixture) => (
+      <>
+        <RegisterForm legal={legal} />
+        <AuthFlowProbe />
+      </>
+    );
+    const { fillAll, accept, submit, rerender } = renderRegister();
+    fillAll();
+    accept();
+    submit();
+    await screen.findByRole('alert');
+
+    const renewed = {
+      terms: { ...legalCurrentFixture.terms, version: '2027-01-01' },
+      privacy: { ...legalCurrentFixture.privacy, version: '2027-02-02' },
+    };
+    rerender(tree(renewed));
+    accept();
+    submit();
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledOnce());
+    expect(sentBody(fetchMock, 0).accepted_terms_version).toBe(legalCurrentFixture.terms.version);
+    expect(sentBody(fetchMock, 1)).toMatchObject({ accepted_terms_version: '2027-01-01', accepted_privacy_version: '2027-02-02' });
+  });
 });
