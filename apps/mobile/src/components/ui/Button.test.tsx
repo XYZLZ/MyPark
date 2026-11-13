@@ -87,6 +87,10 @@ test('quiet has no border, like web', async () => {
 test('disabled has no border except on onDark, like web', async () => {
   await render(<Button variant="quiet" label="Back" disabled onPress={jest.fn()} />);
   expect(classesOf(screen.getByRole('button', { name: 'Back' }))).not.toContain('border-2');
+  await render(<Button variant="onDark" label="Log in" disabled onPress={jest.fn()} />);
+  expect(classesOf(screen.getByRole('button', { name: 'Log in' }))).toEqual(
+    expect.arrayContaining(['bg-disabled-bg', 'border-2', 'border-disabled-ink']),
+  );
 });
 
 test.each([
