@@ -72,6 +72,74 @@
     "storageFailed": "We could not save your session on this device. You will need to log in the next time you open the app.",
     "adminWebOnly": "Administrator accounts use the web admin area. This app is for drivers."
   },
+  "auth": {
+    "fields": {
+      "email": "Email",
+      "password": "Password",
+      "newPassword": "New password",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "phone": "Phone (optional)",
+      "code": "Verification code"
+    },
+    "welcome": {
+      "tagline": "Manage your vehicles for parking in the Zona Colonial.",
+      "signUp": "Sign up",
+      "logIn": "Log in"
+    },
+    "login": {
+      "title": "Log in",
+      "submit": "Log in",
+      "forgot": "Forgot your password?",
+      "register": "Create an account"
+    },
+    "register": {
+      "title": "Create your account",
+      "submit": "Sign up",
+      "phoneHint": "Include the country code, for example +18095551234.",
+      "passwordHint": "At least 10 characters.",
+      "accept": "I accept the terms and the privacy policy.",
+      "readTerms": "Read the terms",
+      "readPrivacy": "Read the privacy policy",
+      "haveAccount": "Already have an account? Log in",
+      "unavailable": {
+        "title": "Sign-up is unavailable",
+        "body": "We could not load the legal texts, so we cannot create accounts right now. Try again in a moment."
+      }
+    },
+    "verify": {
+      "title": "Verify your email",
+      "intro": "Enter the 6-digit code we sent to your email.",
+      "submit": "Verify",
+      "resend": "Send a new code",
+      "sent": "If an account exists for that email, we sent a new code."
+    },
+    "forgot": {
+      "title": "Forgot your password?",
+      "intro": "Enter your email and we will send you a code to choose a new password.",
+      "submit": "Send code",
+      "sent": "If an account exists for that email, we sent a code.",
+      "haveCode": "I already have a code",
+      "back": "Back to log in"
+    },
+    "reset": {
+      "title": "Choose a new password",
+      "intro": "Enter the code we sent you and your new password.",
+      "submit": "Change password"
+    }
+  },
+  "legal": {
+    "demoNotice": "Sample text for an academic demo.",
+    "back": "Back",
+    "terms": {
+      "title": "Terms of use",
+      "body": "This service lets you register vehicles and reserve parking spaces in the Zona Colonial. You agree to provide accurate information and to use the service only for your own vehicles."
+    },
+    "privacy": {
+      "title": "Privacy policy",
+      "body": "We store your name, email, phone number and vehicle plates to run the service. We do not share them with third parties, and you can delete your account at any time."
+    }
+  },
   "restoreFailed": {
     "title": "We could not check your session",
     "body": "Check your connection and try again. Your session stays saved on this device until you log out."

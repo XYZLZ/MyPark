@@ -72,6 +72,74 @@
     "storageFailed": "No pudimos guardar tu sesión en este dispositivo. La próxima vez que abras la app tendrás que iniciar sesión.",
     "adminWebOnly": "Las cuentas de administrador se usan en el área de administración web. Esta app es para conductores."
   },
+  "auth": {
+    "fields": {
+      "email": "Correo electrónico",
+      "password": "Contraseña",
+      "newPassword": "Nueva contraseña",
+      "firstName": "Nombre",
+      "lastName": "Apellido",
+      "phone": "Teléfono (opcional)",
+      "code": "Código de verificación"
+    },
+    "welcome": {
+      "tagline": "Gestiona tus vehículos para estacionar en la Zona Colonial.",
+      "signUp": "Crear cuenta",
+      "logIn": "Iniciar sesión"
+    },
+    "login": {
+      "title": "Iniciar sesión",
+      "submit": "Iniciar sesión",
+      "forgot": "¿Olvidaste tu contraseña?",
+      "register": "Crear una cuenta"
+    },
+    "register": {
+      "title": "Crea tu cuenta",
+      "submit": "Crear cuenta",
+      "phoneHint": "Incluye el código de país, por ejemplo +18095551234.",
+      "passwordHint": "Al menos 10 caracteres.",
+      "accept": "Acepto los términos y la política de privacidad.",
+      "readTerms": "Leer los términos",
+      "readPrivacy": "Leer la política de privacidad",
+      "haveAccount": "¿Ya tienes una cuenta? Inicia sesión",
+      "unavailable": {
+        "title": "El registro no está disponible",
+        "body": "No pudimos cargar los textos legales, así que no podemos crear cuentas por ahora. Inténtalo de nuevo en un momento."
+      }
+    },
+    "verify": {
+      "title": "Verifica tu correo",
+      "intro": "Ingresa el código de 6 dígitos que enviamos a tu correo.",
+      "submit": "Verificar",
+      "resend": "Enviar un código nuevo",
+      "sent": "Si existe una cuenta con ese correo, enviamos un código nuevo."
+    },
+    "forgot": {
+      "title": "¿Olvidaste tu contraseña?",
+      "intro": "Ingresa tu correo y te enviaremos un código para elegir una contraseña nueva.",
+      "submit": "Enviar código",
+      "sent": "Si existe una cuenta con ese correo, enviamos un código.",
+      "haveCode": "Ya tengo un código",
+      "back": "Volver a iniciar sesión"
+    },
+    "reset": {
+      "title": "Elige una contraseña nueva",
+      "intro": "Ingresa el código que te enviamos y tu contraseña nueva.",
+      "submit": "Cambiar contraseña"
+    }
+  },
+  "legal": {
+    "demoNotice": "Texto de ejemplo para una demostración académica.",
+    "back": "Volver",
+    "terms": {
+      "title": "Términos de uso",
+      "body": "Este servicio te permite registrar vehículos y reservar espacios de parqueo en la Zona Colonial. Te comprometes a dar información veraz y a usar el servicio solo para tus propios vehículos."
+    },
+    "privacy": {
+      "title": "Política de privacidad",
+      "body": "Guardamos tu nombre, correo, teléfono y las placas de tus vehículos para operar el servicio. No los compartimos con terceros y puedes eliminar tu cuenta en cualquier momento."
+    }
+  },
   "restoreFailed": {
     "title": "No pudimos verificar tu sesión",
     "body": "Revisa tu conexión e inténtalo de nuevo. Tu sesión sigue guardada en este dispositivo hasta que cierres sesión."
