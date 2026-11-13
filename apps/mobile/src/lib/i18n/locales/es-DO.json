@@ -69,7 +69,8 @@
   },
   "session": {
     "ended": "Tu sesión terminó. Inicia sesión de nuevo.",
-    "storageFailed": "No pudimos guardar tu sesión en este dispositivo. La próxima vez que abras la app tendrás que iniciar sesión."
+    "storageFailed": "No pudimos guardar tu sesión en este dispositivo. La próxima vez que abras la app tendrás que iniciar sesión.",
+    "adminWebOnly": "Las cuentas de administrador se usan en el área de administración web. Esta app es para conductores."
   },
   "restoreFailed": {
     "title": "No pudimos verificar tu sesión",

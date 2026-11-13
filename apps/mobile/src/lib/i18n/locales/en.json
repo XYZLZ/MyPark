@@ -69,7 +69,8 @@
   },
   "session": {
     "ended": "Your session ended. Log in again.",
-    "storageFailed": "We could not save your session on this device. You will need to log in the next time you open the app."
+    "storageFailed": "We could not save your session on this device. You will need to log in the next time you open the app.",
+    "adminWebOnly": "Administrator accounts use the web admin area. This app is for drivers."
   },
   "restoreFailed": {
     "title": "We could not check your session",

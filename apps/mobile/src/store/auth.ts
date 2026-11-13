@@ -2,7 +2,7 @@ import type { User } from '@mypark/contracts';
 import { create } from 'zustand';
 
 export type AuthStatus = 'restoring' | 'signedOut' | 'signedIn' | 'restoreFailed';
-export type AuthNotice = 'session_ended' | 'storage_failed' | null;
+export type AuthNotice = 'session_ended' | 'storage_failed' | 'admin_web_only' | null;
 
 type AuthState = {
   status: AuthStatus;

@@ -459,6 +459,103 @@ describe('secure-store failure outcomes (spec 6.4)', () => {
   });
 });
 
+describe('races and failure handling', () => {
+  const refreshOk = (env: Env) => env.api.on(REFRESH, () => json(200, successBody(tokens(1))));
+
+  test('a sign-out while the token write is pending is not undone', async () => {
+    const env = setup();
+    let release: () => void = () => undefined;
+    env.storage.set.mockReturnValue(new Promise<void>((resolve) => (release = () => resolve())));
+    refreshOk(env);
+    const outcome = env.session.refresh();
+    await until(() => env.storage.set.mock.calls.length > 0);
+    await env.session.signOutLocal();
+    env.storage.remove.mockClear();
+    release();
+    await expect(outcome).resolves.toEqual({ kind: 'ended' });
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', accessToken: null });
+    expect(env.storage.remove).toHaveBeenCalled();
+  });
+
+  test('a sign-out while the stored token is being read discards the refresh without a notice', async () => {
+    const env = setup();
+    let release: (token: string | null) => void = () => undefined;
+    env.storage.get.mockReturnValue(new Promise<string | null>((resolve) => (release = resolve)));
+    const outcome = env.session.refresh();
+    await env.session.signOutLocal();
+    release(null);
+    await expect(outcome).resolves.toEqual({ kind: 'ended' });
+    expect(env.api.fetchImpl).not.toHaveBeenCalled();
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: null });
+  });
+
+  test('a write failure keeps the rotated token in memory for the next refresh', async () => {
+    const env = setup();
+    env.storage.set.mockRejectedValue(new Error('keystore locked'));
+    refreshOk(env);
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'refreshed' });
+    expect(env.storage.remove).toHaveBeenCalled();
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedIn', accessToken: 'access-1', notice: 'storage_failed' });
+    env.storage.get.mockResolvedValue(null);
+    env.api.on(REFRESH, () => json(200, successBody(tokens(2))));
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'refreshed' });
+    expect(JSON.parse(env.api.calls[1]!.init.body as string)).toEqual({ refresh_token: 'refresh-1' });
+    expect(useAuthStore.getState().accessToken).toBe('access-2');
+  });
+
+  test('the in-memory token is dropped on sign-out', async () => {
+    const env = setup();
+    env.storage.set.mockRejectedValue(new Error('keystore locked'));
+    refreshOk(env);
+    await env.session.refresh();
+    await env.session.signOutLocal();
+    useAuthStore.getState().setSession({ accessToken: 'a', user: userFixture, legalPending: false });
+    env.storage.get.mockResolvedValue(null);
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'ended' });
+    expect(env.api.count(REFRESH)).toBe(1);
+  });
+
+  test('a keystore read rejection mid-session keeps the session and the token', async () => {
+    const env = setup();
+    env.storage.get.mockRejectedValue(new Error('keystore locked'));
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'unavailable', code: 'client.network' });
+    expect(env.storage.remove).not.toHaveBeenCalled();
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedIn', accessToken: 'access-0' });
+  });
+
+  test('a true null read mid-session ends the session', async () => {
+    const env = setup({ stored: null });
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'ended' });
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: 'session_ended' });
+  });
+
+  test('signOutLocal removes the stored token even when clearing queries throws', async () => {
+    const env = setup();
+    env.clear.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    await expect(env.session.signOutLocal()).rejects.toThrow('boom');
+    expect(env.storage.remove).toHaveBeenCalled();
+  });
+
+  test('restore signs an admin out locally with the admin_web_only notice', async () => {
+    const env = setup({ signedIn: false });
+    env.api.on(REFRESH, () => json(200, successBody(tokens(1, { user: { ...userFixture, role: 'admin' } }))));
+    await env.session.restore();
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', accessToken: null, notice: 'admin_web_only' });
+    expect(env.storage.set).not.toHaveBeenCalled();
+    expect(env.storage.remove).toHaveBeenCalled();
+  });
+
+  test('applyTokens signs an admin out with the admin_web_only notice', async () => {
+    const env = setup({ signedIn: false });
+    useAuthStore.getState().setStatus('signedOut');
+    await env.session.applyTokens(tokens(1, { user: { ...userFixture, role: 'admin' } }));
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: 'admin_web_only' });
+    expect(env.storage.set).not.toHaveBeenCalled();
+  });
+});
+
 test('the refresh error type used by the client is an ApiError', async () => {
   const env = setup();
   env.api.on(VEHICLES, () => json(401, errorBody('auth.unauthenticated')));

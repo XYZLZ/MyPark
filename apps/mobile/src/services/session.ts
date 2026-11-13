@@ -11,7 +11,7 @@ import type { TokenStorage } from './tokenStorage';
 export type SessionService = {
   /** App start: read the stored token and exchange it (spec 6.4). Never throws. */
   restore(): Promise<void>;
-  /** Login result: persist the refresh token, then set the in-memory session. */
+  /** Login result: persist the refresh token, then set the in-memory session. An admin account is signed out instead, with notice `admin_web_only`. */
   applyTokens(tokens: TokenResponse): Promise<void>;
   /** Single-flight: concurrent callers share one request, because refresh tokens are single-use. */
   refresh(): Promise<RefreshResult>;
@@ -61,6 +61,8 @@ export function createSessionService(deps: SessionDeps): SessionService {
   let blockedUntil = 0;
   /** Bumped on every local sign-out so a refresh that lands afterwards cannot revive the session. */
   let epoch = 0;
+  /** A rotated refresh token that could not be written to secure storage. Memory only, this run only. */
+  let memoryToken: string | null = null;
 
   async function removeStoredToken(): Promise<void> {
     try {
@@ -70,8 +72,16 @@ export function createSessionService(deps: SessionDeps): SessionService {
     }
   }
 
-  /** The write lands before state changes and before the caller resumes (single-use tokens). */
-  async function commit(tokens: TokenResponse, applyLocale: boolean): Promise<void> {
+  /**
+   * The write lands before state changes and before the caller resumes (single-use tokens).
+   * Returns false when the result was discarded: an admin account, or a sign-out that happened meanwhile.
+   */
+  async function commit(tokens: TokenResponse, applyLocale: boolean, startedEpoch: number): Promise<boolean> {
+    if (tokens.user.role === 'admin') {
+      // The driver app has nothing for admins: they use the web admin area (ruling T9).
+      await signOutLocal('admin_web_only');
+      return false;
+    }
     let stored = true;
     try {
       await storage.set(tokens.refresh_token);
@@ -80,6 +90,14 @@ export function createSessionService(deps: SessionDeps): SessionService {
       stored = false;
       await removeStoredToken();
     }
+    if (epoch !== startedEpoch) {
+      // Signed out while the write was pending: leave no token behind and do not revive the session.
+      memoryToken = null;
+      await removeStoredToken();
+      return false;
+    }
+    // On a write failure the rotated token lives in memory for this run so the next 401 can still refresh.
+    memoryToken = stored ? null : tokens.refresh_token;
     const state = store.getState();
     state.clearNotice();
     state.setSession({
@@ -89,35 +107,45 @@ export function createSessionService(deps: SessionDeps): SessionService {
     });
     if (!stored) store.getState().setNotice('storage_failed');
     if (applyLocale) onUserLocale(tokens.user.locale);
+    return true;
   }
 
   async function signOutLocal(notice: AuthNotice = null): Promise<void> {
     epoch += 1;
+    memoryToken = null;
     const { user } = store.getState();
     // A lost or revoked session shows the login screen with the email pre-filled when it is known.
     if (notice === 'session_ended' && user) useAuthFlowStore.getState().setEmail(user.email);
-    store.getState().clearSession(notice);
-    queryClient.clear();
-    await removeStoredToken();
+    try {
+      store.getState().clearSession(notice);
+      queryClient.clear();
+    } finally {
+      await removeStoredToken();
+    }
   }
 
   async function runRefresh(): Promise<RefreshResult> {
     const remaining = blockedUntil - now();
     if (remaining > 0) return { kind: 'rate_limited', retryAfterSeconds: Math.ceil(remaining / 1000) };
 
-    let token: string | null;
-    try {
-      token = await storage.get();
-    } catch {
-      token = null;
-    }
+    // Captured before the first await: any sign-out from here on discards this refresh.
+    const startedEpoch = epoch;
+    let token: string | null = memoryToken;
     if (token === null) {
-      // Nothing to exchange (a failed write earlier, or a locked keystore): the session cannot continue.
+      try {
+        token = await storage.get();
+      } catch {
+        // A keystore hiccup is not a verdict on the session: keep everything and try again later.
+        return { kind: 'unavailable', code: 'client.network' };
+      }
+    }
+    if (epoch !== startedEpoch) return { kind: 'ended' };
+    if (token === null) {
+      // Nothing to exchange: the session cannot continue.
       await signOutLocal('session_ended');
       return { kind: 'ended' };
     }
 
-    const startedEpoch = epoch;
     const wasSignedIn = store.getState().status === 'signedIn';
     let res: RequestResult;
     try {
@@ -141,8 +169,7 @@ export function createSessionService(deps: SessionDeps): SessionService {
       } catch {
         return { kind: 'unavailable', code: 'client.network' };
       }
-      await commit(tokens, !wasSignedIn);
-      return { kind: 'refreshed' };
+      return (await commit(tokens, !wasSignedIn, startedEpoch)) ? { kind: 'refreshed' } : { kind: 'ended' };
     }
     if (res.status === 429) {
       const seconds = retryAfterSeconds(res);
@@ -173,7 +200,7 @@ export function createSessionService(deps: SessionDeps): SessionService {
     signOutLocal,
 
     async applyTokens(tokens) {
-      await commit(tokens, true);
+      await commit(tokens, true, epoch);
     },
 
     async restore() {
