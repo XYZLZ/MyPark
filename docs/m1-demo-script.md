@@ -13,6 +13,8 @@ cd apps/mobile && EXPO_PUBLIC_API_URL=http://<LAN-IP>:8080 npx expo start
 
 Allow port 8080 through Windows Firewall. Open the project in Expo Go.
 
+If host port 5432 is already taken, prefix the `up` command with `POSTGRES_PORT=5433`. Run every command below from the repository root (open a second terminal for Expo).
+
 Run sign-ups at least one minute apart. Local web users share one rate-limit bucket (register is 3 per minute per IP).
 
 Shorthand for the database edits below, in Git Bash:
