@@ -204,11 +204,11 @@ Pagination is **keyset**: `?limit=50&cursor=<opaque>`, where the cursor encodes 
 | Refresh token | 256-bit random opaque value. Only the SHA-256 hash is stored. 30-day lifetime, **rotated on every use** |
 | Reuse detection | Each refresh token belongs to a `family_id`. Presenting a rotated token revokes the family and writes an audit entry |
 | Verification / reset codes | 6 digits, stored hashed, 15-min TTL, max 5 attempts, single use |
-| Web (BFF) | The browser talks only to Next.js. Next.js route handlers (`app/api/*`) call Go with the bearer token and keep `access` and `refresh` in `httpOnly; Secure; SameSite=Lax` cookies. Next 16 `proxy.ts` refreshes the token transparently. Mutating requests require `Origin` check + double-submit CSRF token |
+| Web (BFF) | The browser talks only to Next.js. Next.js route handlers (`app/api/*`) call Go with the bearer token and keep `access` and `refresh` in `httpOnly; Secure; SameSite=Lax` cookies. Next 16 `proxy.ts` is the only place a session is refreshed (CC-1); RSC and route handlers never refresh. Mutating requests require `Origin` check + double-submit CSRF token |
 | Mobile | Access token in memory (zustand), refresh token in `expo-secure-store`. The HTTP client does single-flight refresh on 401 |
 | Per-request session check | Every authenticated request runs `Authenticator.Authenticate`: verify the JWT, then **one indexed query** joins the session and its user. A revoked or absolutely expired session, a suspended, deleted or unverified user, and a role that differs from the database all fail at once, so logout, password reset and account deletion take effect immediately, not after the 15-min token expiry (spec 7.3, OC-4). The database role is authoritative. Failures are `401 auth.unauthenticated` or `auth.session_revoked`, and `403 auth.account_suspended` |
 | No refresh grace window | Presenting a rotated refresh token revokes the whole session (OC-5). Clients must single-flight refresh. The mobile HTTP client does, and the **web BFF must single-flight per session** too: concurrent `proxy.ts` or RSC refreshes with one cookie trip reuse detection and log the user out |
-| Client IP | The rate limiter and the audit log use the IP resolved by `middleware.ClientIP`: the TCP peer, or the left-most `X-Forwarded-For` entry **only when the peer is in `TRUSTED_PROXY_CIDRS`** (OC-22). The web BFF must forward the browser IP in `X-Forwarded-For`, and its address must be in that list |
+| Client IP | The rate limiter and the audit log use the IP resolved by `middleware.ClientIP`: the TCP peer, or, **only when the peer is in `TRUSTED_PROXY_CIDRS`**, the right-most `X-Forwarded-For` entry outside that list (OC-22). The web BFF forwards the incoming `X-Forwarded-For` unchanged, and its address must be in the list. M1 limitation (X1, CC-5): behind Docker NAT local web users share one rate-limit bucket, and a local caller can spoof the header because web is bound to loopback. Phase 2: Caddy overwrites the header |
 | Legal gate | A driver whose accepted terms or privacy version is not the current one gets `403 legal.acceptance_required` (with the current versions in `details`) on every route except those registered `LegalExempt`: `GET /v1/me`, `DELETE /v1/me`, `POST /v1/me/legal-acceptance`, logout and logout-all (spec §8.5). Admins are exempt (OC-15). The current versions are cached for 60 s and refreshed by one shared query |
 | Logout | `POST /v1/auth/logout` revokes the session in the token (`logout`). `POST /v1/auth/logout-all` revokes every live session of the user (`logout_all`). Both answer 204 and are audited. A second logout with the same token is rejected by the session check with 401 |
 | Authorization | Role check in middleware (`driver` / `admin`) + ownership check in each use case (a driver only sees their own resources) |
@@ -461,7 +461,7 @@ src/
 
 ```
 src/
-├─ app/                 # expo-router: (auth)/, (tabs)/{availability,reserve,reservations,vehicles,profile}, _layout.tsx
+├─ app/                 # expo-router: (auth)/, (tabs)/{availability,reserve,reservations,vehicles,profile}, _layout.tsx. M1 ships the Vehicles and Profile tabs only (X11)
 ├─ components/          # presentational
 ├─ features/<feature>/  # screens' containers, hooks
 ├─ services/            # httpClient (refresh single-flight), tokenStorage (secure-store), sse
@@ -503,8 +503,8 @@ src/
 | App | Unit | Integration | E2E |
 |---|---|---|---|
 | server | Domain rules table-driven (fees, availability, state machines), fake clock | Real Postgres (compose/CI service) per package with transactional fixtures; concurrency test for the cap; device API signature/idempotency tests | Simulator-driven scenario tests in CI (`fill_to_full`, `no_show`) |
-| web | vitest + Testing Library for components and hooks | MSW against OpenAPI fixtures | Playwright: register→reserve→cancel, admin tariff change |
-| mobile | jest-expo + RN Testing Library | MSW / mocked services | Manual demo script + Maestro (optional, M5) |
+| web | vitest + Testing Library for components and hooks | Typed fixtures stubbed at the fetch boundary (X9, CC-14) | Playwright: register→reserve→cancel, admin tariff change |
+| mobile | jest-expo + RN Testing Library | Typed fixtures stubbed at the fetch boundary (X9, CC-14) | Manual demo script + Maestro (optional, M5) |
 
 ---
 
@@ -524,3 +524,4 @@ src/
 | ADR-10 | PostgreSQL 18 | 16/17 + pg_uuidv7 extension | Built-in `uuidv7()`, no extension to manage |
 | ADR-11 | Stateful session check on every authenticated request | Trust the JWT until it expires (15 min); a deny-list of revoked session ids | A stateless check leaves a stolen or logged-out token valid for up to 15 min, and a deny-list is a second store to keep consistent. One PK or unique-index lookup per request is well inside the latency budget, and it makes revocation, suspension, deletion and role changes immediate |
 | ADR-12 | Fixed-window rate limiter in an UNLOGGED Postgres table | Redis; in-memory counters per instance | Counts are shared by every API instance with no new infrastructure. A single upsert with `date_bin` keeps it cheap. UNLOGGED data is lost on a crash, which is fine for throttling. A boundary burst up to 2x is accepted. Keys are SHA-256 hashes (no emails or IPs at rest), and the worker purges expired rows every minute |
+| ADR-13 | `proxy.ts` is the sole web refresher, with an in-flight lock and a 30 s result cache bound to `mp_csrf` | Refresh in RSC or route handlers; a backend replay window | RSC cannot set cookies, one entry point means one lock, and refresh tokens stay strictly single-use |

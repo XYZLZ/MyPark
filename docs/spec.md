@@ -503,10 +503,10 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 
 **Scope:** FR-AUTH-1…10 (including terms/privacy acceptance), FR-VEH-1…5, the BFF session layer on web, secure token storage on mobile, the email outbox + Mailpit, the audit log table, rate limiting, and the first admin seed.
 **Exit criteria** (backend verified on branch `feat/m1-backend`; items marked *needs Track B* are not complete until the web and mobile clients land)
-- [ ] Register → verification email in Mailpit → verify → login on web **and** mobile. Backend verified: `TestM1BackendAcceptance` covers both `client_kind` values and Mailpit, and a compose smoke run confirmed it. *Needs Track B* for the web and mobile screens.
+- [ ] Register → verification email in Mailpit → verify → login on web **and** mobile. Backend verified: `TestM1BackendAcceptance` covers both `client_kind` values and Mailpit, and a compose smoke run confirmed it. *Needs Track B* for the web and mobile screens. Clients implemented on `feat/m1-clients`; pending the demo run in `docs/m1-demo-script.md`.
 - [x] Refresh rotation + reuse detection covered by integration tests (`TestRefresh_ReuseRevokesFamily`, `TestRefresh_ConcurrentSameToken`, `TestRefresh_ReuseRevocationSurvivesErrorResponse`).
-- [ ] Vehicle CRUD with plate uniqueness. All errors shown in both languages. Backend verified: vehicle integration tests, and every returned code is in `errcodes` and the generated contract. *Needs Track B* for the translated messages and the vehicles UI.
-- [ ] An admin can log into the admin area. A driver cannot (403). Backend verified: `TestAuthzMatrix` and the acceptance test (seeded admin 200, driver 403 `auth.forbidden`). *Needs Track B* for the admin area itself.
+- [ ] Vehicle CRUD with plate uniqueness. All errors shown in both languages. Backend verified: vehicle integration tests, and every returned code is in `errcodes` and the generated contract. *Needs Track B* for the translated messages and the vehicles UI. Clients implemented on `feat/m1-clients`; pending the demo run in `docs/m1-demo-script.md`.
+- [ ] An admin can log into the admin area. A driver cannot (403). Backend verified: `TestAuthzMatrix` and the acceptance test (seeded admin 200, driver 403 `auth.forbidden`). *Needs Track B* for the admin area itself. Clients implemented on `feat/m1-clients`; pending the demo run in `docs/m1-demo-script.md`.
 **Demo:** create an account on mobile, add a car, log in on web with the same account.
 
 ### M2 — Live availability + simulator + gate flows
@@ -616,6 +616,7 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
 35. TypeScript 6.0.3 in every JS workspace, pinned by Expo SDK 58.
 36. M1 backend calls OC-1 to OC-39 are accepted as listed in the M1 backend design (`docs/superpowers/specs/2026-11-07-m1-backend-auth-vehicles-design.md` §2.2), including the "Changes during implementation" table at its top.
 37. Gaps resolved while building M1: a second logout with a revoked session returns 401 and clients treat it as success; refresh for a suspended or pending user returns 401 without a write, and a deleted user's session is revoked with `account_deleted`; `DELETE /v1/me` is limited to 5 per 15 min per user (fails closed); the seed admin takes `SEED_ADMIN_FIRST_NAME` and `SEED_ADMIN_LAST_NAME`; vehicle CRUD is not audited in M1.
+38. M1 client calls CC-1 to CC-27 are accepted as listed in the M1 clients design (`docs/superpowers/specs/2026-11-08-m1-clients-auth-vehicles-design.md` §2.2).
 
 ### 10.3 Open questions
 
