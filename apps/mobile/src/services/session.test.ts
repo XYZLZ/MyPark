@@ -317,9 +317,46 @@ describe('logout', () => {
     env.api.on(LOGOUT, () => {
       throw new TypeError('Network request failed');
     });
-    await expect(env.session.logout()).resolves.toBeUndefined();
+    await expect(env.session.logout()).resolves.toBe('failed');
     expect(useAuthStore.getState().status).toBe('signedOut');
     expect(env.storage.remove).toHaveBeenCalled();
+  });
+
+  test('reports revoked when the server confirms, with no notice', async () => {
+    const env = setup();
+    env.api.on('POST /v1/auth/logout-all', () => new Response(null, { status: 204 }));
+    await expect(env.session.logout('all')).resolves.toBe('revoked');
+    expect(useAuthStore.getState().notice).toBeNull();
+  });
+
+  test('a 401 after the refresh attempt counts as revoked: the session is already gone', async () => {
+    const env = setup();
+    env.api.on(LOGOUT, () => json(401, errorBody('auth.unauthenticated')));
+    env.api.on(REFRESH, () => json(200, successBody(tokens(1))));
+    await expect(env.session.logout()).resolves.toBe('revoked');
+  });
+
+  test.each([
+    ['a server error', () => json(500, errorBody('internal.unexpected'))],
+    [
+      'a network error',
+      () => {
+        throw new TypeError('Network request failed');
+      },
+    ],
+  ])('logout-all after %s reports failed, still signs out and leaves a notice', async (_name, respond) => {
+    const env = setup();
+    env.api.on('POST /v1/auth/logout-all', respond);
+    await expect(env.session.logout('all')).resolves.toBe('failed');
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', accessToken: null, notice: 'logout_all_failed' });
+    expect(env.storage.remove).toHaveBeenCalled();
+  });
+
+  test('a failed plain logout signs out without the logout-all notice', async () => {
+    const env = setup();
+    env.api.on(LOGOUT, () => json(500, errorBody('internal.unexpected')));
+    await expect(env.session.logout()).resolves.toBe('failed');
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: null });
   });
 
   test('with no access token clears locally without calling the server', async () => {

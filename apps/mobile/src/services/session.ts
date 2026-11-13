@@ -8,6 +8,8 @@ import type { AuthNotice, useAuthStore } from '@/store/auth';
 import { REFRESH_TIMEOUT_MS, type AuthAdapter, type HttpClient, type RefreshResult, type RequestResult } from './httpClient';
 import type { TokenStorage } from './tokenStorage';
 
+export type LogoutOutcome = 'revoked' | 'failed';
+
 export type SessionService = {
   /** App start: read the stored token and exchange it (spec 6.4). Never throws. */
   restore(): Promise<void>;
@@ -17,7 +19,11 @@ export type SessionService = {
   refresh(): Promise<RefreshResult>;
   /** The refresh in flight, if any. It contains no `auth: true` call, so waiting on it cannot deadlock. */
   pendingRefresh(): Promise<RefreshResult> | null;
-  logout(scope?: 'this' | 'all'): Promise<void>;
+  /**
+   * Ends the session. The local sign-out always happens (spec 6.5, best effort on the server); the outcome says whether the
+   * server confirmed the revoke. A failed 'all' leaves the `logout_all_failed` notice for the screen the user lands on.
+   */
+  logout(scope?: 'this' | 'all'): Promise<LogoutOutcome>;
   signOutLocal(notice?: AuthNotice): Promise<void>;
 };
 
@@ -245,15 +251,19 @@ export function createSessionService(deps: SessionDeps): SessionService {
     },
 
     async logout(scope = 'this') {
+      let outcome: LogoutOutcome = 'failed';
       if (store.getState().accessToken !== null) {
         try {
           // An expired access token is refreshed first by the client, so the server session is really revoked.
-          await http.request({ method: 'POST', path: scope === 'all' ? '/v1/auth/logout-all' : '/v1/auth/logout', auth: true });
+          const res = await http.request({ method: 'POST', path: scope === 'all' ? '/v1/auth/logout-all' : '/v1/auth/logout', auth: true });
+          // A 401 that survived the refresh attempt means the session is already gone: nothing is left to revoke.
+          if ((res.status >= 200 && res.status < 300) || res.status === 401) outcome = 'revoked';
         } catch {
           // Network, timeout or refresh trouble: the local session still ends.
         }
       }
-      await signOutLocal();
+      await signOutLocal(outcome === 'failed' && scope === 'all' ? 'logout_all_failed' : null);
+      return outcome;
     },
   };
 }

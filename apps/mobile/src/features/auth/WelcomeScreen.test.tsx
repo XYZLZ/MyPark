@@ -56,3 +56,10 @@ test.each(['session_ended', 'admin_web_only'] as const)('the %s notice sends the
   expect(mockRedirect).toHaveBeenCalledWith('/login');
   expect(screen.queryByRole('button', { name: 'Sign up' })).toBeNull();
 });
+
+test('a failed logout-all is explained once on Welcome', async () => {
+  useAuthStore.getState().clearSession('logout_all_failed');
+  await renderScreen(<WelcomeScreen />);
+  expect(screen.getByText('We could not confirm that your other sessions were closed. If you are worried, change your password.')).toBeTruthy();
+  expect(mockRedirect).not.toHaveBeenCalled();
+});

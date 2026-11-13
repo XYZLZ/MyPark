@@ -14,7 +14,7 @@ const logout = jest.mocked(session.logout);
 
 beforeEach(() => {
   restore.mockReset().mockResolvedValue(undefined);
-  logout.mockReset().mockResolvedValue(undefined);
+  logout.mockReset().mockResolvedValue('revoked');
 });
 
 test('offers Retry and Log out and keeps the token until Log out', async () => {

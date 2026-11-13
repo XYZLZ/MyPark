@@ -1,14 +1,15 @@
-import { errorBody, successBody } from '@mypark/contracts/fixtures';
+import { errorBody, successBody, userFixture } from '@mypark/contracts/fixtures';
 import { fireEvent, screen } from '@testing-library/react-native';
 
 import { http } from '@/services/runtime';
+import { useAuthStore } from '@/store/auth';
 import { useAuthFlowStore } from '@/store/auth-flow';
 import { renderScreen } from '@/testing/render';
 import { reply } from '@/testing/response';
 
 import { ForgotPasswordScreen } from './ForgotPasswordScreen';
 
-const mockRouter = { push: jest.fn(), replace: jest.fn() };
+const mockRouter = { push: jest.fn(), replace: jest.fn(), back: jest.fn() };
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
 jest.mock('@/services/runtime', () => ({ http: { request: jest.fn() } }));
 
@@ -16,6 +17,9 @@ const request = jest.mocked(http.request);
 
 beforeEach(() => {
   request.mockReset();
+  mockRouter.replace.mockReset();
+  mockRouter.back.mockReset();
+  useAuthStore.setState(useAuthStore.getInitialState(), true);
   useAuthFlowStore.setState(useAuthFlowStore.getInitialState(), true);
 });
 
@@ -43,4 +47,21 @@ test('a rate limit is shown, not hidden', async () => {
   await fireEvent.press(screen.getByRole('button', { name: 'Send code' }));
 
   expect(await screen.findByText('Too many attempts. Try again in 20 s.')).toBeTruthy();
+});
+
+describe('Back to log in', () => {
+  test('signed out it goes to the login screen', async () => {
+    await renderScreen(<ForgotPasswordScreen />);
+    await fireEvent.press(screen.getByRole('link', { name: 'Back to log in' }));
+    expect(mockRouter.replace).toHaveBeenCalledWith('/login');
+    expect(mockRouter.back).not.toHaveBeenCalled();
+  });
+
+  test('signed in (from Profile) it goes back instead, since /login is behind a guard', async () => {
+    useAuthStore.getState().setSession({ accessToken: 'a', user: userFixture, legalPending: false });
+    await renderScreen(<ForgotPasswordScreen />);
+    await fireEvent.press(screen.getByRole('link', { name: 'Back to log in' }));
+    expect(mockRouter.back).toHaveBeenCalledTimes(1);
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
 });

@@ -3,7 +3,12 @@
     "appName": "MyPark · Banreservas Zona Colonial",
     "loading": "Loading…",
     "retry": "Try again",
-    "logOut": "Log out"
+    "logOut": "Log out",
+    "dismiss": "Dismiss"
+  },
+  "nav": {
+    "vehicles": "Vehicles",
+    "profile": "Profile"
   },
   "errors": {
     "fallback": "Something went wrong. Please try again.",
@@ -70,7 +75,69 @@
   "session": {
     "ended": "Your session ended. Log in again.",
     "storageFailed": "We could not save your session on this device. You will need to log in the next time you open the app.",
-    "adminWebOnly": "Administrator accounts use the web admin area. This app is for drivers."
+    "adminWebOnly": "Administrator accounts use the web admin area. This app is for drivers.",
+    "logoutAll": "Log out on all devices",
+    "logoutAllFailed": "We could not confirm that your other sessions were closed. If you are worried, change your password."
+  },
+  "vehicles": {
+    "title": "My vehicles",
+    "count": "{{used}} of {{limit}}",
+    "add": "Add vehicle",
+    "capReached": "You reached the limit of {{limit}} vehicles. Delete one to add another.",
+    "empty": {
+      "title": "Add your first car",
+      "body": "Register your plate so you can reserve a space."
+    },
+    "editFor": "Edit {{plate}}",
+    "loading": "Updating your vehicles",
+    "loadError": {
+      "title": "We could not load your vehicles"
+    },
+    "delete": {
+      "action": "Delete vehicle",
+      "confirm": "Delete vehicle {{plate}}?",
+      "confirmAction": "Yes, delete",
+      "cancel": "Cancel"
+    },
+    "form": {
+      "createTitle": "Add vehicle",
+      "editTitle": "Edit vehicle",
+      "plate": "Plate",
+      "plateHint": "Type it any way you like: spaces and dashes are ignored.",
+      "make": "Make",
+      "model": "Model",
+      "color": "Color",
+      "create": "Save vehicle",
+      "save": "Save changes"
+    }
+  },
+  "profile": {
+    "title": "My profile",
+    "emailHint": "Your email cannot be changed.",
+    "save": "Save changes",
+    "saved": "Changes saved.",
+    "languageTitle": "Language",
+    "loadError": "We could not load your profile",
+    "password": {
+      "title": "Password",
+      "body": "To change your password we send a code to your email.",
+      "link": "Change my password"
+    },
+    "sessionTitle": "Session",
+    "danger": {
+      "title": "Delete account",
+      "body": "This permanently deletes your account, your personal data and your vehicles. It cannot be undone.",
+      "submit": "Delete my account"
+    }
+  },
+  "legalGate": {
+    "title": "We updated our legal texts",
+    "body": "To keep using MyPark, read and accept the current texts.",
+    "version": "Version {{version}}",
+    "accept": "Accept and continue",
+    "otherTitle": "Prefer not to accept?",
+    "otherBody": "You can log out or delete your account.",
+    "loadError": "We could not load the current legal texts"
   },
   "auth": {
     "fields": {

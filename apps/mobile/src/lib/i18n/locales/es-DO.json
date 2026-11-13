@@ -3,7 +3,12 @@
     "appName": "MyPark · Banreservas Zona Colonial",
     "loading": "Cargando…",
     "retry": "Reintentar",
-    "logOut": "Cerrar sesión"
+    "logOut": "Cerrar sesión",
+    "dismiss": "Descartar"
+  },
+  "nav": {
+    "vehicles": "Vehículos",
+    "profile": "Perfil"
   },
   "errors": {
     "fallback": "Algo salió mal. Inténtalo de nuevo.",
@@ -70,7 +75,69 @@
   "session": {
     "ended": "Tu sesión terminó. Inicia sesión de nuevo.",
     "storageFailed": "No pudimos guardar tu sesión en este dispositivo. La próxima vez que abras la app tendrás que iniciar sesión.",
-    "adminWebOnly": "Las cuentas de administrador se usan en el área de administración web. Esta app es para conductores."
+    "adminWebOnly": "Las cuentas de administrador se usan en el área de administración web. Esta app es para conductores.",
+    "logoutAll": "Cerrar sesión en todos los dispositivos",
+    "logoutAllFailed": "No pudimos confirmar que tus otras sesiones se cerraron. Si te preocupa, cambia tu contraseña."
+  },
+  "vehicles": {
+    "title": "Mis vehículos",
+    "count": "{{used}} de {{limit}}",
+    "add": "Agregar vehículo",
+    "capReached": "Llegaste al límite de {{limit}} vehículos. Elimina uno para agregar otro.",
+    "empty": {
+      "title": "Agrega tu primer vehículo",
+      "body": "Registra tu placa para poder reservar un espacio."
+    },
+    "editFor": "Editar {{plate}}",
+    "loading": "Actualizando tus vehículos",
+    "loadError": {
+      "title": "No pudimos cargar tus vehículos"
+    },
+    "delete": {
+      "action": "Eliminar vehículo",
+      "confirm": "¿Eliminar el vehículo {{plate}}?",
+      "confirmAction": "Sí, eliminar",
+      "cancel": "Cancelar"
+    },
+    "form": {
+      "createTitle": "Agregar vehículo",
+      "editTitle": "Editar vehículo",
+      "plate": "Placa",
+      "plateHint": "Escríbela como quieras: ignoramos espacios y guiones.",
+      "make": "Marca",
+      "model": "Modelo",
+      "color": "Color",
+      "create": "Guardar vehículo",
+      "save": "Guardar cambios"
+    }
+  },
+  "profile": {
+    "title": "Mi perfil",
+    "emailHint": "Tu correo no se puede cambiar.",
+    "save": "Guardar cambios",
+    "saved": "Cambios guardados.",
+    "languageTitle": "Idioma",
+    "loadError": "No pudimos cargar tu perfil",
+    "password": {
+      "title": "Contraseña",
+      "body": "Para cambiar tu contraseña te enviamos un código a tu correo.",
+      "link": "Cambiar mi contraseña"
+    },
+    "sessionTitle": "Sesión",
+    "danger": {
+      "title": "Eliminar cuenta",
+      "body": "Se eliminan de forma permanente tu cuenta, tus datos personales y tus vehículos. No se puede deshacer.",
+      "submit": "Eliminar mi cuenta"
+    }
+  },
+  "legalGate": {
+    "title": "Actualizamos nuestros textos legales",
+    "body": "Para seguir usando MyPark, lee y acepta los textos vigentes.",
+    "version": "Versión {{version}}",
+    "accept": "Aceptar y continuar",
+    "otherTitle": "¿Prefieres no aceptar?",
+    "otherBody": "Puedes cerrar sesión o eliminar tu cuenta.",
+    "loadError": "No pudimos cargar los textos legales vigentes"
   },
   "auth": {
     "fields": {

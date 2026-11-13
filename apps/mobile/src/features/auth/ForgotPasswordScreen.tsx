@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { ScreenScroll } from '@/components/ui/ScreenScroll';
 import { TextLink } from '@/components/ui/TextLink';
 import { isUndisclosedOutcome, useApiForm } from '@/lib/forms/use-api-form';
+import { useAuthStore } from '@/store/auth';
 import { useAuthFlowStore } from '@/store/auth-flow';
 
 import { forgotPassword } from './api';
@@ -21,6 +22,7 @@ export function ForgotPasswordScreen() {
   const router = useRouter();
   const savedEmail = useAuthFlowStore((s) => s.email);
   const setEmail = useAuthFlowStore((s) => s.setEmail);
+  const signedIn = useAuthStore((s) => s.status === 'signedIn');
   const [sent, setSent] = useState(false);
 
   const { form, lock, serverError, onSubmit, submitting } = useApiForm({
@@ -61,7 +63,7 @@ export function ForgotPasswordScreen() {
       <Button variant="primary" label={t('auth.forgot.submit')} loading={submitting} disabled={lock.locked} onPress={() => void onSubmit()} />
       <View className="items-start">
         <TextLink label={t('auth.forgot.haveCode')} onPress={() => router.push('/reset-password')} />
-        <TextLink label={t('auth.forgot.back')} onPress={() => router.replace('/login')} />
+        <TextLink label={t('auth.forgot.back')} onPress={() => (signedIn ? router.back() : router.replace('/login'))} />
       </View>
     </ScreenScroll>
   );
