@@ -2,6 +2,8 @@ import { errorBody } from '@mypark/contracts/fixtures';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import en from '@/i18n/messages/en.json';
+import esDO from '@/i18n/messages/es-DO.json';
+import { LOGOUT_ALL_UNCONFIRMED, LOGOUT_ALL_UNCONFIRMED_STATUS } from '@/lib/bff/logout-all';
 import { hardNavigate } from '@/lib/browser/navigate';
 import { jsonResponse, stubFetch } from '@/testing/fetch';
 import { renderWithProviders } from '@/testing/render';
@@ -31,6 +33,24 @@ describe('LogoutButtons', () => {
     fireEvent.click(screen.getByRole('button', { name: en.session.logout }));
 
     await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith('/en'));
+  });
+
+  test('logout on all devices that the BFF reports as unconfirmed goes home with the notice', async () => {
+    stubFetch(jsonResponse(LOGOUT_ALL_UNCONFIRMED_STATUS, errorBody(LOGOUT_ALL_UNCONFIRMED)));
+    renderWithProviders(<LogoutButtons scope="both" />, { locale: 'en' });
+
+    fireEvent.click(screen.getByRole('button', { name: en.session.logoutAll }));
+
+    await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith('/en?notice=logout_all_failed'));
+  });
+
+  test('logout on all devices without a 2xx is never taken as confirmed', async () => {
+    stubFetch(jsonResponse(500, errorBody('internal.unexpected')));
+    renderWithProviders(<LogoutButtons scope="both" />, { locale: 'es-DO' });
+
+    fireEvent.click(screen.getByRole('button', { name: esDO.session.logoutAll }));
+
+    await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith('/es-DO?notice=logout_all_failed'));
   });
 
   test('the BFF CSRF denial (403 auth.forbidden) is not a logout: show an error and stay', async () => {

@@ -147,6 +147,7 @@
     "logout": "Cerrar sesión",
     "logoutAll": "Cerrar sesión en todos los dispositivos",
     "loggingOut": "Cerrando sesión…",
+    "logoutAllFailed": "No pudimos confirmar que tus otras sesiones se cerraron. Si te preocupa, cambia tu contraseña.",
     "unavailable": {
       "title": "Tu sesión no está disponible por ahora",
       "body": "No pudimos renovar tu sesión en este momento. Tu cuenta está a salvo. Inténtalo de nuevo en un momento.",

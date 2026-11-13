@@ -147,6 +147,7 @@
     "logout": "Log out",
     "logoutAll": "Log out on all devices",
     "loggingOut": "Logging out…",
+    "logoutAllFailed": "We could not confirm that your other sessions were closed. If you are worried, change your password.",
     "unavailable": {
       "title": "Your session is temporarily unavailable",
       "body": "We could not refresh your session right now. Your account is safe. Try again in a moment.",

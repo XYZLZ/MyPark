@@ -4,6 +4,8 @@ export type BffRoute = {
   timeoutMs: number;
   /** What happens to the session cookies after the upstream answers. */
   after: 'none' | 'clear-always' | 'clear-on-204';
+  /** Answer the "not confirmed" signal of `./logout-all.ts` unless Go answered 2xx. Logout-all only. */
+  signalUnconfirmed: boolean;
 };
 
 export const ARGON2_TIMEOUT_MS = 20_000;
@@ -12,7 +14,14 @@ export const DEFAULT_TIMEOUT_MS = 5_000;
 const ID = ':id';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type Entry = { method: string; path: string; auth: BffRoute['auth']; timeoutMs?: number; after?: BffRoute['after'] };
+export type Entry = {
+  method: string;
+  path: string;
+  auth: BffRoute['auth'];
+  timeoutMs?: number;
+  after?: BffRoute['after'];
+  signalUnconfirmed?: boolean;
+};
 
 // Spec 5.5. Paths are relative to /api/v1. Login and session/end have their own handlers.
 /** The allow-list itself, exported so tests can iterate every route. */
@@ -24,7 +33,7 @@ export const BFF_ENTRIES: readonly Entry[] = [
   { method: 'POST', path: 'auth/password/reset', auth: 'public', timeoutMs: ARGON2_TIMEOUT_MS },
   { method: 'POST', path: 'auth/invitations/accept', auth: 'public', timeoutMs: ARGON2_TIMEOUT_MS },
   { method: 'POST', path: 'auth/logout', auth: 'bearer', after: 'clear-always' },
-  { method: 'POST', path: 'auth/logout-all', auth: 'bearer', after: 'clear-always' },
+  { method: 'POST', path: 'auth/logout-all', auth: 'bearer', after: 'clear-always', signalUnconfirmed: true },
   { method: 'GET', path: 'legal/current', auth: 'public' },
   { method: 'GET', path: 'me', auth: 'bearer' },
   { method: 'PATCH', path: 'me', auth: 'bearer' },
@@ -53,6 +62,7 @@ export function matchBffRoute(method: string, segments: string[]): BffRoute | nu
       auth: entry.auth,
       timeoutMs: entry.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       after: entry.after ?? 'none',
+      signalUnconfirmed: entry.signalUnconfirmed ?? false,
     };
   }
   return null;

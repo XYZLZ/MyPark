@@ -2,12 +2,20 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { ACCESS_COOKIE, REFRESH_COOKIE, clearSessionCookies } from '@/lib/session/cookies';
 import { matchBffRoute } from './allowlist';
 import { verifyMutation } from './csrf';
+import { LOGOUT_ALL_UNCONFIRMED, LOGOUT_ALL_UNCONFIRMED_STATUS } from './logout-all';
 import { apiUrl, bffError, forwardedHeaders, passthrough } from './upstream';
 
 const MUTATIONS = new Set(['POST', 'PATCH', 'DELETE']);
 const NO_BODY = new Set(['GET', 'HEAD']);
 
 const noContent = () => new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+
+/** Logout-all that Go did not confirm: cookies cleared, and the client told so (see `./logout-all.ts`). */
+function unconfirmedLogoutAll(): NextResponse {
+  const res = bffError(LOGOUT_ALL_UNCONFIRMED_STATUS, LOGOUT_ALL_UNCONFIRMED);
+  clearSessionCookies(res);
+  return res;
+}
 
 /**
  * The BFF catch-all (spec 5.5). Allow-list, CSRF, bearer from the cookie, then
@@ -31,6 +39,7 @@ export async function handleBff(request: NextRequest, segments: string[]): Promi
       if (route.after === 'clear-always') {
         // The user asked to leave, so a transient refresh failure must not trap them (PF4).
         // The refresh token is not revoked server-side in this case.
+        if (route.signalUnconfirmed) return unconfirmedLogoutAll();
         const res = noContent();
         clearSessionCookies(res);
         return res;
@@ -59,6 +68,10 @@ export async function handleBff(request: NextRequest, segments: string[]): Promi
       redirect: 'manual',
       signal: AbortSignal.timeout(route.timeoutMs),
     });
+    if (route.signalUnconfirmed && !upstream.ok) {
+      await upstream.body?.cancel();
+      return unconfirmedLogoutAll();
+    }
     // A logout that Go says is unauthenticated means the session is already gone: that is success.
     response =
       route.after === 'clear-always' && upstream.status === 401 ? noContent() : passthrough(upstream, await upstream.text());
@@ -66,6 +79,7 @@ export async function handleBff(request: NextRequest, segments: string[]): Promi
       clearSessionCookies(response);
     }
   } catch {
+    if (route.signalUnconfirmed) return unconfirmedLogoutAll();
     response = bffError(502, 'internal.unexpected');
     // Logout clears cookies whatever happened upstream (PF3).
     if (route.after === 'clear-always') clearSessionCookies(response);

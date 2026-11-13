@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { bffRequest } from '@/testing/bff-request';
 import { BFF_ENTRIES } from './allowlist';
 import { handleBff } from './handler';
+import { LOGOUT_ALL_UNCONFIRMED, LOGOUT_ALL_UNCONFIRMED_STATUS } from './logout-all';
 
 const fetchMock = vi.fn<typeof fetch>();
 const SESSION = { mp_access: 'access-1', mp_refresh: 'refresh-1' };
@@ -220,7 +221,7 @@ describe('cookie clearing', () => {
     const withRefresh = await logout({ mp_refresh: 'refresh-1' });
     expect(withRefresh.status).toBe(204);
     expect(cleared(withRefresh)).toBe(true);
-    const anonymous = await handleBff(bffRequest('/api/v1/auth/logout-all', { method: 'POST' }), ['auth', 'logout-all']);
+    const anonymous = await logout({});
     expect(anonymous.status).toBe(204);
     expect(cleared(anonymous)).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -244,6 +245,50 @@ describe('cookie clearing', () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('auth.account_suspended');
     expect(cleared(res)).toBe(true);
+  });
+
+  describe('logout on all devices reports whether Go confirmed the revoke', () => {
+    const logoutAll = (cookies: Record<string, string> = SESSION) =>
+      handleBff(bffRequest('/api/v1/auth/logout-all', { method: 'POST', cookies }), ['auth', 'logout-all']);
+
+    const expectUnconfirmed = async (res: NextResponse) => {
+      expect(res.status).toBe(LOGOUT_ALL_UNCONFIRMED_STATUS);
+      expect((await res.json()).error.code).toBe(LOGOUT_ALL_UNCONFIRMED);
+      expect(cleared(res)).toBe(true);
+    };
+
+    test('a 204 from Go is confirmed', async () => {
+      fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+      const res = await logoutAll();
+      expect(res.status).toBe(204);
+      expect(cleared(res)).toBe(true);
+    });
+
+    test('a 5xx from Go is not confirmed', async () => {
+      fetchMock.mockResolvedValue(Response.json(errorBody('internal.unexpected'), { status: 500 }));
+      await expectUnconfirmed(await logoutAll());
+    });
+
+    test('Go unreachable (the BFF 502) is not confirmed', async () => {
+      fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+      await expectUnconfirmed(await logoutAll());
+    });
+
+    test('no access cookie after the proxy is not confirmed, and Go is not called', async () => {
+      await expectUnconfirmed(await logoutAll({ mp_refresh: 'refresh-1' }));
+      await expectUnconfirmed(await logoutAll({}));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test('a 401 from Go is not confirmed: this session is gone, the others may not be', async () => {
+      fetchMock.mockResolvedValue(Response.json(errorBody('auth.unauthenticated'), { status: 401 }));
+      await expectUnconfirmed(await logoutAll());
+    });
+
+    test('a 403 from Go is not confirmed either', async () => {
+      fetchMock.mockResolvedValue(Response.json(errorBody('auth.account_suspended'), { status: 403 }));
+      await expectUnconfirmed(await logoutAll());
+    });
   });
 
   test('DELETE /v1/me clears cookies on 204 only', async () => {

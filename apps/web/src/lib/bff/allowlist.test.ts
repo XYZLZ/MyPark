@@ -82,4 +82,10 @@ describe('matchBffRoute', () => {
     expect(matchBffRoute('DELETE', ['me'])?.after).toBe('clear-on-204');
     expect(matchBffRoute('GET', ['me'])?.after).toBe('none');
   });
+
+  test('only logout-all signals an unconfirmed revoke', () => {
+    expect(matchBffRoute('POST', ['auth', 'logout-all'])?.signalUnconfirmed).toBe(true);
+    expect(matchBffRoute('POST', ['auth', 'logout'])?.signalUnconfirmed).toBe(false);
+    expect(matchBffRoute('DELETE', ['me'])?.signalUnconfirmed).toBe(false);
+  });
 });

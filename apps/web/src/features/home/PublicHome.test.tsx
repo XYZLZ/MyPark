@@ -15,6 +15,21 @@ describe('PublicHome', () => {
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
   });
 
+  test.each([
+    ['es-DO', 'No pudimos confirmar que tus otras sesiones se cerraron. Si te preocupa, cambia tu contraseña.'],
+    ['en', 'We could not confirm that your other sessions were closed. If you are worried, change your password.'],
+  ] as const)('an unconfirmed logout on all devices shows a notice, in %s', (locale, text) => {
+    renderWithProviders(<PublicHome signedIn={false} notice="logout_all_failed" />, { locale });
+
+    expect(screen.getByRole('status')).toHaveTextContent(text);
+  });
+
+  test('no notice, no banner', () => {
+    renderWithProviders(<PublicHome signedIn={false} />, { locale: 'en' });
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   test('signed in shows a Vehicles link instead', () => {
     renderWithProviders(<PublicHome signedIn />, { locale: 'en' });
 
