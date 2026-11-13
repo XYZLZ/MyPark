@@ -33,6 +33,9 @@ export type SessionDeps = {
 /** Used when a 429 carries no usable wait time. */
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
 
+/** Written over a refresh token that could not be deleted. */
+const TOMBSTONE = '';
+
 const parseTokens = parseEnvelope(tokenResponseSchema);
 
 /** The ApiError carried by an error envelope, if the response is one. */
@@ -64,12 +67,26 @@ export function createSessionService(deps: SessionDeps): SessionService {
   /** A rotated refresh token that could not be written to secure storage. Memory only, this run only. */
   let memoryToken: string | null = null;
 
+  /**
+   * Best effort, never throws. When the delete fails the old token would sign the user back in on the next start,
+   * so it is overwritten with an empty tombstone, which readStoredToken treats as no token.
+   */
   async function removeStoredToken(): Promise<void> {
     try {
       await storage.remove();
     } catch {
-      // Best effort: nothing else can be done about a locked keystore.
+      try {
+        await storage.set(TOMBSTONE);
+      } catch {
+        // Nothing else can be done about a locked keystore.
+      }
     }
+  }
+
+  /** The stored refresh token, or null when there is none or it is the tombstone. */
+  async function readStoredToken(): Promise<string | null> {
+    const token = await storage.get();
+    return token === TOMBSTONE ? null : token;
   }
 
   /**
@@ -97,6 +114,8 @@ export function createSessionService(deps: SessionDeps): SessionService {
       return false;
     }
     // On a write failure the rotated token lives in memory for this run so the next 401 can still refresh.
+    // The one-time notice is raised only on the move from stored to memory-only.
+    const becameMemoryOnly = !stored && memoryToken === null;
     memoryToken = stored ? null : tokens.refresh_token;
     const state = store.getState();
     state.clearNotice();
@@ -105,7 +124,7 @@ export function createSessionService(deps: SessionDeps): SessionService {
       user: tokens.user,
       legalPending: tokens.legal_acceptance_required,
     });
-    if (!stored) store.getState().setNotice('storage_failed');
+    if (becameMemoryOnly) store.getState().setNotice('storage_failed');
     if (applyLocale) onUserLocale(tokens.user.locale);
     return true;
   }
@@ -113,10 +132,12 @@ export function createSessionService(deps: SessionDeps): SessionService {
   async function signOutLocal(notice: AuthNotice = null): Promise<void> {
     epoch += 1;
     memoryToken = null;
+    // A late request must not wait on a refresh of the session that just ended (its own .finally only clears itself).
+    inFlight = null;
     const { user } = store.getState();
-    // A lost or revoked session shows the login screen with the email pre-filled when it is known.
-    if (notice === 'session_ended' && user) useAuthFlowStore.getState().setEmail(user.email);
     try {
+      // A lost or revoked session shows the login screen with the email pre-filled when it is known.
+      if (notice === 'session_ended' && user) useAuthFlowStore.getState().setEmail(user.email);
       store.getState().clearSession(notice);
       queryClient.clear();
     } finally {
@@ -133,7 +154,7 @@ export function createSessionService(deps: SessionDeps): SessionService {
     let token: string | null = memoryToken;
     if (token === null) {
       try {
-        token = await storage.get();
+        token = await readStoredToken();
       } catch {
         // A keystore hiccup is not a verdict on the session: keep everything and try again later.
         return { kind: 'unavailable', code: 'client.network' };
@@ -167,7 +188,9 @@ export function createSessionService(deps: SessionDeps): SessionService {
       try {
         tokens = parseTokens(res.body, res.status);
       } catch {
-        return { kind: 'unavailable', code: 'client.network' };
+        // A 200 means the server already rotated the token: the old one is dead and replaying it revokes the family.
+        await signOutLocal('session_ended');
+        return { kind: 'ended' };
       }
       return (await commit(tokens, !wasSignedIn, startedEpoch)) ? { kind: 'refreshed' } : { kind: 'ended' };
     }
@@ -206,7 +229,7 @@ export function createSessionService(deps: SessionDeps): SessionService {
     async restore() {
       let token: string | null;
       try {
-        token = await storage.get();
+        token = await readStoredToken();
       } catch {
         await removeStoredToken();
         store.getState().clearSession();

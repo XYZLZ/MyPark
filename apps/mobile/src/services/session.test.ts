@@ -271,11 +271,11 @@ describe('refresh()', () => {
     expect(env.onUserLocale).not.toHaveBeenCalled();
   });
 
-  test('a malformed 200 is treated as unavailable and keeps the stored token', async () => {
+  test('a malformed 200 ends the session and removes the consumed token', async () => {
     const env = setup();
     env.api.on(REFRESH, () => json(200, { data: { nope: true } }));
-    await expect(env.session.refresh()).resolves.toEqual({ kind: 'unavailable', code: 'client.network' });
-    expect(env.storage.remove).not.toHaveBeenCalled();
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'ended' });
+    expect(env.storage.remove).toHaveBeenCalled();
   });
 });
 
@@ -355,6 +355,46 @@ describe('signOutLocal', () => {
     await expect(env.session.signOutLocal('session_ended')).resolves.toBeUndefined();
     expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: 'session_ended' });
   });
+
+  test('a failed delete overwrites the stored token with an empty tombstone', async () => {
+    const env = setup();
+    env.storage.remove.mockRejectedValue(new Error('keystore locked'));
+    await env.session.signOutLocal();
+    expect(env.storage.set).toHaveBeenCalledWith('');
+  });
+
+  test('a failed delete and a failed tombstone still do not throw', async () => {
+    const env = setup();
+    env.storage.remove.mockRejectedValue(new Error('keystore locked'));
+    env.storage.set.mockRejectedValue(new Error('keystore locked'));
+    await expect(env.session.signOutLocal('session_ended')).resolves.toBeUndefined();
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: 'session_ended' });
+  });
+
+  test('no tombstone is written when the delete works', async () => {
+    const env = setup();
+    await env.session.signOutLocal();
+    expect(env.storage.set).not.toHaveBeenCalled();
+  });
+
+  test('the email prefill failing does not skip the stored token removal', async () => {
+    const env = setup();
+    const spy = jest.spyOn(useAuthFlowStore.getState(), 'setEmail').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    await expect(env.session.signOutLocal('session_ended')).rejects.toThrow('boom');
+    expect(env.storage.remove).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  test('a refresh in flight at sign-out does not linger for later requests', async () => {
+    const env = setup();
+    env.storage.get.mockReturnValue(new Promise<string | null>(() => undefined));
+    void env.session.refresh();
+    expect(env.session.pendingRefresh()).not.toBeNull();
+    await env.session.signOutLocal();
+    expect(env.session.pendingRefresh()).toBeNull();
+  });
 });
 
 describe('restore (spec 6.4)', () => {
@@ -410,6 +450,21 @@ describe('restore (spec 6.4)', () => {
     expect(useAuthStore.getState()).toMatchObject({ status: 'restoreFailed', accessToken: null });
     expect(env.storage.remove).not.toHaveBeenCalled();
     expect(env.storage.set).not.toHaveBeenCalled();
+  });
+
+  test('an empty stored token (tombstone) is signedOut with no refresh request', async () => {
+    const env = setup({ stored: '', signedIn: false });
+    await env.session.restore();
+    expect(useAuthStore.getState().status).toBe('signedOut');
+    expect(env.api.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  test('a 200 that does not parse is signedOut, not restoreFailed, and removes the consumed token', async () => {
+    const env = setup({ signedIn: false });
+    env.api.on(REFRESH, () => new Response('<html>oops</html>', { status: 200 }));
+    await env.session.restore();
+    expect(useAuthStore.getState().status).toBe('signedOut');
+    expect(env.storage.remove).toHaveBeenCalled();
   });
 
   test('retry after restoreFailed can succeed', async () => {
@@ -501,6 +556,26 @@ describe('races and failure handling', () => {
     await expect(env.session.refresh()).resolves.toEqual({ kind: 'refreshed' });
     expect(JSON.parse(env.api.calls[1]!.init.body as string)).toEqual({ refresh_token: 'refresh-1' });
     expect(useAuthStore.getState().accessToken).toBe('access-2');
+  });
+
+  test('a mid-session 200 with a non-JSON body ends the session and removes the consumed token', async () => {
+    const env = setup();
+    env.api.on(REFRESH, () => new Response('not json', { status: 200 }));
+    await expect(env.session.refresh()).resolves.toEqual({ kind: 'ended' });
+    expect(env.storage.remove).toHaveBeenCalled();
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', accessToken: null, notice: 'session_ended' });
+  });
+
+  test('storage_failed is raised once, on the transition to memory-only', async () => {
+    const env = setup();
+    env.storage.set.mockRejectedValue(new Error('keystore locked'));
+    refreshOk(env);
+    await env.session.refresh();
+    expect(useAuthStore.getState().notice).toBe('storage_failed');
+    useAuthStore.getState().clearNotice();
+    env.api.on(REFRESH, () => json(200, successBody(tokens(2))));
+    await env.session.refresh();
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'access-2', notice: null });
   });
 
   test('the in-memory token is dropped on sign-out', async () => {
