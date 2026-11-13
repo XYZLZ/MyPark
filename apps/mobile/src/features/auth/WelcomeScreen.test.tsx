@@ -63,3 +63,13 @@ test('a failed logout-all is explained once on Welcome', async () => {
   expect(screen.getByText('We could not confirm that your other sessions were closed. If you are worried, change your password.')).toBeTruthy();
   expect(mockRedirect).not.toHaveBeenCalled();
 });
+
+test('leaving Welcome consumes the logout-all notice', async () => {
+  useAuthStore.getState().clearSession('logout_all_failed');
+  await renderScreen(<WelcomeScreen />);
+  expect(useAuthStore.getState().notice).toBe('logout_all_failed');
+
+  await screen.unmount();
+
+  expect(useAuthStore.getState().notice).toBeNull();
+});

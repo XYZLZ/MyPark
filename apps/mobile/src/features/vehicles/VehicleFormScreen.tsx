@@ -1,9 +1,9 @@
 import { ApiError, vehicleInputSchema, type Vehicle } from '@mypark/contracts';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Alert } from 'react-native';
+import { Alert, View } from 'react-native';
 
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
@@ -55,8 +55,10 @@ function EditVehicle({ vehicleId }: { vehicleId: string }) {
   }
   return (
     <ScreenScroll>
-      <Skeleton className="h-12 w-full" />
-      <Skeleton className="h-12 w-full" />
+      <View accessible accessibilityRole="progressbar" accessibilityLabel={t('common.loading')} className="gap-4">
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-12 w-full" />
+      </View>
     </ScreenScroll>
   );
 }
@@ -66,8 +68,9 @@ function VehicleFields({ vehicle }: { vehicle: Vehicle | undefined }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const deleting = useRef(false);
+  const [deletingNow, setDeletingNow] = useState(false);
 
-  const { form, serverError, onSubmit, submitting, fail } = useApiForm({
+  const { form, lock, serverError, onSubmit, submitting, fail } = useApiForm({
     schema: vehicleInputSchema,
     defaultValues: {
       plate: vehicle?.plate ?? '',
@@ -104,6 +107,7 @@ function VehicleFields({ vehicle }: { vehicle: Vehicle | undefined }) {
     // Review Focus 4: one DELETE however fast the button is tapped.
     if (deleting.current) return;
     deleting.current = true;
+    setDeletingNow(true);
     form.clearErrors('root.serverError');
     try {
       await deleteVehicle(target.id);
@@ -117,6 +121,7 @@ function VehicleFields({ vehicle }: { vehicle: Vehicle | undefined }) {
       fail(error);
     } finally {
       deleting.current = false;
+      setDeletingNow(false);
     }
   }
 
@@ -148,9 +153,10 @@ function VehicleFields({ vehicle }: { vehicle: Vehicle | undefined }) {
         variant="primary"
         label={vehicle ? t('vehicles.form.save') : t('vehicles.form.create')}
         loading={submitting}
+        disabled={lock.locked || deletingNow}
         onPress={() => void onSubmit()}
       />
-      {vehicle ? <Button variant="danger" label={t('vehicles.delete.action')} disabled={submitting} onPress={() => askDelete(vehicle)} /> : null}
+      {vehicle ? <Button variant="danger" label={t('vehicles.delete.action')} loading={deletingNow} disabled={submitting || deletingNow} onPress={() => askDelete(vehicle)} /> : null}
     </ScreenScroll>
   );
 }

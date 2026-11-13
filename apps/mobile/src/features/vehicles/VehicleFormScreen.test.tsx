@@ -93,6 +93,17 @@ test('limit_reached shows a banner', async () => {
   expect(screen.getAllByTestId('banner')).toHaveLength(1);
 });
 
+test('a 429 locks Save for the wait time', async () => {
+  request.mockResolvedValue(reply(429, errorBody('rate_limit.exceeded', { retry_after_seconds: 30 })));
+  await renderScreen(<VehicleFormScreen />);
+
+  await fillIn();
+  await fireEvent.press(screen.getByRole('button', { name: 'Save vehicle' }));
+
+  expect(await screen.findByText('Too many attempts. Try again in 30 s.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Save vehicle' }).props.accessibilityState).toMatchObject({ disabled: true });
+});
+
 describe('edit', () => {
   test('edit loads the vehicle and patches only what changed', async () => {
     request.mockResolvedValueOnce(reply(200, successBody(vehicleFixture)));
@@ -144,6 +155,26 @@ describe('edit', () => {
 
     await waitFor(() => expect(mockRouter.dismissTo).toHaveBeenCalledWith('/vehicles'));
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'DELETE', path: `/v1/vehicles/${ID}`, auth: true }));
+  });
+
+  test('while the DELETE is in flight Delete shows loading and Save and Delete are disabled', async () => {
+    const destructive = await openDelete();
+
+    let finish: (value: ReturnType<typeof reply>) => void = () => undefined;
+    request.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    destructive.onPress?.();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete vehicle' }).props.accessibilityState).toMatchObject({ busy: true, disabled: true }));
+    expect(screen.getByRole('button', { name: 'Save changes' }).props.accessibilityState).toMatchObject({ disabled: true });
+
+    finish(reply(204));
+    await waitFor(() => expect(mockRouter.dismissTo).toHaveBeenCalledWith('/vehicles'));
+  });
+
+  test('the edit loading skeleton is announced', async () => {
+    request.mockReturnValueOnce(new Promise(() => undefined));
+    await renderScreen(<VehicleFormScreen vehicleId={ID} />);
+    expect(screen.getByRole('progressbar', { name: 'Loading…' })).toBeTruthy();
   });
 
   test('vehicle_in_use shows a banner', async () => {
