@@ -1,6 +1,6 @@
 import { errorBody, successBody, vehicleFixture } from '@mypark/contracts/fixtures';
 import { QueryClient } from '@tanstack/react-query';
-import { fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { Alert, type AlertButton } from 'react-native';
 
 import { http } from '@/services/runtime';
@@ -151,7 +151,7 @@ describe('edit', () => {
     expect(request.mock.calls.some(([req]) => req.method === 'DELETE')).toBe(false);
 
     request.mockResolvedValueOnce(reply(204));
-    destructive.onPress?.();
+    await act(async () => destructive.onPress?.());
 
     await waitFor(() => expect(mockRouter.dismissTo).toHaveBeenCalledWith('/vehicles'));
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'DELETE', path: `/v1/vehicles/${ID}`, auth: true }));
@@ -162,7 +162,7 @@ describe('edit', () => {
 
     let finish: (value: ReturnType<typeof reply>) => void = () => undefined;
     request.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
-    destructive.onPress?.();
+    await act(async () => destructive.onPress?.());
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Delete vehicle' }).props.accessibilityState).toMatchObject({ busy: true, disabled: true }));
     expect(screen.getByRole('button', { name: 'Save changes' }).props.accessibilityState).toMatchObject({ disabled: true });
@@ -181,7 +181,7 @@ describe('edit', () => {
     const destructive = await openDelete();
 
     request.mockResolvedValueOnce(reply(409, errorBody('vehicle.in_use')));
-    destructive.onPress?.();
+    await act(async () => destructive.onPress?.());
 
     expect(await screen.findByText('This vehicle is in use and cannot be deleted.')).toBeTruthy();
     expect(mockRouter.dismissTo).not.toHaveBeenCalled();
@@ -201,7 +201,7 @@ describe('edit', () => {
     const destructive = await openDelete();
 
     request.mockResolvedValueOnce(reply(404, errorBody('vehicle.not_found')));
-    destructive.onPress?.();
+    await act(async () => destructive.onPress?.());
 
     await waitFor(() => expect(mockRouter.dismissTo).toHaveBeenCalledWith('/vehicles'));
   });
