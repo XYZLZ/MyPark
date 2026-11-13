@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Animated, AccessibilityInfo } from 'react-native';
 
+import { tokens } from '@/design/tokens';
+
 import { Button } from './Button';
 
 let reduceMotion = false;
@@ -58,4 +60,41 @@ test('skips the press animation when reduce motion is on', async () => {
   await render(<Button variant="primary" label="Save" onPress={jest.fn()} />);
   await fireEvent(screen.getByRole('button', { name: 'Save' }), 'pressIn');
   expect(timing).not.toHaveBeenCalled();
+});
+
+// Spec §9.5 "Same": each variant matches the web Button (apps/web/src/components/ui/Button.tsx).
+const classesOf = (element: { props: { className?: string } }) => (element.props.className ?? '').split(/\s+/);
+
+test('onDark is a transparent outline with white text, like web', async () => {
+  await render(<Button variant="onDark" label="Log in" onPress={jest.fn()} />);
+  const surface = classesOf(screen.getByRole('button', { name: 'Log in' }));
+  expect(surface).toEqual(expect.arrayContaining(['bg-transparent', 'border-2', 'border-brand-primary-contrast']));
+  expect(surface).not.toContain('bg-surface');
+  // The focus border must stay visible on navy, so it is not the navy brand color.
+  expect(surface).not.toContain('focus:border-brand-primary');
+  expect(classesOf(screen.getByText('Log in'))).toContain('text-brand-primary-contrast');
+});
+
+test('quiet has no border, like web', async () => {
+  await render(<Button variant="quiet" label="Back" onPress={jest.fn()} />);
+  const surface = classesOf(screen.getByRole('button', { name: 'Back' }));
+  expect(surface).toContain('bg-transparent');
+  expect(surface).not.toContain('border-2');
+  expect(surface).not.toContain('border-control-line');
+  expect(classesOf(screen.getByText('Back'))).toContain('text-brand-primary');
+});
+
+test('disabled has no border except on onDark, like web', async () => {
+  await render(<Button variant="quiet" label="Back" disabled onPress={jest.fn()} />);
+  expect(classesOf(screen.getByRole('button', { name: 'Back' }))).not.toContain('border-2');
+});
+
+test.each([
+  ['primary', tokens.brandActionContrast],
+  ['onDark', tokens.brandPrimaryContrast],
+  ['quiet', tokens.brandPrimary],
+  ['danger', tokens.brandPrimaryContrast],
+] as const)('the %s spinner uses the text color, like web', async (variant, color) => {
+  await render(<Button variant={variant} label="Save" loading onPress={jest.fn()} />);
+  expect(screen.getByTestId('button-spinner').props.color).toBe(color);
 });

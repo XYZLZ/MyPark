@@ -5,26 +5,36 @@ import { tokens } from '@/design/tokens';
 
 import { AppText } from './AppText';
 
+// The maps mirror the web Button (apps/web/src/components/ui/Button.tsx, spec §9.5 "Same").
+// Web hover has no touch equivalent, so the press state uses the same color. The focus border
+// is per variant: on navy (onDark) a navy border would be invisible, so it widens in white.
 const SURFACE_CLASS = {
-  primary: 'bg-brand-action active:bg-brand-action-press',
-  onDark: 'bg-surface active:bg-brand-primary-tint',
-  quiet: 'bg-transparent border-2 border-control-line active:bg-brand-primary-tint',
-  danger: 'bg-danger active:opacity-90',
+  primary: 'bg-brand-action active:bg-brand-action-press focus:border-2 focus:border-brand-primary',
+  onDark: 'bg-transparent border-2 border-brand-primary-contrast active:bg-white/10 focus:border-4',
+  quiet: 'bg-transparent active:bg-brand-primary-tint focus:border-2 focus:border-brand-primary',
+  danger: 'bg-danger active:opacity-90 focus:border-2 focus:border-brand-primary',
 } as const;
 
 const TEXT_CLASS = {
   primary: 'text-brand-action-contrast',
-  onDark: 'text-brand-primary-strong',
+  onDark: 'text-brand-primary-contrast',
   quiet: 'text-brand-primary',
   danger: 'text-brand-primary-contrast',
 } as const;
 
-const DISABLED_SURFACE = 'bg-disabled-bg border-2 border-hairline';
+// Web disabled is a flat fill; onDark keeps its outline, in the disabled ink color.
+const DISABLED_SURFACE = {
+  primary: 'bg-disabled-bg',
+  onDark: 'bg-disabled-bg border-2 border-disabled-ink',
+  quiet: 'bg-disabled-bg',
+  danger: 'bg-disabled-bg',
+} as const;
 
-// Spinner color per variant: the `accent-` form is for non-style props, a literal token value works too.
+// Spinner color per variant, the text color as on web (`border-current`). The `accent-` form is
+// for non-style props; a literal token value works too.
 const SPINNER_COLOR = {
   primary: tokens.brandActionContrast,
-  onDark: tokens.brandPrimaryStrong,
+  onDark: tokens.brandPrimaryContrast,
   quiet: tokens.brandPrimary,
   danger: tokens.brandPrimaryContrast,
 } as const;
@@ -68,7 +78,7 @@ export function Button({ variant, label, loading = false, disabled = false, onPr
 
   // Loading stays pressable so focus is not lost, but it must never submit twice.
   const inert = disabled || loading;
-  const surface = disabled ? DISABLED_SURFACE : SURFACE_CLASS[variant];
+  const surface = disabled ? DISABLED_SURFACE[variant] : SURFACE_CLASS[variant];
   const textColor = disabled ? 'text-disabled-ink' : TEXT_CLASS[variant];
 
   return (
@@ -83,9 +93,9 @@ export function Button({ variant, label, loading = false, disabled = false, onPr
         }}
         onPressIn={() => animateTo(PRESS_SCALE)}
         onPressOut={() => animateTo(1)}
-        className={`min-h-12 flex-row items-center justify-center gap-2 rounded-full px-6 py-3 focus:border-2 focus:border-brand-primary ${surface}`}
+        className={`min-h-12 flex-row items-center justify-center gap-2 rounded-full px-6 py-3 ${surface}`}
       >
-        {loading ? <ActivityIndicator color={SPINNER_COLOR[variant]} /> : null}
+        {loading ? <ActivityIndicator testID="button-spinner" color={SPINNER_COLOR[variant]} /> : null}
         <AppText weight="semibold" className={textColor}>
           {label}
         </AppText>
