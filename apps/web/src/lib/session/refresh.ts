@@ -40,8 +40,13 @@ export function createRefreshCoordinator(deps: { fetchImpl?: typeof fetch; now?:
   // Insertion order is expiry order, so the oldest entry is always first.
   const results = new Map<string, CachedResult>();
 
-  /** One upstream rotation. Never throws: every failure is `unavailable`, which keeps the cookies. */
+  /**
+   * One upstream rotation. Never throws. A failure is `unavailable`, which keeps the cookies, except
+   * a 200 that cannot be read: Go has already rotated (spent) the token it was sent, so keeping that
+   * cookie would only trip reuse detection later. That case is `ended`, as on mobile.
+   */
   async function callUpstream(input: RefreshInput): Promise<RefreshOutcome> {
+    let rotated = false;
     try {
       const response = await (deps.fetchImpl ?? fetch)(apiUrl('/v1/auth/refresh'), {
         method: 'POST',
@@ -56,9 +61,10 @@ export function createRefreshCoordinator(deps: { fetchImpl?: typeof fetch; now?:
         // navigates away must not abort a rotation other requests wait on.
         signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
       });
+      rotated = response.status === 200;
       const body: unknown = await response.json();
 
-      if (response.status === 200) {
+      if (rotated) {
         const tokens = parseTokens(body, 200);
         return {
           kind: 'refreshed',
@@ -76,7 +82,7 @@ export function createRefreshCoordinator(deps: { fetchImpl?: typeof fetch; now?:
       }
       return { kind: 'unavailable' };
     } catch {
-      return { kind: 'unavailable' };
+      return rotated ? { kind: 'ended' } : { kind: 'unavailable' };
     }
   }
 

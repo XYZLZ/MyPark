@@ -215,11 +215,16 @@ describe('outcomes', () => {
     expect(await down.coordinator.refresh(input())).toEqual({ kind: 'unavailable' });
   });
 
-  test('a malformed 200 keeps cookies', async () => {
+  test('a malformed 200 ends the session: Go already rotated the token it was sent', async () => {
     const s = setup(() => Response.json({ data: { foo: 1 }, meta: { request_id: 'x' } }, { status: 200 }));
-    expect(await s.coordinator.refresh(input())).toEqual({ kind: 'unavailable' });
+    expect(await s.coordinator.refresh(input())).toEqual({ kind: 'ended' });
     const text = setup(() => new Response('<html>', { status: 200 }));
-    expect(await text.coordinator.refresh(input())).toEqual({ kind: 'unavailable' });
+    expect(await text.coordinator.refresh(input())).toEqual({ kind: 'ended' });
+  });
+
+  test('a non-200 whose body is not JSON keeps cookies', async () => {
+    const s = setup(() => new Response('<html>bad gateway</html>', { status: 502 }));
+    expect(await s.coordinator.refresh(input())).toEqual({ kind: 'unavailable' });
   });
 
   test('maps the token response to a token pair', async () => {
