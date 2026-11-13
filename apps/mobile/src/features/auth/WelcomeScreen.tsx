@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { ScrollView, View } from 'react-native';
 
@@ -8,11 +8,16 @@ import { LanguageSwitch } from '@/components/ui/LanguageSwitch';
 import { ParkingSign } from '@/components/ui/ParkingSign';
 import { changeLanguage } from '@/features/session/change-language';
 import type { AppLanguage } from '@/lib/i18n';
+import { useAuthStore } from '@/store/auth';
 
 /** First screen when signed out: the sign, two actions and the language switch. No carousel (spec §2.1). */
 export function WelcomeScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const notice = useAuthStore((s) => s.notice);
+
+  // A session that ended (or an admin account turned away) is explained on Login, with the email pre-filled.
+  if (notice === 'session_ended' || notice === 'admin_web_only') return <Redirect href="/login" />;
 
   return (
     <ScrollView

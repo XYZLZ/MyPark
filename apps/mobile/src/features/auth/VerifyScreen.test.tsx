@@ -62,6 +62,21 @@ test.each([
   expect(screen.queryByText('Something went wrong. Please try again.')).toBeNull();
 });
 
+test('resend is unavailable while the code is being verified', async () => {
+  let finish: () => void = () => undefined;
+  request.mockReturnValue(new Promise((resolve) => (finish = () => resolve(reply(204)))));
+  await renderScreen(<VerifyScreen />);
+
+  await fireEvent.changeText(screen.getByLabelText('Verification code'), '123456');
+  await fireEvent.press(screen.getByRole('button', { name: 'Verify' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Send a new code' }));
+
+  expect(screen.getByRole('button', { name: 'Send a new code' }).props.accessibilityState.disabled).toBe(true);
+  expect(request).toHaveBeenCalledTimes(1);
+  finish();
+  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/login'));
+});
+
 test('resend still reports a rate limit', async () => {
   request.mockResolvedValue(reply(429, errorBody('rate_limit.exceeded', { retry_after_seconds: 45 })));
   await renderScreen(<VerifyScreen />);

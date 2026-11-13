@@ -1,17 +1,27 @@
 import { fireEvent, screen } from '@testing-library/react-native';
 
 import { changeLanguage } from '@/features/session/change-language';
+import { useAuthStore } from '@/store/auth';
 import { renderScreen } from '@/testing/render';
 
 import { WelcomeScreen } from './WelcomeScreen';
 
 const mockPush = jest.fn();
 const mockRouter = { push: mockPush, replace: jest.fn() };
-jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
+const mockRedirect = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => mockRouter,
+  Redirect: ({ href }: { href: string }) => {
+    mockRedirect(href);
+    return null;
+  },
+}));
 jest.mock('@/features/session/change-language', () => ({ changeLanguage: jest.fn() }));
 
 beforeEach(() => {
   mockPush.mockReset();
+  mockRedirect.mockReset();
+  useAuthStore.setState(useAuthStore.getInitialState(), true);
   jest.mocked(changeLanguage).mockReset();
 });
 
@@ -33,4 +43,16 @@ test('offers Sign up, Log in and the language switch, with no carousel', async (
 
   await fireEvent.press(screen.getByRole('button', { name: 'Español' }));
   expect(changeLanguage).toHaveBeenCalledWith('es-DO');
+});
+
+test('a signed-out start with no notice stays on Welcome', async () => {
+  await renderScreen(<WelcomeScreen />);
+  expect(mockRedirect).not.toHaveBeenCalled();
+});
+
+test.each(['session_ended', 'admin_web_only'] as const)('the %s notice sends the user to Login', async (notice) => {
+  useAuthStore.getState().clearSession(notice);
+  await renderScreen(<WelcomeScreen />);
+  expect(mockRedirect).toHaveBeenCalledWith('/login');
+  expect(screen.queryByRole('button', { name: 'Sign up' })).toBeNull();
 });

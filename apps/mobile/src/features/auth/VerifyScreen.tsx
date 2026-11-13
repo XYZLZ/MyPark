@@ -37,7 +37,7 @@ export function VerifyScreen() {
   const { control, setFocus } = form;
 
   async function resend() {
-    if (resendInFlight.current || lock.locked) return;
+    if (resendInFlight.current || lock.locked || submitting) return;
     if (!(await form.trigger('email', { shouldFocus: true }))) return;
 
     resendInFlight.current = true;
@@ -93,7 +93,7 @@ export function VerifyScreen() {
         onSubmitEditing={() => void onSubmit()}
       />
       <Button variant="primary" label={t('auth.verify.submit')} loading={submitting} disabled={lock.locked} onPress={() => void onSubmit()} />
-      <Button variant="quiet" label={t('auth.verify.resend')} loading={resending} disabled={lock.locked} onPress={() => void resend()} />
+      <Button variant="quiet" label={t('auth.verify.resend')} loading={resending} disabled={lock.locked || submitting} onPress={() => void resend()} />
     </ScreenScroll>
   );
 }

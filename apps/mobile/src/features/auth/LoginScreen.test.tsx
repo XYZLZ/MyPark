@@ -64,6 +64,9 @@ test('login with an admin account shows the web-admin notice and stays signed ou
   expect(useAuthStore.getState().status).toBe('signedOut');
   expect(mockPush).not.toHaveBeenCalled();
   expect(mockReplace).not.toHaveBeenCalled();
+  // The admin still sees which account was refused; only the password is gone.
+  expect(screen.getByLabelText('Email').props.value).toBe('admin@example.do');
+  expect(screen.getByLabelText('Password').props.value).toBe('');
 });
 
 test('wrong credentials show one banner', async () => {
@@ -128,4 +131,20 @@ test('the password never crosses screens', async () => {
   await waitFor(() => expect(mockPush).toHaveBeenCalled());
   expect(JSON.stringify(useAuthFlowStore.getState())).not.toContain(PASSWORD);
   expect(JSON.stringify([...mockPush.mock.calls, ...mockReplace.mock.calls])).not.toContain(PASSWORD);
+});
+
+test('double tap on log in sends one request', async () => {
+  let finish: () => void = () => undefined;
+  request.mockReturnValue(new Promise((resolve) => (finish = () => resolve(reply(200, successBody(tokenResponseFixture))))));
+  await renderScreen(<LoginScreen />);
+
+  await fireEvent.changeText(screen.getByLabelText('Email'), 'ana@example.do');
+  await fireEvent.changeText(screen.getByLabelText('Password'), PASSWORD);
+  const button = screen.getByRole('button', { name: 'Log in' });
+  await fireEvent.press(button);
+  await fireEvent.press(button);
+  finish();
+
+  await waitFor(() => expect(applyTokens).toHaveBeenCalledTimes(1));
+  expect(request).toHaveBeenCalledTimes(1);
 });

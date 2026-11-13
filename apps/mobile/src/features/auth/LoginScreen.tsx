@@ -38,6 +38,11 @@ export function LoginScreen() {
       const tokens = await login(values);
       // The root layout moves to the next area as soon as the session is set.
       await session.applyTokens(tokens);
+      // An admin is turned away: keep the email on screen, drop only the password.
+      if (useAuthStore.getState().notice === 'admin_web_only') {
+        form.resetField('password');
+        return;
+      }
       clearFlow();
       form.reset();
     },

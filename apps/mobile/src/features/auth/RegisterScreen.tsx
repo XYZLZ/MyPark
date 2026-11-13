@@ -144,7 +144,7 @@ export function RegisterScreen() {
             <TextLink label={t('auth.register.readTerms')} onPress={() => router.push('/legal/terms')} />
             <TextLink label={t('auth.register.readPrivacy')} onPress={() => router.push('/legal/privacy')} />
           </View>
-          <Button variant="primary" label={t('auth.register.submit')} loading={submitting} disabled={lock.locked} onPress={() => void onSubmit()} />
+          <Button variant="primary" label={t('auth.register.submit')} loading={submitting} disabled={lock.locked || legal.isFetching} onPress={() => void onSubmit()} />
         </>
       ) : (
         <AppText>{t('common.loading')}</AppText>

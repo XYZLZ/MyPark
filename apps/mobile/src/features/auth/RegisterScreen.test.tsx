@@ -102,6 +102,44 @@ test('success goes to verify and resets the form', async () => {
   expect(screen.getByLabelText('First name').props.value).toBe('');
 });
 
+test('double tap on sign up sends one request', async () => {
+  let finish: () => void = () => undefined;
+  request.mockImplementation(async (req) => {
+    if (req.path === '/v1/legal/current') return reply(200, successBody(legalCurrentFixture));
+    await new Promise<void>((resolve) => (finish = resolve));
+    return reply(202, successBody({ status: 'verification_pending' }));
+  });
+  await renderScreen(<RegisterScreen />);
+
+  await fillForm();
+  await fireEvent.press(screen.getByRole('button', { name: 'Sign up' }));
+  finish();
+
+  await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/verify'));
+  expect(registerCalls()).toHaveLength(1);
+});
+
+test('submit stays disabled while the legal versions reload after a 409', async () => {
+  let legalCalls = 0;
+  let release: () => void = () => undefined;
+  request.mockImplementation(async (req) => {
+    if (req.path === '/v1/legal/current') {
+      legalCalls += 1;
+      if (legalCalls > 1) await new Promise<void>((resolve) => (release = resolve));
+      return reply(200, successBody(legalCurrentFixture));
+    }
+    return reply(409, errorBody('legal.version_outdated'));
+  });
+  await renderScreen(<RegisterScreen />);
+
+  await fillForm();
+
+  await screen.findByText('The legal texts changed. Read and accept them again.');
+  expect(screen.getByRole('button', { name: 'Sign up' }).props.accessibilityState.disabled).toBe(true);
+  release();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Sign up' }).props.accessibilityState.disabled).toBe(false));
+});
+
 test('a 409 for stale legal versions asks for a fresh acceptance', async () => {
   let attempt = 0;
   request.mockImplementation(async (req) => {
