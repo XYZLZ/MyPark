@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 
 import { session } from '@/services/runtime';
 import { renderScreen } from '@/testing/render';
@@ -25,6 +25,8 @@ test('offers Retry and Log out and keeps the token until Log out', async () => {
   await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
   await waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
   expect(logout).not.toHaveBeenCalled();
+  // Log out is disabled while the retry runs; wait for it to settle so its state update lands inside the test.
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Log out' }).props.accessibilityState).not.toMatchObject({ disabled: true }));
 
   await fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
   await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
@@ -38,5 +40,6 @@ test('a double tap on Retry runs one restore', async () => {
   await fireEvent.press(retry);
   await fireEvent.press(retry);
   expect(restore).toHaveBeenCalledTimes(1);
-  finish();
+  await act(async () => finish());
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Log out' }).props.accessibilityState).not.toMatchObject({ disabled: true }));
 });

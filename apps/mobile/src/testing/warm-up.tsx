@@ -21,5 +21,5 @@ beforeAll(async () => {
       </Animated.View>
     </ScrollView>,
   );
-  cleanup();
+  await cleanup();
 }, 30_000);
