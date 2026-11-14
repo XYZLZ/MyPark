@@ -256,8 +256,9 @@ export function createSessionService(deps: SessionDeps): SessionService {
         try {
           // An expired access token is refreshed first by the client, so the server session is really revoked.
           const res = await http.request({ method: 'POST', path: scope === 'all' ? '/v1/auth/logout-all' : '/v1/auth/logout', auth: true });
-          // A 401 that survived the refresh attempt means the session is already gone: nothing is left to revoke.
-          if ((res.status >= 200 && res.status < 300) || res.status === 401) outcome = 'revoked';
+          // A 401 that survived the refresh attempt means this device's session is already gone. For 'all' it does not
+          // confirm that every session was revoked, so it stays unconfirmed, matching web (session.logout_unconfirmed).
+          if ((res.status >= 200 && res.status < 300) || (res.status === 401 && scope === 'this')) outcome = 'revoked';
         } catch {
           // Network, timeout or refresh trouble: the local session still ends.
         }

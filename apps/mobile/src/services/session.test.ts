@@ -336,6 +336,22 @@ describe('logout', () => {
     await expect(env.session.logout()).resolves.toBe('revoked');
   });
 
+  test('logout (this device) still treats a 401 as success', async () => {
+    const env = setup();
+    env.api.on(LOGOUT, () => json(401, errorBody('auth.session_revoked')));
+    await expect(env.session.logout()).resolves.toBe('revoked');
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', notice: null });
+    expect(env.storage.remove).toHaveBeenCalled();
+  });
+
+  test('logout-all treats a 401 as unconfirmed and shows logout_all_failed', async () => {
+    const env = setup();
+    env.api.on('POST /v1/auth/logout-all', () => json(401, errorBody('auth.session_revoked')));
+    await expect(env.session.logout('all')).resolves.toBe('failed');
+    expect(useAuthStore.getState()).toMatchObject({ status: 'signedOut', accessToken: null, notice: 'logout_all_failed' });
+    expect(env.storage.remove).toHaveBeenCalled();
+  });
+
   test.each([
     ['a server error', () => json(500, errorBody('internal.unexpected'))],
     [

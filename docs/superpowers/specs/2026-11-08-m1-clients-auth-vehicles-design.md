@@ -104,7 +104,7 @@ Numbering is as supplied; there is no item 21.
 
 - Web tokens only in httpOnly cookies. Single-flight refresh per session.
 - Cookies `Secure` in production only, so local HTTP works.
-- Field errors under the field, other errors in a banner, rate limits show a wait time. A 401 on logout counts as success.
+- Field errors under the field, other errors in a banner, rate limits show a wait time. A 401 on logout (this device) counts as success. A 401 on logout-all is unconfirmed.
 - Fix the M0 web leftovers: `/me` and `/qr` misrouted by the locale regex (require real locale codes), map `en-US` to `en`, add a localized not-found page.
 - Correct `docs/architecture.md` §5's "left-most X-Forwarded-For" wording to match the code (right-most untrusted hop) in this milestone's docs slice.
 
@@ -349,7 +349,7 @@ Failure returns `403 auth.forbidden` in the standard envelope. The client's `lib
 | `POST /v1/auth/password/reset` | same | public | — |
 | `POST /v1/auth/invitations/accept` | same | public | — |
 | `POST /v1/auth/logout` | same | bearer | **Always** clear cookies. 401 upstream becomes 204 |
-| `POST /v1/auth/logout-all` | same | bearer | Same as logout |
+| `POST /v1/auth/logout-all` | same | bearer | **Always** clear cookies. 2xx passes through. Upstream 401 or any other failure becomes 502 `session.logout_unconfirmed` |
 | `GET /v1/legal/current` | same | public | — |
 | `GET`, `PATCH /v1/me` | same | bearer | — |
 | `DELETE /v1/me` | same | bearer | On 204, clear cookies |
@@ -359,7 +359,7 @@ Failure returns `403 auth.forbidden` in the standard envelope. The client's `lib
 
 **Handler rules:** the status and body pass through unchanged, with `Retry-After` and `X-Request-Id`. Requests carry a 20 s timeout for argon2 routes and 5 s otherwise. A bearer route with no `mp_access` returns `503 internal.unexpected` when `mp_refresh` exists (transient refresh failure) and `401 auth.unauthenticated` when it doesn't. Upstream unreachable returns `502 internal.unexpected`. Handlers return codes only; `next/root-params` is not available in route handlers, and translation happens in the client.
 
-**Logout and the 401 rule.** The proxy refreshes before `/api/v1/auth/logout` runs, so a 401 from Go really means the session is already gone. It is safe to treat it as success.
+**Logout and the 401 rule.** The proxy refreshes before `/api/v1/auth/logout` runs, so a 401 from Go really means this device's session is already gone. For logout (this device) it is safe to treat as success. For logout-all it is **unconfirmed** on both clients: the current session is gone, but other sessions may still be live. The BFF answers 502 `session.logout_unconfirmed`, and mobile shows the `logout_all_failed` notice.
 
 ### 5.6 Guards
 
@@ -432,7 +432,7 @@ The BFF and proxy send the incoming `X-Forwarded-For` value unchanged, and omit 
 - `auth: true` requests send `Authorization: Bearer`. Requests run through one refresh promise: if a refresh is running, wait for it.
 - **Only 401 with `auth.unauthenticated` triggers a refresh**, followed by one retry of the original request. A 401 happens before any side effect, so retrying a POST is safe.
 - `auth.session_revoked` signs out with no refresh. `auth.invalid_credentials` belongs to login, which is `auth: false`. `auth.password_incorrect` is 403, so it can never loop.
-- **Logout** goes through the same path: an expired access token is refreshed first, then logout retried, so the server session is really revoked. A final 401, a network error or anything else still clears the local session. The 401 only counts as success **after** that refresh attempt.
+- **Logout** goes through the same path: an expired access token is refreshed first, then logout retried, so the server session is really revoked. A final 401, a network error or anything else still clears the local session. For logout (this device) the 401 only counts as success **after** that refresh attempt. For logout-all a final 401 is unconfirmed, so the `logout_all_failed` notice is shown.
 
 | Refresh result | Action |
 |---|---|

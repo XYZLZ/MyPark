@@ -543,7 +543,7 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 
 ### M5 — Hardening + demo
 
-**Scope:** accessibility pass (WCAG 2.2 AA audit on web, screen-reader pass on mobile), security review against ASVS L1, Playwright e2e for the critical driver flows, performance check (NFR-PERF-1/3), error/empty/loading states, a demo script with seeded data, an EAS preview build (Android APK), a VPS-readiness checklist (Caddy config drafted, not deployed).
+**Scope:** accessibility pass (WCAG 2.2 AA audit on web, screen-reader pass on mobile), security review against ASVS L1, Playwright e2e for the critical driver flows, performance check (NFR-PERF-1/3), error/empty/loading states, a demo script with seeded data, an EAS preview build (Android APK), a VPS-readiness checklist (Caddy config drafted, not deployed). Switch zod response parsing to non-strict before the first store build.
 **Exit criteria**
 - [ ] All Phase 1 FRs are traced to at least one passing test or a demo-script step.
 - [ ] No open critical/high findings.
@@ -615,7 +615,7 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
 34. Architecture-level calls (Postgres 18, BFF cookies, SSE + LISTEN/NOTIFY, slot-load cap, OpenAPI contract, stdlib router, TanStack Query, next-intl/i18next) are listed in `architecture.md` §1 and §17.
 35. TypeScript 6.0.3 in every JS workspace, pinned by Expo SDK 58.
 36. M1 backend calls OC-1 to OC-39 are accepted as listed in the M1 backend design (`docs/superpowers/specs/2026-11-07-m1-backend-auth-vehicles-design.md` §2.2), including the "Changes during implementation" table at its top.
-37. Gaps resolved while building M1: a second logout with a revoked session returns 401 and clients treat it as success; refresh for a suspended or pending user returns 401 without a write, and a deleted user's session is revoked with `account_deleted`; `DELETE /v1/me` is limited to 5 per 15 min per user (fails closed); the seed admin takes `SEED_ADMIN_FIRST_NAME` and `SEED_ADMIN_LAST_NAME`; vehicle CRUD is not audited in M1.
+37. Gaps resolved while building M1: a second logout (this device) with a revoked session returns 401 and clients treat it as success, while a 401 on logout-all is unconfirmed on both clients (web answers 502 `session.logout_unconfirmed`, mobile shows `logout_all_failed`); refresh for a suspended or pending user returns 401 without a write, and a deleted user's session is revoked with `account_deleted`; `DELETE /v1/me` is limited to 5 per 15 min per user (fails closed); the seed admin takes `SEED_ADMIN_FIRST_NAME` and `SEED_ADMIN_LAST_NAME`; vehicle CRUD is not audited in M1.
 38. M1 client calls CC-1 to CC-27 are accepted as listed in the M1 clients design (`docs/superpowers/specs/2026-11-08-m1-clients-auth-vehicles-design.md` §2.2).
 
 ### 10.3 Open questions
