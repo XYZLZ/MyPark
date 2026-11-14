@@ -8,8 +8,246 @@ package dbgen
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const getActiveCardByHash = `-- name: GetActiveCardByHash :one
+select id, public_id from employee_cards
+where lot_id = $1 and card_uid_hash = $2 and status = 'active'
+`
+
+type GetActiveCardByHashParams struct {
+	LotID int64
+	Hash  []byte
+}
+
+type GetActiveCardByHashRow struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+// Lot-scoped (M2C-21): a card of another lot is unknown here.
+func (q *Queries) GetActiveCardByHash(ctx context.Context, arg GetActiveCardByHashParams) (GetActiveCardByHashRow, error) {
+	row := q.db.QueryRow(ctx, getActiveCardByHash, arg.LotID, arg.Hash)
+	var i GetActiveCardByHashRow
+	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
+}
+
+const getOpenStayByCardForUpdate = `-- name: GetOpenStayByCardForUpdate :one
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at from stays
+where lot_id = $1 and employee_card_id = $2
+  and status in ('entry_pending', 'active', 'paid')
+for update
+`
+
+type GetOpenStayByCardForUpdateParams struct {
+	LotID          int64
+	EmployeeCardID pgtype.Int8
+}
+
+func (q *Queries) GetOpenStayByCardForUpdate(ctx context.Context, arg GetOpenStayByCardForUpdateParams) (Stay, error) {
+	row := q.db.QueryRow(ctx, getOpenStayByCardForUpdate, arg.LotID, arg.EmployeeCardID)
+	var i Stay
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.LotID,
+		&i.CredentialKind,
+		&i.TicketCodeHash,
+		&i.EmployeeCardID,
+		&i.Status,
+		&i.TariffVersionID,
+		&i.AcceptedAt,
+		&i.EnteredAt,
+		&i.PaidAt,
+		&i.ExitDeadlineAt,
+		&i.ExitAuthorizedAt,
+		&i.ExitedAt,
+		&i.VoidedAt,
+		&i.LostTicket,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getStayByTicketHashForUpdate = `-- name: GetStayByTicketHashForUpdate :one
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at from stays where lot_id = $1 and ticket_code_hash = $2 for update
+`
+
+type GetStayByTicketHashForUpdateParams struct {
+	LotID          int64
+	TicketCodeHash []byte
+}
+
+func (q *Queries) GetStayByTicketHashForUpdate(ctx context.Context, arg GetStayByTicketHashForUpdateParams) (Stay, error) {
+	row := q.db.QueryRow(ctx, getStayByTicketHashForUpdate, arg.LotID, arg.TicketCodeHash)
+	var i Stay
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.LotID,
+		&i.CredentialKind,
+		&i.TicketCodeHash,
+		&i.EmployeeCardID,
+		&i.Status,
+		&i.TariffVersionID,
+		&i.AcceptedAt,
+		&i.EnteredAt,
+		&i.PaidAt,
+		&i.ExitDeadlineAt,
+		&i.ExitAuthorizedAt,
+		&i.ExitedAt,
+		&i.VoidedAt,
+		&i.LostTicket,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getStayForUpdate = `-- name: GetStayForUpdate :one
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at from stays where lot_id = $1 and public_id = $2 for update
+`
+
+type GetStayForUpdateParams struct {
+	LotID    int64
+	PublicID uuid.UUID
+}
+
+func (q *Queries) GetStayForUpdate(ctx context.Context, arg GetStayForUpdateParams) (Stay, error) {
+	row := q.db.QueryRow(ctx, getStayForUpdate, arg.LotID, arg.PublicID)
+	var i Stay
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.LotID,
+		&i.CredentialKind,
+		&i.TicketCodeHash,
+		&i.EmployeeCardID,
+		&i.Status,
+		&i.TariffVersionID,
+		&i.AcceptedAt,
+		&i.EnteredAt,
+		&i.PaidAt,
+		&i.ExitDeadlineAt,
+		&i.ExitAuthorizedAt,
+		&i.ExitedAt,
+		&i.VoidedAt,
+		&i.LostTicket,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertEmployeeCard = `-- name: InsertEmployeeCard :execrows
+insert into employee_cards (lot_id, card_uid_hash, holder_name, employee_code, status, revoked_at)
+values ($1, $2, $3, $4, $5, $6)
+on conflict (card_uid_hash) do nothing
+`
+
+type InsertEmployeeCardParams struct {
+	LotID        int64
+	CardUidHash  []byte
+	HolderName   string
+	EmployeeCode string
+	Status       string
+	RevokedAt    pgtype.Timestamptz
+}
+
+// Idempotent seed: the hash is unique across lots, and an existing card is
+// left as it is. Returns the rows inserted (0 or 1).
+func (q *Queries) InsertEmployeeCard(ctx context.Context, arg InsertEmployeeCardParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertEmployeeCard,
+		arg.LotID,
+		arg.CardUidHash,
+		arg.HolderName,
+		arg.EmployeeCode,
+		arg.Status,
+		arg.RevokedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertPayment = `-- name: InsertPayment :one
+insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at)
+values ($1, $2, $3, $4, $5, $6, $7,
+        $8::timestamptz, $9)
+returning id
+`
+
+type InsertPaymentParams struct {
+	Kind           string
+	StayID         int64
+	Method         string
+	AmountCents    int64
+	Status         string
+	IdempotencyKey string
+	DeviceID       pgtype.Int8
+	Now            pgtype.Timestamptz
+	SucceededAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertPayment,
+		arg.Kind,
+		arg.StayID,
+		arg.Method,
+		arg.AmountCents,
+		arg.Status,
+		arg.IdempotencyKey,
+		arg.DeviceID,
+		arg.Now,
+		arg.SucceededAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertStay = `-- name: InsertStay :one
+insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, status,
+                   tariff_version_id, accepted_at, entered_at, updated_at)
+values ($1, $2, $3, $4, $5,
+        $6, $7::timestamptz, $8, $7::timestamptz)
+returning id, public_id
+`
+
+type InsertStayParams struct {
+	LotID           int64
+	CredentialKind  string
+	TicketCodeHash  []byte
+	EmployeeCardID  pgtype.Int8
+	Status          string
+	TariffVersionID int64
+	Now             pgtype.Timestamptz
+	EnteredAt       pgtype.Timestamptz
+}
+
+type InsertStayRow struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+// Every business timestamp is the server clock (§8.4).
+func (q *Queries) InsertStay(ctx context.Context, arg InsertStayParams) (InsertStayRow, error) {
+	row := q.db.QueryRow(ctx, insertStay,
+		arg.LotID,
+		arg.CredentialKind,
+		arg.TicketCodeHash,
+		arg.EmployeeCardID,
+		arg.Status,
+		arg.TariffVersionID,
+		arg.Now,
+		arg.EnteredAt,
+	)
+	var i InsertStayRow
+	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
+}
 
 const notifySpaceChanged = `-- name: NotifySpaceChanged :exec
 select pg_notify('space_changed', $1::text)
@@ -20,6 +258,32 @@ select pg_notify('space_changed', $1::text)
 func (q *Queries) NotifySpaceChanged(ctx context.Context, payload string) error {
 	_, err := q.db.Exec(ctx, notifySpaceChanged, payload)
 	return err
+}
+
+const paymentTotals = `-- name: PaymentTotals :one
+select coalesce(sum(p.amount_cents), 0)::bigint as paid_cents,
+       max(p.succeeded_at)::timestamptz as last_succeeded_at
+from payments p
+join stays s on s.id = p.stay_id
+where s.lot_id = $1 and p.stay_id = $2 and p.status = 'succeeded'
+`
+
+type PaymentTotalsParams struct {
+	LotID  int64
+	StayID int64
+}
+
+type PaymentTotalsRow struct {
+	PaidCents       int64
+	LastSucceededAt pgtype.Timestamptz
+}
+
+// What the stay has paid so far and when the last payment landed.
+func (q *Queries) PaymentTotals(ctx context.Context, arg PaymentTotalsParams) (PaymentTotalsRow, error) {
+	row := q.db.QueryRow(ctx, paymentTotals, arg.LotID, arg.StayID)
+	var i PaymentTotalsRow
+	err := row.Scan(&i.PaidCents, &i.LastSucceededAt)
+	return i, err
 }
 
 const spaceExists = `-- name: SpaceExists :one

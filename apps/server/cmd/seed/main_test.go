@@ -157,9 +157,9 @@ func fleetSeedEnv(dbURL, flag string) map[string]string {
 
 func TestSeedCommand_SeedsFleetWhenEnabled(t *testing.T) {
 	for _, tc := range []struct {
-		flag string
-		want int
-	}{{"true", 6}, {"false", 0}} {
+		flag            string
+		want, wantCards int
+	}{{"true", 6, 31}, {"false", 0, 0}} {
 		t.Run(tc.flag, func(t *testing.T) {
 			db := testsupport.NewTestDB(t)
 			env := fleetSeedEnv(db.AppURL, tc.flag)
@@ -173,12 +173,18 @@ func TestSeedCommand_SeedsFleetWhenEnabled(t *testing.T) {
 			if err := db.App.QueryRow(t.Context(), "select count(*) from devices").Scan(&n); err != nil || n != tc.want {
 				t.Errorf("devices = %d, %v, want %d", n, err, tc.want)
 			}
+			if err := db.App.QueryRow(t.Context(), "select count(*) from employee_cards").Scan(&n); err != nil || n != tc.wantCards {
+				t.Errorf("employee_cards = %d, %v, want %d", n, err, tc.wantCards)
+			}
 			secrets := [][]byte{[]byte(config.DevSimulatorFleetSecret), []byte(config.DevSecretboxKey), []byte(config.DevCardUIDPepper)}
 			fleet := secret.Bytes(mustB64(t, config.DevSimulatorFleetSecret))
 			for _, d := range devicefleet.Devices() {
 				s := devicefleet.DeviceSecret(fleet, d.PublicID).Reveal()
 				secrets = append(secrets, []byte(base64.StdEncoding.EncodeToString(s)),
 					[]byte(base64.RawURLEncoding.EncodeToString(s)), []byte(hex.EncodeToString(s)))
+			}
+			for _, c := range devicefleet.Cards() {
+				secrets = append(secrets, []byte(devicefleet.CardUID(fleet, c.Code)))
 			}
 			for _, s := range secrets {
 				if bytes.Contains(out.Bytes(), s) {

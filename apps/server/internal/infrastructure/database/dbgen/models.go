@@ -77,6 +77,19 @@ type DeviceEvent struct {
 	Response   []byte
 }
 
+type EmployeeCard struct {
+	ID           int64
+	PublicID     uuid.UUID
+	LotID        int64
+	CardUidHash  []byte
+	HolderName   string
+	EmployeeCode string
+	Status       string
+	CreatedBy    pgtype.Int8
+	CreatedAt    pgtype.Timestamptz
+	RevokedAt    pgtype.Timestamptz
+}
+
 type LegalDocument struct {
 	ID          int64
 	Kind        string
@@ -126,6 +139,20 @@ type OutboxMessage struct {
 	SentAt      pgtype.Timestamptz
 }
 
+type Payment struct {
+	ID             int64
+	PublicID       uuid.UUID
+	Kind           string
+	StayID         int64
+	Method         string
+	AmountCents    int64
+	Status         string
+	IdempotencyKey string
+	DeviceID       pgtype.Int8
+	CreatedAt      pgtype.Timestamptz
+	SucceededAt    pgtype.Timestamptz
+}
+
 type PolicyVersion struct {
 	ID                   int64
 	LotID                int64
@@ -167,6 +194,26 @@ type Space struct {
 	Kind            string
 	Status          string
 	SensorUpdatedAt pgtype.Timestamptz
+}
+
+type Stay struct {
+	ID               int64
+	PublicID         uuid.UUID
+	LotID            int64
+	CredentialKind   string
+	TicketCodeHash   []byte
+	EmployeeCardID   pgtype.Int8
+	Status           string
+	TariffVersionID  int64
+	AcceptedAt       pgtype.Timestamptz
+	EnteredAt        pgtype.Timestamptz
+	PaidAt           pgtype.Timestamptz
+	ExitDeadlineAt   pgtype.Timestamptz
+	ExitAuthorizedAt pgtype.Timestamptz
+	ExitedAt         pgtype.Timestamptz
+	VoidedAt         pgtype.Timestamptz
+	LostTicket       bool
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type TariffVersion struct {

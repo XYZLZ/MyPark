@@ -1,5 +1,5 @@
 // Command seed creates the pilot parking lot, its 280 spaces, the initial
-// legal documents, the default tariff, optionally the simulator fleet and, when none exists, the first admin in the database at
+// legal documents, the default tariff, optionally the simulator fleet and its employee cards and, when none exists, the first admin in the database at
 // DATABASE_URL. Seeding is DML only, so it runs as the app role mypark_app.
 // It is idempotent and safe to run on every compose start.
 package main
@@ -17,6 +17,7 @@ import (
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
@@ -84,6 +85,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	var lotID int64
 	adminCreated := false
 	var fleetResult devices.SeedResult
+	cardsInserted := 0
 	err = database.NewTxRunner(pool).InTx(ctx, func(ctx context.Context) error {
 		tx, err := database.MustTx(ctx)
 		if err != nil {
@@ -102,6 +104,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 			if fleetResult, err = devices.SeedFleet(ctx, dbgen.New(tx), sealer, lotID, fleet.FleetSecret()); err != nil {
 				return err
 			}
+			if cardsInserted, err = gate.SeedCards(ctx, dbgen.New(tx), lotID, fleet.FleetSecret(), fleet.CardUIDPepper()); err != nil {
+				return err
+			}
 		}
 		if !withAdmin {
 			return nil
@@ -118,6 +123,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	log.Info("seed applied", "lot_id", lotID)
 	if fleet.Enabled() {
 		log.Info("simulator fleet seeded", "inserted", fleetResult.Inserted, "resealed", fleetResult.Resealed)
+		log.Info("employee cards seeded", "inserted", cardsInserted)
 	}
 	switch {
 	case !withAdmin:

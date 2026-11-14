@@ -18,6 +18,7 @@ import (
 // TestGrants_M2Tables has one subtest per M2 migration.
 func TestGrants_M2Tables(t *testing.T) {
 	t.Run("devices", grantsDevices)
+	t.Run("gate", grantsGate)
 
 	t.Run("tariffs", func(t *testing.T) {
 		db := testsupport.NewTestDB(t)
