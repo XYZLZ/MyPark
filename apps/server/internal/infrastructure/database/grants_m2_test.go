@@ -2,6 +2,7 @@ package database_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -141,9 +142,31 @@ func grantsDevices(t *testing.T) {
 	if err := db.App.QueryRow(t.Context(), "select exists(select 1 from device_events where event_id = $1)", recent).Scan(&ok); err != nil || !ok {
 		t.Errorf("11-month row missing after purge: %v, %v", ok, err)
 	}
-	// A batch of zero is clamped to 1 inside the function and never deletes recent rows.
-	if n, err := devices.PurgeEvents(t.Context(), db.App, 0); err != nil || n != 0 {
-		t.Errorf("second PurgeEvents = %d, %v, want 0", n, err)
+	// A batch of zero is clamped to 1 inside the function: with two expired
+	// rows it deletes exactly one, and it never touches the 11-month row.
+	for _, id := range []uuid.UUID{uuid.New(), uuid.New()} {
+		if got := execCode(t, db.Migrator, insertDeviceEvent, lotID, deviceID, id, now.AddDate(0, -13, 0), hash); got != "" {
+			t.Fatalf("migrator back-dated insert: SQLSTATE %q", got)
+		}
+	}
+	if n, err := devices.PurgeEvents(t.Context(), db.App, 0); err != nil || n != 1 {
+		t.Errorf("PurgeEvents(batch 0) with two expired rows = %d, %v, want 1", n, err)
+	}
+	if n, err := devices.PurgeEvents(t.Context(), db.App, 100); err != nil || n != 1 {
+		t.Errorf("PurgeEvents(100) for the remaining expired row = %d, %v, want 1", n, err)
+	}
+
+	// The function's security properties, from the catalog.
+	var secDef bool
+	var config []string
+	var owner string
+	err = db.App.QueryRow(t.Context(), `select prosecdef, coalesce(proconfig, '{}'), pg_get_userbyid(proowner)
+		from pg_proc where proname = 'purge_device_events'`).Scan(&secDef, &config, &owner)
+	if err != nil {
+		t.Fatalf("pg_proc: %v", err)
+	}
+	if !secDef || owner != "mypark_migrator" || !slices.Contains(config, `search_path=""`) {
+		t.Errorf("purge_device_events: security definer=%v owner=%q config=%v, want true, mypark_migrator, search_path=\"\"", secDef, owner, config)
 	}
 }
 

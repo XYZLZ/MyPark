@@ -14,7 +14,7 @@ select id, secret_ciphertext, secret_key_id
 from devices
 where public_id = @public_id;
 
--- name: InsertFleetDevice :exec
+-- name: InsertFleetDevice :execrows
 insert into devices (public_id, lot_id, kind, name, secret_ciphertext, secret_key_id)
 values (@public_id, @lot_id, @kind, @name, @secret_ciphertext, @secret_key_id)
 on conflict (public_id) do nothing;
@@ -29,8 +29,10 @@ select * from device_events
 where device_id = @device_id and event_id = @event_id;
 
 -- name: InsertDeviceEvent :exec
-insert into device_events (lot_id, device_id, event_id, type, occurred_at, received_at, body_sha256, payload, response)
-values (@lot_id, @device_id, @event_id, @type, @occurred_at, @received_at, @body_sha256, @payload, @response);
+-- received_at takes its default, the database clock (now()), so the retention
+-- floor follows one clock and a caller cannot back-date evidence.
+insert into device_events (lot_id, device_id, event_id, type, occurred_at, body_sha256, payload, response)
+values (@lot_id, @device_id, @event_id, @type, @occurred_at, @body_sha256, @payload, @response);
 
 -- name: PurgeDeviceEvents :one
 select purge_device_events(@batch)::bigint;

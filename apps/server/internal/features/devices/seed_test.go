@@ -3,9 +3,13 @@ package devices_test
 import (
 	"bytes"
 	"crypto/subtle"
+	"encoding/hex"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
@@ -126,7 +130,7 @@ func TestSeedFleet_IdempotentAndReseals(t *testing.T) {
 	}
 }
 
-func TestSeedFleet_UnopenableStoredSecretIsResealed(t *testing.T) {
+func TestSeedFleet_RetiredKeyIDIsResealed(t *testing.T) {
 	db := testsupport.NewTestDB(t)
 	lotID := testsupport.SeedPilotLot(t, db)
 	q := dbgen.New(db.App)
@@ -134,7 +138,8 @@ func TestSeedFleet_UnopenableStoredSecretIsResealed(t *testing.T) {
 	if _, err := devices.SeedFleet(t.Context(), q, sealer(t, key("k1", 1)), lotID, fleet); err != nil {
 		t.Fatal(err)
 	}
-	// k1 is gone from the keyring: the derived secret is regenerable, so heal it.
+	// k1 is a retired key id, gone from the keyring: the derived secret is
+	// regenerable, so a different key id is healed by re-sealing.
 	res, err := devices.SeedFleet(t.Context(), q, sealer(t, key("k2", 2)), lotID, fleet)
 	if err != nil || res.Resealed != 6 {
 		t.Fatalf("SeedFleet = %+v, %v, want 6 resealed", res, err)
@@ -147,5 +152,86 @@ func TestSeedFleet_RejectsEmptyFleetSecret(t *testing.T) {
 	_, err := devices.SeedFleet(t.Context(), dbgen.New(db.App), sealer(t, key("k1", 1)), lotID, nil)
 	if err == nil {
 		t.Fatal("SeedFleet with an empty fleet secret succeeded")
+	}
+}
+
+func TestSeedFleet_WrongBytesUnderCurrentKeyIDFailsAndRewritesNothing(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	q := dbgen.New(db.App)
+	fleet := fleetSecret(7)
+	if _, err := devices.SeedFleet(t.Context(), q, sealer(t, key("k1", 1)), lotID, fleet); err != nil {
+		t.Fatal(err)
+	}
+	before := rows(t, db)
+
+	// Same key id, different key bytes: SECRETBOX_KEY was rotated without
+	// changing SECRETBOX_KEY_ID (or the row was tampered with).
+	wrong := key("k1", 2)
+	_, err := devices.SeedFleet(t.Context(), q, sealer(t, wrong), lotID, fleet)
+	if err == nil {
+		t.Fatal("SeedFleet with wrong key bytes under the current key id succeeded")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "SECRETBOX_KEY") || !strings.Contains(msg, devicefleet.Devices()[0].PublicID.String()) {
+		t.Errorf("error = %q, want it to name the device public id and SECRETBOX_KEY", msg)
+	}
+	for _, leak := range [][]byte{wrong.Secret[:], fleet.Reveal(), devicefleet.DeviceSecret(fleet, devicefleet.Devices()[0].PublicID).Reveal()} {
+		if strings.Contains(msg, string(leak)) || strings.Contains(msg, hex.EncodeToString(leak)) {
+			t.Errorf("error leaks secret material: %q", msg)
+		}
+	}
+	after := rows(t, db)
+	if len(after) != len(before) {
+		t.Fatalf("rows = %d, want %d", len(after), len(before))
+	}
+	for i := range before {
+		if !bytes.Equal(before[i].ciphertext, after[i].ciphertext) || before[i].keyID != after[i].keyID {
+			t.Errorf("%s was rewritten", before[i].publicID)
+		}
+	}
+}
+
+func TestInsertFleetDevice_ReportsRowsInserted(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	q := dbgen.New(db.App)
+	d := devicefleet.Devices()[0]
+	p := dbgen.InsertFleetDeviceParams{
+		PublicID: d.PublicID, LotID: lotID, Kind: string(d.Kind), Name: d.Name,
+		SecretCiphertext: make([]byte, 48), SecretKeyID: "k1",
+	}
+	for i, want := range []int64{1, 0} {
+		if n, err := q.InsertFleetDevice(t.Context(), p); err != nil || n != want {
+			t.Errorf("insert #%d = %d, %v, want %d", i+1, n, err, want)
+		}
+	}
+}
+
+func TestInsertDeviceEvent_ReceivedAtComesFromTheDatabaseClock(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	q := dbgen.New(db.App)
+	if _, err := devices.SeedFleet(t.Context(), q, sealer(t, key("k1", 1)), lotID, fleetSecret(7)); err != nil {
+		t.Fatal(err)
+	}
+	dev, err := q.GetFleetDevice(t.Context(), devicefleet.Devices()[0].PublicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = q.InsertDeviceEvent(t.Context(), dbgen.InsertDeviceEventParams{
+		LotID: lotID, DeviceID: dev.ID, EventID: uuid.New(), Type: "heartbeat",
+		OccurredAt: pgtype.Timestamptz{Time: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+		BodySha256: make([]byte, 32), Payload: []byte("{}"), Response: []byte("{}"),
+	})
+	if err != nil {
+		t.Fatalf("InsertDeviceEvent: %v", err)
+	}
+	var skew time.Duration
+	if err := db.App.QueryRow(t.Context(), "select now() - received_at from device_events").Scan(&skew); err != nil {
+		t.Fatal(err)
+	}
+	if skew < 0 || skew > time.Minute {
+		t.Errorf("received_at is %v behind now(), want the default now()", skew)
 	}
 }

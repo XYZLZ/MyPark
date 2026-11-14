@@ -84,8 +84,8 @@ func (q *Queries) GetFleetDevice(ctx context.Context, publicID uuid.UUID) (GetFl
 }
 
 const insertDeviceEvent = `-- name: InsertDeviceEvent :exec
-insert into device_events (lot_id, device_id, event_id, type, occurred_at, received_at, body_sha256, payload, response)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+insert into device_events (lot_id, device_id, event_id, type, occurred_at, body_sha256, payload, response)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertDeviceEventParams struct {
@@ -94,12 +94,13 @@ type InsertDeviceEventParams struct {
 	EventID    uuid.UUID
 	Type       string
 	OccurredAt pgtype.Timestamptz
-	ReceivedAt pgtype.Timestamptz
 	BodySha256 []byte
 	Payload    []byte
 	Response   []byte
 }
 
+// received_at takes its default, the database clock (now()), so the retention
+// floor follows one clock and a caller cannot back-date evidence.
 func (q *Queries) InsertDeviceEvent(ctx context.Context, arg InsertDeviceEventParams) error {
 	_, err := q.db.Exec(ctx, insertDeviceEvent,
 		arg.LotID,
@@ -107,7 +108,6 @@ func (q *Queries) InsertDeviceEvent(ctx context.Context, arg InsertDeviceEventPa
 		arg.EventID,
 		arg.Type,
 		arg.OccurredAt,
-		arg.ReceivedAt,
 		arg.BodySha256,
 		arg.Payload,
 		arg.Response,
@@ -115,7 +115,7 @@ func (q *Queries) InsertDeviceEvent(ctx context.Context, arg InsertDeviceEventPa
 	return err
 }
 
-const insertFleetDevice = `-- name: InsertFleetDevice :exec
+const insertFleetDevice = `-- name: InsertFleetDevice :execrows
 insert into devices (public_id, lot_id, kind, name, secret_ciphertext, secret_key_id)
 values ($1, $2, $3, $4, $5, $6)
 on conflict (public_id) do nothing
@@ -130,8 +130,8 @@ type InsertFleetDeviceParams struct {
 	SecretKeyID      string
 }
 
-func (q *Queries) InsertFleetDevice(ctx context.Context, arg InsertFleetDeviceParams) error {
-	_, err := q.db.Exec(ctx, insertFleetDevice,
+func (q *Queries) InsertFleetDevice(ctx context.Context, arg InsertFleetDeviceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertFleetDevice,
 		arg.PublicID,
 		arg.LotID,
 		arg.Kind,
@@ -139,7 +139,10 @@ func (q *Queries) InsertFleetDevice(ctx context.Context, arg InsertFleetDevicePa
 		arg.SecretCiphertext,
 		arg.SecretKeyID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const purgeDeviceEvents = `-- name: PurgeDeviceEvents :one
