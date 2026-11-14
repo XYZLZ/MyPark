@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -283,17 +282,6 @@ func TestPass_UnknownOrOtherLotStay(t *testing.T) {
 	}
 	e.invariant()
 	testsupport.AssertOccupancyInvariant(t, e.db.App, other)
-}
-
-// Exit passes arrive with S9.2: until then they are unhandled and store nothing.
-func TestPass_ExitStillUnhandled(t *testing.T) {
-	e := newDeviceEnv(t)
-	rec := e.send(e.device(authz.DeviceExitBarrier), e.passBody(gate.DirectionExit, uuid.New()))
-	wantError(t, rec, http.StatusInternalServerError, "internal.unexpected")
-	if n := e.eventRows(); n != 0 {
-		t.Errorf("events = %d, want 0", n)
-	}
-	e.invariant()
 }
 
 // The void job and a late pass of the same stay at once: whichever runs

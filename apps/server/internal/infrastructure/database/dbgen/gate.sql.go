@@ -33,6 +33,28 @@ func (q *Queries) ActivateStay(ctx context.Context, arg ActivateStayParams) (int
 	return result.RowsAffected(), nil
 }
 
+const authorizeExit = `-- name: AuthorizeExit :execrows
+update stays
+set exit_authorized_at = $1::timestamptz, updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status in ('active', 'paid')
+`
+
+type AuthorizeExitParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// An exit credential that opened (design §10.4): the zero-due decision is
+// taken now, and the exit pass trusts it for 60 s (M2C-32).
+func (q *Queries) AuthorizeExit(ctx context.Context, arg AuthorizeExitParams) (int64, error) {
+	result, err := q.db.Exec(ctx, authorizeExit, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bumpOccupancy = `-- name: BumpOccupancy :one
 update lot_occupancy
 set occupied = occupied + $1, version = version + 1, updated_at = $2::timestamptz
@@ -104,6 +126,31 @@ func (q *Queries) GetActiveCardByHash(ctx context.Context, arg GetActiveCardByHa
 	row := q.db.QueryRow(ctx, getActiveCardByHash, arg.LotID, arg.Hash)
 	var i GetActiveCardByHashRow
 	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
+}
+
+const getCardByHash = `-- name: GetCardByHash :one
+select id, public_id, status from employee_cards
+where lot_id = $1 and card_uid_hash = $2
+`
+
+type GetCardByHashParams struct {
+	LotID int64
+	Hash  []byte
+}
+
+type GetCardByHashRow struct {
+	ID       int64
+	PublicID uuid.UUID
+	Status   string
+}
+
+// Any status: a card revoked while its car is inside may still leave
+// through its open stay. Entry uses GetActiveCardByHash.
+func (q *Queries) GetCardByHash(ctx context.Context, arg GetCardByHashParams) (GetCardByHashRow, error) {
+	row := q.db.QueryRow(ctx, getCardByHash, arg.LotID, arg.Hash)
+	var i GetCardByHashRow
+	err := row.Scan(&i.ID, &i.PublicID, &i.Status)
 	return i, err
 }
 
@@ -448,6 +495,30 @@ type ReactivateStayParams struct {
 // (M2C-35). exit_deadline_at is kept: it keys the overstay pricing.
 func (q *Queries) ReactivateStay(ctx context.Context, arg ReactivateStayParams) (int64, error) {
 	result, err := q.db.Exec(ctx, reactivateStay, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setStayExited = `-- name: SetStayExited :execrows
+update stays
+set status = 'exited', exited_at = $1::timestamptz,
+    paid_at = coalesce(paid_at, $1::timestamptz), updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status in ('active', 'paid')
+`
+
+type SetStayExitedParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// The exit pass (design §10.5). An active stay hops active -> paid -> exited
+// here in one statement, paid by its zero payment at now; a paid stay keeps
+// the paid_at of its last payment.
+func (q *Queries) SetStayExited(ctx context.Context, arg SetStayExitedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setStayExited, arg.Now, arg.LotID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -12,17 +12,20 @@ import (
 )
 
 // pass applies barrier.passed (design §9.6, M2C-31). The barrier is the
-// physical truth: a car that passed is counted, once. Exit passes arrive
-// with the exit flow.
+// physical truth: a car that passed is counted, once.
 func (s *Service) pass(ctx context.Context, d authz.Device, ev Event) (Result, error) {
 	p, ok := ev.Payload.(BarrierPassed)
 	if !ok {
 		return Result{}, fmt.Errorf("gate: pass event carries %T", ev.Payload)
 	}
-	if p.Direction != DirectionEntry {
-		return Result{}, fmt.Errorf("%w: %s %s", ErrUnhandledEvent, ev.Type, p.Direction)
+	switch p.Direction {
+	case DirectionEntry:
+		return s.entryPass(ctx, d, p)
+	case DirectionExit:
+		return s.exitPass(ctx, d, p)
+	default:
+		return Result{}, fmt.Errorf("gate: pass in unknown direction %q", p.Direction)
 	}
-	return s.entryPass(ctx, d, p)
 }
 
 // entryPass counts a car passing the entry barrier. Locks: the lot's

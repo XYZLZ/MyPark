@@ -437,19 +437,6 @@ func TestDeviceEvents_ContentType415(t *testing.T) {
 	dataOf(t, e.serve(req, ""))
 }
 
-// Event types whose slice has not landed answer 500 and store nothing, so the
-// device retries once the handler exists.
-func TestDeviceEvents_UnhandledTypeIs500StoresNothing(t *testing.T) {
-	e := newDeviceEnv(t)
-	d := e.device(authz.DeviceExitBarrier)
-	body := e.eventBody(uuid.New(), "exit.credential_presented",
-		map[string]any{"credential": map[string]any{"kind": "ticket", "value": "000G40R40M30E209"}})
-	wantError(t, e.send(d, body), http.StatusInternalServerError, "internal.unexpected")
-	if n := e.eventRows(); n != 0 {
-		t.Errorf("rows = %d, want 0", n)
-	}
-}
-
 // S3 carry: the stored lot is the authenticated device's, and a body cannot
 // name one.
 func TestDeviceEvents_LotComesFromDevice(t *testing.T) {

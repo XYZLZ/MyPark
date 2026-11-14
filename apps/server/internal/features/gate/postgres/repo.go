@@ -200,7 +200,8 @@ func toStay(row dbgen.Stay, err error) (gate.Stay, error) {
 	return gate.Stay{
 		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, CredentialKind: row.CredentialKind,
 		Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64, TariffVersionID: row.TariffVersionID,
-		EnteredAt: row.EnteredAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, LostTicket: row.LostTicket,
+		EnteredAt: row.EnteredAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
+		LostTicket: row.LostTicket,
 	}, nil
 }
 
@@ -340,4 +341,40 @@ func oneRow(op string, stayID, n int64, err error) error {
 		return fmt.Errorf("gate: %s %d: %d rows changed", op, stayID, n)
 	}
 	return nil
+}
+
+// CardByHash implements gate.Repo.
+func (Repo) CardByHash(ctx context.Context, lotID int64, hash []byte) (gate.Card, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Card{}, err
+	}
+	row, err := qs.GetCardByHash(ctx, dbgen.GetCardByHashParams{LotID: lotID, Hash: hash})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return gate.Card{}, gate.ErrNotFound
+	case err != nil:
+		return gate.Card{}, fmt.Errorf("gate: card: %w", err)
+	}
+	return gate.Card{ID: row.ID, PublicID: row.PublicID, Revoked: row.Status == "revoked"}, nil
+}
+
+// AuthorizeExit implements gate.Repo.
+func (Repo) AuthorizeExit(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.AuthorizeExit(ctx, dbgen.AuthorizeExitParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("authorize exit", stayID, n, err)
+}
+
+// SetStayExited implements gate.Repo.
+func (Repo) SetStayExited(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.SetStayExited(ctx, dbgen.SetStayExitedParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("set stay exited", stayID, n, err)
 }

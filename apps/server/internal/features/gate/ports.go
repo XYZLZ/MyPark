@@ -77,6 +77,17 @@ type Repo interface {
 	// MarkStayLost marks the locked active or paid ticket stay lost, replaces
 	// its ticket code hash and makes it active.
 	MarkStayLost(ctx context.Context, lotID, stayID int64, hash []byte, now time.Time) error
+
+	// CardByHash returns the lot's employee card with this UID hash whatever
+	// its status, or ErrNotFound. Only the exit uses it: a revoked card may
+	// still leave through its open stay.
+	CardByHash(ctx context.Context, lotID int64, hash []byte) (Card, error)
+	// AuthorizeExit records at now that the locked active or paid stay may
+	// pass the exit barrier (M2C-32).
+	AuthorizeExit(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// SetStayExited moves the locked active or paid stay to exited at now,
+	// setting paid_at to now only when it has none.
+	SetStayExited(ctx context.Context, lotID, stayID int64, now time.Time) error
 }
 
 // ErrNotFound means the lot has no matching row.
@@ -88,10 +99,12 @@ type LotOccupancy struct {
 	Closed             bool
 }
 
-// Card is an active employee card.
+// Card is an employee card. Revoked is set only by CardByHash: the other
+// lookups return active cards.
 type Card struct {
 	ID       int64
 	PublicID uuid.UUID
+	Revoked  bool
 }
 
 // NewStay is an accepted entry. TicketCodeHash is set for a ticket,
@@ -107,16 +120,17 @@ type NewStay struct {
 // Stay is a locked stay. EmployeeCardID is 0 for a ticket; a zero time is a
 // null column.
 type Stay struct {
-	ID              int64
-	PublicID        uuid.UUID
-	LotID           int64
-	CredentialKind  string
-	Status          Status
-	EmployeeCardID  int64
-	TariffVersionID int64
-	EnteredAt       time.Time
-	ExitDeadlineAt  time.Time
-	LostTicket      bool
+	ID               int64
+	PublicID         uuid.UUID
+	LotID            int64
+	CredentialKind   string
+	Status           Status
+	EmployeeCardID   int64
+	TariffVersionID  int64
+	EnteredAt        time.Time
+	ExitDeadlineAt   time.Time
+	ExitAuthorizedAt time.Time
+	LostTicket       bool
 }
 
 // NewPayment is a succeeded payment of a stay (design §5.4). DeviceID is the

@@ -2,7 +2,6 @@ package gate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,11 +12,6 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 )
-
-// ErrUnhandledEvent means no handler exists yet for the event's type or
-// direction. The device API answers 500 and stores nothing, so the device
-// retries once the slice that handles it has landed.
-var ErrUnhandledEvent = errors.New("gate: event type not handled")
 
 // Deps are the Service's dependencies. Every field is required.
 type Deps struct {
@@ -61,7 +55,7 @@ type handleFunc func(ctx context.Context, d authz.Device, ev Event) (Result, err
 func (s *Service) Handle(ctx context.Context, d authz.Device, ev Event) (Result, error) {
 	h := s.handlerFor(ev.Type)
 	if h == nil {
-		return Result{}, fmt.Errorf("%w: %s", ErrUnhandledEvent, ev.Type)
+		return Result{}, fmt.Errorf("gate: no handler for event type %q", ev.Type)
 	}
 	return h(ctx, d, ev)
 }
@@ -80,6 +74,8 @@ func (s *Service) handlerFor(t EventType) handleFunc {
 		return s.lostTicket
 	case EventCashPaid:
 		return s.cashPaid
+	case EventExitCredential:
+		return s.exitCredential
 	case EventSensorChanged:
 		return s.sensor
 	default:

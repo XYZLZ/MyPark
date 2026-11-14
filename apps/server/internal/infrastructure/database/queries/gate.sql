@@ -141,3 +141,25 @@ set lost_ticket = true, ticket_code_hash = @ticket_code_hash,
     status = case when lost_ticket then status else 'active' end,
     updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and credential_kind = 'ticket' and status in ('active', 'paid');
+
+-- name: GetCardByHash :one
+-- Any status: a card revoked while its car is inside may still leave
+-- through its open stay. Entry uses GetActiveCardByHash.
+select id, public_id, status from employee_cards
+where lot_id = @lot_id and card_uid_hash = @hash;
+
+-- name: AuthorizeExit :execrows
+-- An exit credential that opened (design §10.4): the zero-due decision is
+-- taken now, and the exit pass trusts it for 60 s (M2C-32).
+update stays
+set exit_authorized_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status in ('active', 'paid');
+
+-- name: SetStayExited :execrows
+-- The exit pass (design §10.5). An active stay hops active -> paid -> exited
+-- here in one statement, paid by its zero payment at now; a paid stay keeps
+-- the paid_at of its last payment.
+update stays
+set status = 'exited', exited_at = sqlc.arg(now)::timestamptz,
+    paid_at = coalesce(paid_at, sqlc.arg(now)::timestamptz), updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status in ('active', 'paid');
