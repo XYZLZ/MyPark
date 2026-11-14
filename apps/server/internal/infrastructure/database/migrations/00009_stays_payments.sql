@@ -46,16 +46,16 @@ create table stays (
     voided_at          timestamptz,
     lost_ticket        boolean not null default false,
     updated_at         timestamptz not null default now(),
-    check ((credential_kind = 'ticket') = (ticket_code_hash is not null)),
-    check ((credential_kind = 'employee_card') = (employee_card_id is not null)),
-    check (status not in ('active', 'paid', 'exited') or entered_at is not null),
-    check (status <> 'paid' or (paid_at is not null and exit_deadline_at is not null)),
+    constraint stays_ticket_hash_check check ((credential_kind = 'ticket') = (ticket_code_hash is not null)),
+    constraint stays_card_id_check check ((credential_kind = 'employee_card') = (employee_card_id is not null)),
+    constraint stays_entered_check check (status not in ('active', 'paid', 'exited') or entered_at is not null),
+    constraint stays_paid_check check (status <> 'paid' or (paid_at is not null and exit_deadline_at is not null)),
     -- The fee calculator reads the payment time next to the deadline: a zero
     -- paid_at would bill from the year 1 (about RD$42.7M).
-    check (exit_deadline_at is null or paid_at is not null),
-    check (status <> 'exited' or exited_at is not null),
-    check (status <> 'voided' or voided_at is not null),
-    check (not lost_ticket or credential_kind = 'ticket')
+    constraint stays_deadline_needs_paid_check check (exit_deadline_at is null or paid_at is not null),
+    constraint stays_exited_check check (status <> 'exited' or exited_at is not null),
+    constraint stays_voided_check check (status <> 'voided' or voided_at is not null),
+    constraint stays_lost_ticket_check check (not lost_ticket or credential_kind = 'ticket')
 );
 
 -- FK indexes. The partial ones serve the hot lookups; stays_lot_id_idx covers
@@ -86,10 +86,16 @@ create table payments (
     device_id       bigint references devices (id),
     created_at      timestamptz not null default now(),
     succeeded_at    timestamptz,
-    check ((method = 'none') = (amount_cents = 0))
+    constraint payments_zero_amount_check check ((method = 'none') = (amount_cents = 0)),
+    -- PaymentTotals feeds max(succeeded_at) to the fee calculator.
+    constraint payments_succeeded_at_check check (status not in ('succeeded', 'refunded') or succeeded_at is not null)
 );
 
 create index payments_stay_id_idx on payments (stay_id);
 create index payments_device_id_idx on payments (device_id) where device_id is not null;
 -- At most one zero payment per stay.
 create unique index payments_zero_per_stay_key on payments (stay_id) where method = 'none';
+
+-- Financial records are kept for 5 years (policies 1): nothing deletes stays
+-- or payments. The default privileges from 00001 grant DELETE; take it back.
+revoke delete, truncate on payments, stays from mypark_app;

@@ -2,7 +2,6 @@ package gate_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -98,11 +97,13 @@ func TestSeedCards_RejectsEmptySecrets(t *testing.T) {
 func TestSeedCards_ErrorsNeverCarryUIDs(t *testing.T) {
 	db := testsupport.NewTestDB(t)
 	lotID := testsupport.SeedPilotLot(t, db)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err := gate.SeedCards(ctx, dbgen.New(db.App), lotID+999, testFleet, testPepper)
+	_, err := gate.SeedCards(t.Context(), dbgen.New(db.App), lotID+999, testFleet, testPepper)
 	if err == nil {
-		t.Fatal("SeedCards on a cancelled context succeeded")
+		t.Fatal("SeedCards with an unknown lot succeeded")
+	}
+	// The Postgres-error branch ran: the FK violation, not a context error.
+	if want := "SQLSTATE 23503"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want it to carry %q", err, want)
 	}
 	msg := fmt.Sprintf("%v|%+v|%#v", err, err, err)
 	for _, c := range devicefleet.Cards() {

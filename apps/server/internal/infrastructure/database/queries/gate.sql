@@ -51,6 +51,9 @@ where lot_id = @lot_id and employee_card_id = @employee_card_id
 for update;
 
 -- name: InsertPayment :one
+-- Lot scoping is the caller's: stay_id must come from a lot-scoped FOR UPDATE
+-- lookup (GetStayForUpdate and friends, design §8.2); the insert does not
+-- re-check the lot. A succeeded or refunded payment needs succeeded_at.
 insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at)
 values (@kind, @stay_id, @method, @amount_cents, @status, @idempotency_key, sqlc.narg(device_id),
         sqlc.arg(now)::timestamptz, sqlc.narg(succeeded_at))

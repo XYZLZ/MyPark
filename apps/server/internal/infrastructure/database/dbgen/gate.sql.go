@@ -191,6 +191,9 @@ type InsertPaymentParams struct {
 	SucceededAt    pgtype.Timestamptz
 }
 
+// Lot scoping is the caller's: stay_id must come from a lot-scoped FOR UPDATE
+// lookup (GetStayForUpdate and friends, design §8.2); the insert does not
+// re-check the lot. A succeeded or refunded payment needs succeeded_at.
 func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertPayment,
 		arg.Kind,
