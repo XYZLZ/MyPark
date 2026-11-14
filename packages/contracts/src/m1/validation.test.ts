@@ -4,14 +4,22 @@ import adminsHttp from '../../../../apps/server/internal/features/users/admins_h
 import usersHttp from '../../../../apps/server/internal/features/users/http.go?raw';
 import vehiclePlate from '../../../../apps/server/internal/features/vehicles/plate.go?raw';
 import vehiclesHttp from '../../../../apps/server/internal/features/vehicles/http.go?raw';
+import envelopeGo from '../../../../apps/server/internal/features/devices/envelope.go?raw';
 import strictGo from '../../../../apps/server/internal/transport/http/httpx/strict.go?raw';
 import validationGo from '../../../../apps/server/internal/infrastructure/validation/validation.go?raw';
 import { CLIENT_ERROR_CODES, VALIDATION_RULES, parseFieldErrors, parseIssueMessage } from './validation';
 
+/**
+ * Rules only device firmware reads (the device event decoder, never a client
+ * form), so they are deliberately not in VALIDATION_RULES. A new device rule
+ * must be added here on purpose.
+ */
+const DEVICE_ONLY_RULES = ['uuid', 'datetime', 'future', 'format'];
+
 /** Every rule name the Go server can put in `details.fields[].rule`, read from its sources. */
 function serverRules(): string[] {
   const rules = new Set<string>();
-  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo];
+  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo, envelopeGo];
   for (const src of sources) {
     for (const [, tags] of src.matchAll(/validate:"([^"]+)"/g)) {
       for (const tag of (tags ?? '').split(',')) {
@@ -20,14 +28,21 @@ function serverRules(): string[] {
       }
     }
     for (const [, name] of src.matchAll(/RegisterValidation\("([a-z0-9_]+)"/g)) rules.add(name ?? '');
+    for (const [, name] of src.matchAll(/\brule[A-Z][A-Za-z]*\s*=\s*"([a-z0-9_]+)"/g)) rules.add(name ?? '');
     for (const [, name] of src.matchAll(/Rule:\s*"([a-z0-9_]+)"/g)) rules.add(name ?? '');
   }
   return [...rules].sort();
 }
 
+function clientRules(): string[] {
+  return serverRules().filter((r) => !DEVICE_ONLY_RULES.includes(r));
+}
+
 describe('VALIDATION_RULES', () => {
   test('VALIDATION_RULES holds every rule the server emits', () => {
-    const emitted = serverRules();
+    const emitted = clientRules();
+    // Every device-only exemption must really be emitted, or it is stale.
+    expect(serverRules()).toEqual(expect.arrayContaining(DEVICE_ONLY_RULES));
     expect(emitted).toEqual(
       expect.arrayContaining(['required', 'email', 'min', 'max', 'oneof', 'phone', 'code6', 'password_common', 'plate']),
     );

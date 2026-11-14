@@ -29,8 +29,11 @@ func RedactPayload(ev gate.Event) (json.RawMessage, error) {
 	case gate.ExitCredential:
 		p.Credential.Value = redactValue(p.Credential.Value)
 		return json.Marshal(p)
-	default:
+	case gate.Empty, gate.BarrierPassed, gate.LostTicket, gate.CashPaid, gate.SensorChanged:
+		// No credential value: stored as is.
 		return json.Marshal(p)
+	default:
+		return nil, fmt.Errorf("devices: no redaction rule for payload type %T", p)
 	}
 }
 

@@ -121,3 +121,11 @@ func TestOpenResult_TamperedBoxFails(t *testing.T) {
 		t.Fatal("unknown key opened")
 	}
 }
+
+type strayPayload struct{ Value string }
+
+func TestRedactPayload_UnknownPayloadTypeErrors(t *testing.T) {
+	if _, err := devices.RedactPayload(gate.Event{Type: gate.EventHeartbeat, Payload: strayPayload{Value: "secret"}}); err == nil {
+		t.Fatal("unlisted payload type must not be stored unredacted")
+	}
+}

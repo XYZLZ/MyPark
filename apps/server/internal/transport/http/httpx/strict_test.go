@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
@@ -114,5 +115,42 @@ func TestInvalidFields(t *testing.T) {
 	ae, ok := errors.AsType[*apperr.Error](err)
 	if !ok || ae.Kind != apperr.KindInvalid || ae.Code != errcodes.ValidationFailed {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDecodeStrict_CaseAndDuplicateKeys(t *testing.T) {
+	for name, tc := range map[string]struct{ raw, field string }{
+		"case variant top":      {`{"A":"x"}`, "A"},
+		"case variant nested":   {`{"inner":{"N":1}}`, "inner.N"},
+		"duplicate top":         {`{"a":"x","a":"y"}`, "a"},
+		"duplicate nested":      {`{"inner":{"n":1,"n":2}}`, "inner.n"},
+		"duplicate after other": {`{"a":"x","inner":{"n":1},"a":"z"}`, "a"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ae := strictErr(t, tc.raw)
+			fields, _ := ae.Details["fields"].([]validation.FieldError)
+			if ae.Kind != apperr.KindInvalid || len(fields) != 1 || fields[0].Rule != "unknown_field" || fields[0].Field != tc.field {
+				t.Fatalf("kind=%v fields=%#v, want unknown_field on %q", ae.Kind, ae.Details["fields"], tc.field)
+			}
+		})
+	}
+}
+
+func TestDecodeStrict_WrapsNoRequestValue(t *testing.T) {
+	ae := strictErr(t, `{"amt":12345678901234567890123}`)
+	if ae.Kind != apperr.KindBadRequest {
+		t.Fatalf("kind = %v", ae.Kind)
+	}
+	if strings.Contains(ae.Error(), "12345678") || (ae.Err != nil && strings.Contains(ae.Err.Error(), "12345678")) {
+		t.Fatalf("error chain echoes the value: %v", ae.Err)
+	}
+}
+
+func TestDecodeStrict_KeyTruncatedOnRuneBoundary(t *testing.T) {
+	key := strings.Repeat("é", 40) // 80 bytes
+	ae := strictErr(t, `{"`+key+`":1}`)
+	f := ae.Details["fields"].([]validation.FieldError)[0].Field
+	if !utf8.ValidString(f) || len(f) > 64 {
+		t.Fatalf("field %q (%d bytes) is not a valid truncation", f, len(f))
 	}
 }

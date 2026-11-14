@@ -1,6 +1,7 @@
 package devices_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -98,6 +99,63 @@ func TestKindMatrix(t *testing.T) {
 	for _, tc := range sub {
 		if got := devices.Allowed(tc.kind, tc.ev); got != tc.want {
 			t.Errorf("%s: Allowed = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestKindMatrixExhaustive checks every kind x type x credential kind x
+// direction against an allow-set written out by hand from design §7.5.
+func TestKindMatrixExhaustive(t *testing.T) {
+	kinds := []authz.DeviceKind{authz.DevicePodium, authz.DeviceDispenser, authz.DeviceEntryBarrier, authz.DeviceExitBarrier, authz.DevicePayStation, authz.DeviceSensorGateway, authz.DeviceKind("toaster"), authz.DeviceKind("")}
+	// Plain types: allowed kinds.
+	plain := map[gate.EventType][]authz.DeviceKind{
+		gate.EventPodiumDetected: {authz.DevicePodium},
+		gate.EventPayScan:        {authz.DevicePayStation},
+		gate.EventLostTicket:     {authz.DevicePayStation},
+		gate.EventCashPaid:       {authz.DevicePayStation},
+		gate.EventExitCredential: {authz.DeviceExitBarrier},
+		gate.EventSensorChanged:  {authz.DeviceSensorGateway},
+	}
+	// heartbeat: the six real kinds only.
+	heartbeat := []authz.DeviceKind{authz.DevicePodium, authz.DeviceDispenser, authz.DeviceEntryBarrier, authz.DeviceExitBarrier, authz.DevicePayStation, authz.DeviceSensorGateway}
+	// entry.credential_presented: kind -> credential kinds allowed.
+	entryOK := map[authz.DeviceKind][]string{
+		authz.DeviceDispenser:    {gate.KindTicketRequest},
+		authz.DeviceEntryBarrier: {gate.KindEmployeeCard, gate.KindReservationQR},
+	}
+	// barrier.passed: kind -> directions allowed.
+	passOK := map[authz.DeviceKind][]string{
+		authz.DeviceEntryBarrier: {gate.DirectionEntry},
+		authz.DeviceExitBarrier:  {gate.DirectionExit},
+	}
+	has := func(list []authz.DeviceKind, k authz.DeviceKind) bool { return slices.Contains(list, k) }
+
+	for _, k := range kinds {
+		for _, typ := range gate.AllEventTypes() {
+			switch typ {
+			case gate.EventEntryCredential:
+				for _, ck := range []string{gate.KindTicketRequest, gate.KindTicket, gate.KindEmployeeCard, gate.KindReservationQR, "", "other"} {
+					want := slices.Contains(entryOK[k], ck)
+					if got := devices.Allowed(k, evOf(typ, gate.EntryCredential{Kind: ck})); got != want {
+						t.Errorf("Allowed(%q, %s, %q) = %v, want %v", k, typ, ck, got, want)
+					}
+				}
+			case gate.EventBarrierPassed:
+				for _, d := range []string{gate.DirectionEntry, gate.DirectionExit, "", "other"} {
+					want := slices.Contains(passOK[k], d)
+					if got := devices.Allowed(k, evOf(typ, gate.BarrierPassed{Direction: d})); got != want {
+						t.Errorf("Allowed(%q, %s, %q) = %v, want %v", k, typ, d, got, want)
+					}
+				}
+			case gate.EventHeartbeat:
+				if got, want := devices.Allowed(k, evOf(typ, gate.Empty{})), has(heartbeat, k); got != want {
+					t.Errorf("Allowed(%q, heartbeat) = %v, want %v", k, got, want)
+				}
+			default:
+				if got, want := devices.Allowed(k, evOf(typ, payloadFor(typ))), has(plain[typ], k); got != want {
+					t.Errorf("Allowed(%q, %s) = %v, want %v", k, typ, got, want)
+				}
+			}
 		}
 	}
 }

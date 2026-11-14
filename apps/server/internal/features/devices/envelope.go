@@ -3,6 +3,7 @@ package devices
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -121,21 +122,14 @@ func trimmed(b json.RawMessage) []byte {
 	return b
 }
 
-func knownType(t gate.EventType) bool {
-	for _, k := range gate.AllEventTypes() {
-		if k == t {
-			return true
-		}
-	}
-	return false
-}
+func knownType(t gate.EventType) bool { return slices.Contains(gate.AllEventTypes(), t) }
 
 func parseUUID(s string) (uuid.UUID, bool) {
 	if len(s) != 36 {
 		return uuid.UUID{}, false
 	}
 	id, err := uuid.Parse(s)
-	return id, err == nil
+	return id, err == nil && id != uuid.Nil
 }
 
 // fieldErrors collects the field errors of one decode.
@@ -151,10 +145,8 @@ func (f fieldErrors) err() error {
 
 // Wire payloads: every field a pointer, so absence is told from a zero value.
 type (
-	wireEntry struct {
-		Kind  *string `json:"kind"`
-		Value *string `json:"value"`
-	}
+	// wireCredential is the kind+value pair of an entry credential and of a
+	// presented credential alike.
 	wireCredential struct {
 		Kind  *string `json:"kind"`
 		Value *string `json:"value"`
@@ -193,7 +185,7 @@ func decodePayload(t gate.EventType, raw []byte) (any, error) {
 		out = gate.Empty{}
 
 	case gate.EventEntryCredential:
-		var w wireEntry
+		var w wireCredential
 		if err := httpx.DecodeStrictAt(raw, &w, "payload"); err != nil {
 			return nil, err
 		}

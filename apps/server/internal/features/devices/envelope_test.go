@@ -183,9 +183,50 @@ func TestDecodeEvent_NestedJunk(t *testing.T) {
 }
 
 func FuzzDecodeEvent(f *testing.F) {
-	f.Add([]byte(evBody("heartbeat", `{}`)))
+	stay := "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5c"
+	seeds := map[string]string{
+		"podium.vehicle_detected":    `{}`,
+		"entry.credential_presented": `{"kind":"employee_card","value":"DFFE6EAD"}`,
+		"barrier.passed":             `{"direction":"entry","stay_id":"` + stay + `"}`,
+		"paystation.scan":            `{"credential":{"kind":"ticket","value":"A"}}`,
+		"paystation.lost_ticket":     `{"stay_id":"` + stay + `"}`,
+		"paystation.cash_paid":       `{"stay_id":"` + stay + `","amount_cents":5000}`,
+		"exit.credential_presented":  `{"credential":{"kind":"ticket","value":"A"}}`,
+		"sensor.space_changed":       `{"space_code":"E001","occupied":true}`,
+		"heartbeat":                  `{}`,
+	}
+	for typ, p := range seeds {
+		f.Add([]byte(evBody(typ, p)))
+	}
+	f.Add([]byte(evBody("paystation.scan", `{"credential":{"kind":"ticket","Value":"A","value":"B","x":[1,{"y":null}]}}`)))
 	f.Add([]byte(`{"payload":null}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		_, _ = devices.DecodeEvent(raw, decodeNow)
+		ev, err := devices.DecodeEvent(raw, decodeNow)
+		if err != nil {
+			ae, ok := errors.AsType[*apperr.Error](err)
+			if !ok || (ae.Kind != apperr.KindBadRequest && ae.Kind != apperr.KindInvalid) {
+				t.Fatalf("error %v is not a 400/422 *apperr.Error", err)
+			}
+			return
+		}
+		if ev.Payload == nil || reflect.TypeOf(ev.Payload) != reflect.TypeOf(payloadFor(ev.Type)) {
+			t.Fatalf("payload %T does not match type %q", ev.Payload, ev.Type)
+		}
 	})
+}
+
+func TestDecodeEvent_CaseVariantAndDuplicateKeys(t *testing.T) {
+	stay := "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5c"
+	wantInvalid(t, strings.Replace(evBody("heartbeat", `{}`), `"type"`, `"Type"`, 1), "Type", "unknown_field")
+	wantInvalid(t, strings.Replace(evBody("heartbeat", `{}`), `"type":"heartbeat"`, `"type":"heartbeat","type":"podium.vehicle_detected"`, 1), "type", "unknown_field")
+	wantInvalid(t, evBody("paystation.scan", `{"credential":{"kind":"ticket","Value":"A"}}`), "payload.credential.Value", "unknown_field")
+	wantInvalid(t, evBody("paystation.scan", `{"credential":{"kind":"ticket","value":"A","value":"B"}}`), "payload.credential.value", "unknown_field")
+	wantInvalid(t, evBody("paystation.lost_ticket", `{"stay_id":"`+stay+`","stay_id":"`+stay+`"}`), "payload.stay_id", "unknown_field")
+	wantInvalid(t, evBody("paystation.lost_ticket", `{"Stay_ID":"`+stay+`"}`), "payload.Stay_ID", "unknown_field")
+}
+
+func TestDecodeEvent_NilUUIDRejected(t *testing.T) {
+	nilID := "00000000-0000-0000-0000-000000000000"
+	wantInvalid(t, strings.Replace(evBody("heartbeat", `{}`), evID, nilID, 1), "event_id", "uuid")
+	wantInvalid(t, evBody("paystation.lost_ticket", `{"stay_id":"`+nilID+`"}`), "payload.stay_id", "uuid")
 }

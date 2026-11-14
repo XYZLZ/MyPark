@@ -37,6 +37,8 @@ func Allowed(kind authz.DeviceKind, ev gate.Event) bool {
 			return p.Kind == gate.KindTicketRequest
 		case authz.DeviceEntryBarrier:
 			return p.Kind == gate.KindEmployeeCard || p.Kind == gate.KindReservationQR
+		default:
+			return false
 		}
 	case gate.EventBarrierPassed:
 		p, ok := ev.Payload.(gate.BarrierPassed)
@@ -48,6 +50,8 @@ func Allowed(kind authz.DeviceKind, ev gate.Event) bool {
 			return p.Direction == gate.DirectionEntry
 		case authz.DeviceExitBarrier:
 			return p.Direction == gate.DirectionExit
+		default:
+			return false
 		}
 	}
 	return true
