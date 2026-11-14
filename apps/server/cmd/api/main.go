@@ -48,6 +48,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/pubsub"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
@@ -127,6 +128,26 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
+	// One hub fans lot changes out to every stream. Its listener holds a
+	// dedicated connection, hijacked out of the request pool (design §11.6).
+	hub := availability.NewHub(
+		availability.NewService(availabilitypg.NewRepo(pool), availability.NoReservations{}, clock.System{}),
+		clock.System{}, log)
+	listener := pubsub.New(pool, log, pubsub.Handlers{
+		LotChanged: hub.LotChanged, SpaceChanged: hub.SpaceChanged, Reconnected: hub.Resync,
+	})
+	listenCtx, stopListener := context.WithCancel(ctx)
+	listenerDone := make(chan struct{})
+	go func() {
+		defer close(listenerDone)
+		_ = listener.Run(listenCtx)
+	}()
+	// Runs before the deferred pool.Close.
+	defer func() {
+		stopListener()
+		<-listenerDone
+		hub.Close()
+	}()
 	d := deps{
 		signer: signer,
 		sealer: sealer,
@@ -139,6 +160,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		codes:   codes,
 		limiter: ratelimit.NewComposite(ratelimit.NewPostgres(pool, clock.System{}), ratelimit.NewMemory(clock.System{})),
 		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
+
+		hub:        hub,
+		listenerUp: listener.Connected,
 	}
 	srv := httpserver.New(cfg.HTTPAddr(), newHandler(d), log)
 	// The config is logged only through Config.LogValue, which redacts the
@@ -165,6 +189,10 @@ type deps struct {
 	hasher  hashing.PasswordHasher
 	codes   hashing.CodeHasher
 	limiter ratelimit.Limiter
+
+	// Built in run (PF8). Handler-only tests leave them nil.
+	hub        *availability.Hub
+	listenerUp func() bool // the LISTEN connection is up (/readyz)
 }
 
 // newHandler builds the API router with every feature handler and wraps it
