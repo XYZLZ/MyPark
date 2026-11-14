@@ -19,6 +19,21 @@ func TestAll_SortedAndComplete(t *testing.T) {
 		"auth.refresh_invalid",
 		"auth.session_revoked",
 		"auth.unauthenticated",
+		"device.event_conflict",
+		"device.event_not_allowed",
+		"device.timestamp_out_of_window",
+		"device.unauthenticated",
+		"gate.amount_mismatch",
+		"gate.credential_in_use",
+		"gate.credential_invalid",
+		"gate.duplicate_pass",
+		"gate.exit_not_authorized",
+		"gate.lot_closed",
+		"gate.lot_full",
+		"gate.lot_physically_full",
+		"gate.nothing_due",
+		"gate.payment_required",
+		"gate.stay_unknown",
 		"health.not_ready",
 		"http.invalid_json",
 		"http.method_not_allowed",
@@ -28,7 +43,15 @@ func TestAll_SortedAndComplete(t *testing.T) {
 		"internal.unexpected",
 		"legal.acceptance_required",
 		"legal.version_outdated",
+		"lot.not_found",
+		"lot.space_unknown",
 		"rate_limit.exceeded",
+		"session.logout_unconfirmed",
+		"simulator.already_running",
+		"simulator.car_not_found",
+		"simulator.not_running",
+		"simulator.scenario_unavailable",
+		"simulator.unauthorized",
 		"user.email_taken",
 		"validation.failed",
 		"vehicle.in_use",
@@ -87,6 +110,50 @@ func TestCatalog_M1Codes(t *testing.T) {
 	}
 	all := errcodes.All()
 	for _, tc := range m1Codes {
+		if string(tc.c) != tc.want {
+			t.Errorf("constant = %q, want %q", tc.c, tc.want)
+		}
+		if !slices.Contains(all, tc.c) {
+			t.Errorf("%q missing from All()", tc.c)
+		}
+	}
+}
+
+var m2Codes = []struct {
+	c    errcodes.Code
+	want string
+}{
+	{errcodes.DeviceUnauthenticated, "device.unauthenticated"},
+	{errcodes.DeviceTimestampOutOfWindow, "device.timestamp_out_of_window"},
+	{errcodes.DeviceEventNotAllowed, "device.event_not_allowed"},
+	{errcodes.DeviceEventConflict, "device.event_conflict"},
+	{errcodes.LotNotFound, "lot.not_found"},
+	{errcodes.LotSpaceUnknown, "lot.space_unknown"},
+	{errcodes.GateLotFull, "gate.lot_full"},
+	{errcodes.GateLotPhysicallyFull, "gate.lot_physically_full"},
+	{errcodes.GateLotClosed, "gate.lot_closed"},
+	{errcodes.GateCredentialInvalid, "gate.credential_invalid"},
+	{errcodes.GateCredentialInUse, "gate.credential_in_use"},
+	{errcodes.GatePaymentRequired, "gate.payment_required"},
+	{errcodes.GateAmountMismatch, "gate.amount_mismatch"},
+	{errcodes.GateNothingDue, "gate.nothing_due"},
+	{errcodes.GateStayUnknown, "gate.stay_unknown"},
+	{errcodes.GateExitNotAuthorized, "gate.exit_not_authorized"},
+	{errcodes.GateDuplicatePass, "gate.duplicate_pass"},
+	{errcodes.SimulatorUnauthorized, "simulator.unauthorized"},
+	{errcodes.SimulatorAlreadyRunning, "simulator.already_running"},
+	{errcodes.SimulatorNotRunning, "simulator.not_running"},
+	{errcodes.SimulatorScenarioUnavailable, "simulator.scenario_unavailable"},
+	{errcodes.SimulatorCarNotFound, "simulator.car_not_found"},
+	{errcodes.SessionLogoutUnconfirmed, "session.logout_unconfirmed"},
+}
+
+func TestCatalog_M2Codes(t *testing.T) {
+	if len(m2Codes) != 23 {
+		t.Fatalf("expected 23 M2 codes, table has %d", len(m2Codes))
+	}
+	all := errcodes.All()
+	for _, tc := range m2Codes {
 		if string(tc.c) != tc.want {
 			t.Errorf("constant = %q, want %q", tc.c, tc.want)
 		}

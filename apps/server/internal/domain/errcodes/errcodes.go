@@ -38,6 +38,35 @@ const (
 	HTTPInvalidJSON          Code = "http.invalid_json"
 	HTTPPayloadTooLarge      Code = "http.payload_too_large"
 	HTTPUnsupportedMediaType Code = "http.unsupported_media_type"
+
+	DeviceUnauthenticated      Code = "device.unauthenticated"
+	DeviceTimestampOutOfWindow Code = "device.timestamp_out_of_window"
+	DeviceEventNotAllowed      Code = "device.event_not_allowed"
+	DeviceEventConflict        Code = "device.event_conflict"
+
+	LotNotFound     Code = "lot.not_found"
+	LotSpaceUnknown Code = "lot.space_unknown"
+
+	GateLotFull           Code = "gate.lot_full"
+	GateLotPhysicallyFull Code = "gate.lot_physically_full"
+	GateLotClosed         Code = "gate.lot_closed"
+	GateCredentialInvalid Code = "gate.credential_invalid"
+	GateCredentialInUse   Code = "gate.credential_in_use"
+	GatePaymentRequired   Code = "gate.payment_required"
+	GateAmountMismatch    Code = "gate.amount_mismatch"
+	GateNothingDue        Code = "gate.nothing_due"
+	GateStayUnknown       Code = "gate.stay_unknown"
+	GateExitNotAuthorized Code = "gate.exit_not_authorized"
+	GateDuplicatePass     Code = "gate.duplicate_pass"
+
+	SimulatorUnauthorized        Code = "simulator.unauthorized"
+	SimulatorAlreadyRunning      Code = "simulator.already_running"
+	SimulatorNotRunning          Code = "simulator.not_running"
+	SimulatorScenarioUnavailable Code = "simulator.scenario_unavailable"
+	SimulatorCarNotFound         Code = "simulator.car_not_found"
+
+	// Returned by the web BFF only.
+	SessionLogoutUnconfirmed Code = "session.logout_unconfirmed"
 )
 
 var catalog = []Code{
@@ -66,6 +95,29 @@ var catalog = []Code{
 	HTTPInvalidJSON,
 	HTTPPayloadTooLarge,
 	HTTPUnsupportedMediaType,
+	DeviceUnauthenticated,
+	DeviceTimestampOutOfWindow,
+	DeviceEventNotAllowed,
+	DeviceEventConflict,
+	LotNotFound,
+	LotSpaceUnknown,
+	GateLotFull,
+	GateLotPhysicallyFull,
+	GateLotClosed,
+	GateCredentialInvalid,
+	GateCredentialInUse,
+	GatePaymentRequired,
+	GateAmountMismatch,
+	GateNothingDue,
+	GateStayUnknown,
+	GateExitNotAuthorized,
+	GateDuplicatePass,
+	SimulatorUnauthorized,
+	SimulatorAlreadyRunning,
+	SimulatorNotRunning,
+	SimulatorScenarioUnavailable,
+	SimulatorCarNotFound,
+	SessionLogoutUnconfirmed,
 }
 
 // All returns every known code, sorted ascending. The returned slice is a

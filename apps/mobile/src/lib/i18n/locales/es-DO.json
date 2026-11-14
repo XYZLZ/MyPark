@@ -23,6 +23,25 @@
       "session_revoked": "Tu sesión terminó. Inicia sesión de nuevo.",
       "unauthenticated": "Inicia sesión para continuar."
     },
+    "device": {
+      "unauthenticated": "Falló la autenticación del dispositivo.",
+      "timestamp_out_of_window": "El reloj del dispositivo está fuera de la ventana permitida.",
+      "event_not_allowed": "Este dispositivo no puede enviar ese evento.",
+      "event_conflict": "El id del evento ya se usó con otro contenido."
+    },
+    "gate": {
+      "lot_full": "El estacionamiento está lleno.",
+      "lot_physically_full": "El estacionamiento no tiene espacios libres.",
+      "lot_closed": "El estacionamiento está cerrado.",
+      "credential_invalid": "Ese ticket o tarjeta no es válido.",
+      "credential_in_use": "Esa tarjeta ya tiene una estadía abierta.",
+      "payment_required": "Se requiere pago antes de salir.",
+      "amount_mismatch": "El monto no coincide con lo adeudado.",
+      "nothing_due": "No hay nada que pagar por esta estadía.",
+      "stay_unknown": "No pudimos encontrar esa estadía.",
+      "exit_not_authorized": "La salida no está autorizada.",
+      "duplicate_pass": "Paso duplicado por la barrera."
+    },
     "health": {
       "not_ready": "El servicio está iniciando. Inténtalo en unos segundos."
     },
@@ -40,8 +59,22 @@
       "acceptance_required": "Debes aceptar los términos y la política de privacidad para continuar.",
       "version_outdated": "Los textos legales cambiaron. Léelos y acéptalos de nuevo."
     },
+    "lot": {
+      "not_found": "No pudimos encontrar ese estacionamiento.",
+      "space_unknown": "Código de espacio desconocido para este estacionamiento."
+    },
     "rate_limit": {
       "exceeded": "Demasiados intentos. Inténtalo de nuevo en {{seconds}} s."
+    },
+    "session": {
+      "logout_unconfirmed": "No pudimos confirmar que tu sesión se cerró. Si te preocupa, cambia tu contraseña."
+    },
+    "simulator": {
+      "unauthorized": "Falta el token del simulador o no es válido.",
+      "already_running": "Ya hay un escenario en ejecución.",
+      "not_running": "No hay ningún escenario en ejecución.",
+      "scenario_unavailable": "Ese escenario aún no está disponible.",
+      "car_not_found": "No pudimos encontrar ese auto."
     },
     "user": {
       "email_taken": "No pudimos completar el registro con ese correo."
@@ -70,6 +103,7 @@
     "code6": "El código tiene 6 dígitos.",
     "password_common": "Esa contraseña es muy común. Elige otra.",
     "plate": "Usa solo letras y números, de 2 a 10 caracteres.",
+    "unknown_field": "Este campo no está permitido.",
     "unknown": "Revisa este campo."
   },
   "session": {

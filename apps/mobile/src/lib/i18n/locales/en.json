@@ -23,6 +23,25 @@
       "session_revoked": "Your session ended. Log in again.",
       "unauthenticated": "Log in to continue."
     },
+    "device": {
+      "unauthenticated": "Device authentication failed.",
+      "timestamp_out_of_window": "Device clock is out of the allowed window.",
+      "event_not_allowed": "This device may not send that event.",
+      "event_conflict": "Event id already used with different content."
+    },
+    "gate": {
+      "lot_full": "The lot is full.",
+      "lot_physically_full": "The lot has no free spaces.",
+      "lot_closed": "The lot is closed.",
+      "credential_invalid": "That ticket or card is not valid.",
+      "credential_in_use": "That card already has an open stay.",
+      "payment_required": "Payment is required before exit.",
+      "amount_mismatch": "The amount does not match what is due.",
+      "nothing_due": "There is nothing to pay for this stay.",
+      "stay_unknown": "We could not find that stay.",
+      "exit_not_authorized": "Exit is not authorized.",
+      "duplicate_pass": "Duplicate barrier pass."
+    },
     "health": {
       "not_ready": "The service is starting. Try again in a few seconds."
     },
@@ -40,8 +59,22 @@
       "acceptance_required": "You must accept the terms and the privacy policy to continue.",
       "version_outdated": "The legal texts changed. Read and accept them again."
     },
+    "lot": {
+      "not_found": "We could not find that lot.",
+      "space_unknown": "Unknown space code for this lot."
+    },
     "rate_limit": {
       "exceeded": "Too many attempts. Try again in {{seconds}} s."
+    },
+    "session": {
+      "logout_unconfirmed": "We could not confirm that your session was closed. If you are worried, change your password."
+    },
+    "simulator": {
+      "unauthorized": "Missing or invalid simulator token.",
+      "already_running": "A scenario is already running.",
+      "not_running": "No scenario is running.",
+      "scenario_unavailable": "That scenario is not available yet.",
+      "car_not_found": "We could not find that car."
     },
     "user": {
       "email_taken": "We could not complete the sign-up with that email."
@@ -70,6 +103,7 @@
     "code6": "The code has 6 digits.",
     "password_common": "That password is too common. Choose another.",
     "plate": "Use only letters and numbers, 2 to 10 characters.",
+    "unknown_field": "This field is not allowed.",
     "unknown": "Check this field."
   },
   "session": {
