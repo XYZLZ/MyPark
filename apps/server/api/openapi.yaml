@@ -26,6 +26,8 @@ tags:
     description: Public lot discovery, availability, spaces and tariff.
   - name: admin
     description: Admin user management.
+  - name: devices
+    description: Signed device events from the parking hardware.
 paths:
   /healthz:
     get:
@@ -936,6 +938,108 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /v1/devices/events:
+    post:
+      operationId: postDeviceEvent
+      summary: Submit one signed device event
+      description: >-
+        The single entry point for every parking device. The body is one
+        `DeviceEvent`, a union discriminated by `type`. The request is signed
+        with the device secret (`deviceHmac`) and is strictly decoded: unknown
+        fields at any level are answered 422 `validation.failed` with rule
+        `unknown_field`, a wrong JSON type is 400 `http.invalid_json`, a body
+        that is not `application/json` is 415 and a body over 16 KiB is 413.
+        `event_id` makes the call idempotent per device: a repeat with the same
+        body returns the stored answer with `Idempotent-Replayed: true`, a
+        repeat with a different body is 409 `device.event_conflict`. 4xx and
+        5xx answers are never stored. Each device kind may send only some
+        types; any other type is 403 `device.event_not_allowed`. A business
+        refusal is a 200 with `result` `deny` or `rejected` and a `reason`
+        code, not an HTTP error.
+      tags: [devices]
+      security:
+        - deviceId: []
+          deviceTimestamp: []
+          deviceSignature: []
+      x-mypark-pending: S5.2
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceTimestamp"
+        - $ref: "#/components/parameters/DeviceSignature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceEvent" }
+            example:
+              event_id: 019a6d00-0000-7000-8000-0000000000a1
+              type: entry.credential_presented
+              occurred_at: "2026-11-24T14:03:10Z"
+              payload: { kind: ticket_request }
+      responses:
+        "200":
+          description: The event was handled (or replayed).
+          headers:
+            Idempotent-Replayed:
+              description: Present, with the value `true`, only when this is the stored answer of an earlier call.
+              schema: { type: string, enum: ["true"] }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/DeviceEventResult" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: >-
+            The device headers are missing or malformed, the device is unknown
+            or revoked, the signature is wrong (`device.unauthenticated`), or
+            `X-Timestamp` is more than 60 s from the server clock
+            (`device.timestamp_out_of_window`). A user bearer token is ignored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                unauthenticated:
+                  summary: Missing headers, unknown or revoked device, or a bad signature.
+                  value:
+                    error: { code: device.unauthenticated, message: device unauthenticated, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                timestampOutOfWindow:
+                  summary: X-Timestamp is outside the 60 s window.
+                  value:
+                    error: { code: device.timestamp_out_of_window, message: timestamp out of window, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "403":
+          description: The device kind may not send this event type.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: device.event_not_allowed, message: event not allowed for this device, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "409":
+          description: The same `event_id` was already used by this device with a different body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: device.event_conflict, message: event id reused with a different body, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "413":
+          description: The body is larger than 16 KiB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: http.payload_too_large, message: payload too large, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
 components:
   schemas:
     Health:
@@ -1363,7 +1467,237 @@ components:
       required: [as_of]
       properties:
         as_of: { type: string, format: date-time }
+    DeviceEvent:
+      description: >-
+        One device event, discriminated by `type`. Allowed device kinds per
+        type: podium (`podium.vehicle_detected`), dispenser and entry barrier
+        (`entry.credential_presented`), entry and exit barrier
+        (`barrier.passed`), pay station (`paystation.*`), exit barrier
+        (`exit.credential_presented`), sensor gateway
+        (`sensor.space_changed`), any kind (`heartbeat`). `occurred_at` must
+        not be more than 60 s ahead of the server clock.
+      oneOf:
+        - $ref: "#/components/schemas/DeviceEventPodiumVehicleDetected"
+        - $ref: "#/components/schemas/DeviceEventEntryCredentialPresented"
+        - $ref: "#/components/schemas/DeviceEventBarrierPassed"
+        - $ref: "#/components/schemas/DeviceEventPaystationScan"
+        - $ref: "#/components/schemas/DeviceEventPaystationLostTicket"
+        - $ref: "#/components/schemas/DeviceEventPaystationCashPaid"
+        - $ref: "#/components/schemas/DeviceEventExitCredentialPresented"
+        - $ref: "#/components/schemas/DeviceEventSensorSpaceChanged"
+        - $ref: "#/components/schemas/DeviceEventHeartbeat"
+      discriminator:
+        propertyName: type
+        mapping:
+          podium.vehicle_detected: "#/components/schemas/DeviceEventPodiumVehicleDetected"
+          entry.credential_presented: "#/components/schemas/DeviceEventEntryCredentialPresented"
+          barrier.passed: "#/components/schemas/DeviceEventBarrierPassed"
+          paystation.scan: "#/components/schemas/DeviceEventPaystationScan"
+          paystation.lost_ticket: "#/components/schemas/DeviceEventPaystationLostTicket"
+          paystation.cash_paid: "#/components/schemas/DeviceEventPaystationCashPaid"
+          exit.credential_presented: "#/components/schemas/DeviceEventExitCredentialPresented"
+          sensor.space_changed: "#/components/schemas/DeviceEventSensorSpaceChanged"
+          heartbeat: "#/components/schemas/DeviceEventHeartbeat"
+    DeviceEventPodiumVehicleDetected:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [podium.vehicle_detected] }
+        occurred_at: { type: string, format: date-time }
+        payload: { type: object, additionalProperties: false }
+    DeviceEventEntryCredentialPresented:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [entry.credential_presented] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [kind]
+          description: >-
+            `value` is required for `employee_card` and `reservation_qr` and
+            absent for `ticket_request`.
+          properties:
+            kind: { type: string, enum: [ticket_request, employee_card, reservation_qr] }
+            value: { type: string, minLength: 1, maxLength: 512 }
+    DeviceEventBarrierPassed:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [barrier.passed] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [direction, stay_id]
+          properties:
+            direction: { type: string, enum: [entry, exit] }
+            stay_id: { type: string, format: uuid }
+    DeviceEventPaystationScan:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [paystation.scan] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [credential]
+          properties:
+            credential: { $ref: "#/components/schemas/DeviceCredential" }
+    DeviceEventPaystationLostTicket:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [paystation.lost_ticket] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [stay_id]
+          properties:
+            stay_id: { type: string, format: uuid }
+    DeviceEventPaystationCashPaid:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [paystation.cash_paid] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [stay_id, amount_cents]
+          properties:
+            stay_id: { type: string, format: uuid }
+            amount_cents:
+              type: integer
+              format: int64
+              minimum: 1
+              description: >-
+                Must equal the amount due. There is no fixed upper bound, so a
+                real amount due is never rejected.
+    DeviceEventExitCredentialPresented:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [exit.credential_presented] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [credential]
+          properties:
+            credential: { $ref: "#/components/schemas/DeviceCredential" }
+    DeviceEventSensorSpaceChanged:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [sensor.space_changed] }
+        occurred_at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [space_code, occupied]
+          properties:
+            space_code: { type: string, pattern: '^E[0-9]{3}$' }
+            occupied: { type: boolean }
+    DeviceEventHeartbeat:
+      type: object
+      additionalProperties: false
+      required: [event_id, type, occurred_at, payload]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string, enum: [heartbeat] }
+        occurred_at: { type: string, format: date-time }
+        payload: { type: object, additionalProperties: false }
+    DeviceCredential:
+      type: object
+      additionalProperties: false
+      required: [kind, value]
+      properties:
+        kind: { type: string, enum: [ticket, employee_card, reservation_qr] }
+        value: { type: string, minLength: 1, maxLength: 512 }
+    FeeBreakdown:
+      type: object
+      additionalProperties: false
+      description: >-
+        How an amount was computed. For `overstay`, the durations describe the
+        segment since the latest payment and `billed_from` is that payment's
+        `paid_at`; for every other kind `billed_from` is null and the durations
+        describe the whole stay. `paid_cents` is always the stay's total paid.
+      required:
+        - kind
+        - duration_seconds
+        - full_blocks
+        - remainder_seconds
+        - billed_from
+        - paid_cents
+        - tariff_effective_from
+      properties:
+        kind: { type: string, enum: [time, grace, lost_ticket, employee, overstay, paid] }
+        duration_seconds: { type: integer, format: int64 }
+        full_blocks: { type: integer, format: int64 }
+        remainder_seconds: { type: integer, format: int64 }
+        billed_from: { type: [string, "null"], format: date-time }
+        paid_cents: { type: integer, format: int64 }
+        tariff_effective_from: { type: string, format: date-time }
+    DeviceEventResult:
+      type: object
+      additionalProperties: false
+      description: >-
+        The synchronous answer to a device event. `open` and `deny` answer
+        credential events, `ack` a handled event, `rejected` a refused one;
+        `reason` carries the error code of a refusal (`gate.*`, `lot.*`) or
+        `gate.duplicate_pass` on an acknowledged duplicate. Which optional
+        fields appear depends on the event type.
+      required: [result]
+      properties:
+        result: { type: string, enum: [ack, open, deny, rejected] }
+        reason: { type: string }
+        stay_id: { type: string, format: uuid }
+        ticket_code: { type: string }
+        status: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        breakdown: { $ref: "#/components/schemas/FeeBreakdown" }
+        receipt_no: { type: string }
+        paid_at: { type: string, format: date-time }
+        exit_deadline: { type: string, format: date-time }
   parameters:
+    DeviceId:
+      name: X-Device-Id
+      in: header
+      required: true
+      description: Device public id (uuid).
+      schema: { type: string, format: uuid }
+    DeviceTimestamp:
+      name: X-Timestamp
+      in: header
+      required: true
+      description: Signing time, RFC 3339 UTC with `Z`, within 60 s of the server clock. Used verbatim in the canonical string.
+      schema: { type: string, format: date-time }
+    DeviceSignature:
+      name: X-Signature
+      in: header
+      required: true
+      description: Lowercase hex HMAC-SHA256 (64 characters) of the canonical string.
+      schema: { type: string, pattern: '^[0-9a-f]{64}$' }
     LotId:
       name: id
       in: path
@@ -1375,6 +1709,27 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    deviceId:
+      type: apiKey
+      in: header
+      name: X-Device-Id
+      description: >-
+        Device public id. Part of the `deviceHmac` requirement, which needs
+        `X-Device-Id`, `X-Timestamp` and `X-Signature` together. The signature
+        is `hex(HMAC-SHA256(device_secret, canonical))` with
+        `canonical = METHOD + "\n" + REQUEST_URI + "\n" + X-Timestamp + "\n" + hex(sha256(raw body))`.
+        `REQUEST_URI` is the path plus the raw query exactly as sent, the
+        timestamp is used verbatim, and hex is lowercase.
+    deviceTimestamp:
+      type: apiKey
+      in: header
+      name: X-Timestamp
+      description: Signing time (RFC 3339, UTC, `Z`). Part of the `deviceHmac` requirement.
+    deviceSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: Lowercase hex HMAC-SHA256 of the canonical string. Part of the `deviceHmac` requirement.
   responses:
     Accepted:
       description: Request accepted. The answer is the same whether or not the account exists.

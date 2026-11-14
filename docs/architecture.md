@@ -180,7 +180,7 @@ Every response uses one baseline envelope (decided 2026-11-07, see the M1 backen
 | Lot (public) | `GET /v1/lots`, `GET /v1/lots/{id}`, `GET /v1/lots/{id}/availability`, `GET /v1/lots/{id}/spaces`, `GET /v1/lots/{id}/availability/stream` (SSE), `GET /v1/lots/{id}/tariff` | public |
 | Reservations | `POST /v1/reservations/quote`, `POST /v1/reservations`, `GET /v1/reservations`, `GET /v1/reservations/{id}`, `PATCH /v1/reservations/{id}` (change vehicle until arrival), `POST /v1/reservations/{id}/pay`, `POST /v1/reservations/{id}/cancel`, `GET /v1/reservations/{id}/qr` | driver |
 | Payments | `GET /v1/payments`, `GET /v1/payments/{id}` | driver |
-| Device API | `POST /v1/devices/events` (single endpoint, typed events), `POST /v1/devices/heartbeat` | device HMAC |
+| Device API | `POST /v1/devices/events` (single endpoint, typed events; `heartbeat` is an event type, there is no separate heartbeat endpoint, M2C-15) | device HMAC |
 | Admin | `/v1/admin/{dashboard,stream,reservations,stays,tariffs,policies,lot,spaces,devices,employee-cards,users,admins,analytics/*,reconciliation,audit,refunds}`; `POST /v1/admin/lot/close` (cancels + refunds overlapping reservations, `facility_closed`) and `/open` | admin |
 
 Pagination is **keyset**: `?limit=50&cursor=<opaque>`, where the cursor encodes `(sort_key, id)`. There is no OFFSET on large tables. Public IDs in URLs are UUIDv7 (`public_id`) and never the internal bigint.
@@ -300,27 +300,33 @@ Gate decisions serialize per lot on the `lot_occupancy` row (`for update`). At t
 POST /v1/devices/events
 X-Device-Id: <device public_id>
 X-Timestamp: 2026-11-20T14:03:11Z
-X-Signature: hex(HMAC-SHA256(secret, method + "\n" + path + "\n" + timestamp + "\n" + sha256(body)))
+X-Signature: hex(HMAC-SHA256(secret, METHOD + "\n" + REQUEST_URI + "\n" + X-Timestamp + "\n" + hex(sha256(raw body))))
 Content-Type: application/json
-{ "event_id": "<uuidv7>", "type": "entry.credential_presented", "occurred_at": "...", "payload": { ... } }
+{ "event_id": "<uuid>", "type": "entry.credential_presented", "occurred_at": "...", "payload": { ... } }
 ```
 
-- The timestamp must be within **±60 s** of server time. The signature is compared in constant time.
+- The canonical string is `METHOD\nREQUEST_URI\nX-Timestamp\nhex(sha256(raw body))`. `REQUEST_URI` is the path plus the raw query exactly as sent, the timestamp is used verbatim, and hex is lowercase (M2C-16).
+- Check order: headers present and well-formed, then the timestamp window (**±60 s**), then device lookup and signature (constant-time compare). The body is capped at 16 KiB.
+- Error codes: `device.unauthenticated` (401: missing or malformed headers, unknown or revoked device, bad signature; the response never says which), `device.timestamp_out_of_window` (401), `device.event_not_allowed` (403: kind matrix), `device.event_conflict` (409: same `event_id`, different body), plus 400, 413, 415 and 422 (`validation.failed`, rule `unknown_field` for an unknown key) for the body.
+- Unauthenticated requests are never stored. 4xx and 5xx answers are not stored either, so repeating them gives the same answer.
 - Device secrets are 32 random bytes, shown once on creation or rotation, and stored **encrypted** (`secretbox`, master key from env), because HMAC verification needs the plaintext.
-- `(device_id, event_id)` is unique. A repeated event returns the **original stored response** (true idempotency).
+- `(device_id, event_id)` is unique. A repeated event with the same body returns the **original stored response** with `Idempotent-Replayed: true` (true idempotency).
 
 ### 8.2 Event types
 
-| Type | Device | Synchronous response |
+Every response carries a `result` field: `ack`, `open`, `deny` or `rejected`. `deny` and `rejected` carry a `reason` code. The device kind decides which types are allowed (kind matrix, M2C-21); any other type is 403 `device.event_not_allowed`.
+
+| Type | Device kinds | Synchronous response |
 |---|---|---|
-| `podium.vehicle_detected` | podium | `ack` |
-| `entry.credential_presented` `{kind: ticket_request \| reservation_qr \| employee_card, value}` | dispenser / entry barrier | `{decision: open \| deny, reason (e.g. gate.lot_full, gate.lot_physically_full, reservation.too_early), ticket_code?, stay_id}` |
-| `barrier.passed` `{direction: entry \| exit, stay_id}` | entry / exit barrier | `ack` (this is the occupancy mutation). On exit with amount due 0 (grace or employee), the same transaction inserts a zero `parking_fee` payment (method `none`) and moves the stay `active → paid → exited` **(our call)** |
-| `paystation.scan` `{credential}` | pay station | `{amount_cents, breakdown, stay_id}` |
-| `paystation.cash_paid` `{stay_id, amount_cents}` | pay station | `{receipt_no, exit_deadline}` |
-| `exit.credential_presented` `{credential}` | exit barrier | `{decision, reason}` |
-| `sensor.space_changed` `{space_code, occupied}` | sensor gateway | `ack` |
-| `heartbeat` | any | `ack` |
+| `podium.vehicle_detected` | podium | `{result: ack}` |
+| `entry.credential_presented` `{kind: ticket_request \| reservation_qr \| employee_card, value?}` | dispenser (`ticket_request`), entry barrier (`employee_card`, `reservation_qr`) | `{result: open, stay_id, ticket_code?}` or `{result: deny, reason}` (e.g. `gate.lot_full`, `gate.lot_physically_full`) |
+| `barrier.passed` `{direction: entry \| exit, stay_id}` | entry barrier (`entry`), exit barrier (`exit`) | `{result: ack}` (this is the occupancy mutation; a duplicate is `ack` with `reason: gate.duplicate_pass`) or `{result: rejected, reason}`. On exit with amount due 0 (grace or employee), the same transaction inserts a zero `parking_fee` payment (method `none`) and moves the stay `active → paid → exited` **(our call)** |
+| `paystation.scan` `{credential}` | pay station | `{result: ack, stay_id, status, amount_cents, breakdown}` or `rejected` |
+| `paystation.lost_ticket` `{stay_id}` | pay station | `{result: ack, stay_id, ticket_code, amount_cents, breakdown}` or `rejected` |
+| `paystation.cash_paid` `{stay_id, amount_cents}` | pay station | `{result: ack, receipt_no, amount_cents, paid_at, exit_deadline}` or `{result: rejected, reason}` |
+| `exit.credential_presented` `{credential}` | exit barrier | `{result: open, stay_id}` or `{result: deny, reason, stay_id?, amount_cents?}` |
+| `sensor.space_changed` `{space_code, occupied}` | sensor gateway | `{result: ack}` or `{result: rejected, reason: lot.space_unknown}` |
+| `heartbeat` | any | `{result: ack}` |
 
 ### 8.3 Simulator
 

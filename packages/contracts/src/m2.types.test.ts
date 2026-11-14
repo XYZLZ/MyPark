@@ -64,3 +64,33 @@ test('SpaceState and the SSE payloads have the design 11.3 shapes', () => {
   expectTypeOf<Schemas['SpacesEvent']['spaces']>().toEqualTypeOf<Schemas['SpaceState'][]>();
   expectTypeOf<Schemas['HeartbeatEvent']['as_of']>().toEqualTypeOf<string>();
 });
+
+test('postDeviceEvent exists and requires the three HMAC headers', () => {
+  expectTypeOf<paths['/v1/devices/events']['post']>().not.toBeNever();
+  expectTypeOf<paths['/v1/devices/events']['post']['parameters']['header']>().toEqualTypeOf<{
+    'X-Device-Id': string;
+    'X-Timestamp': string;
+    'X-Signature': string;
+  }>();
+});
+
+test('DeviceEvent is a union discriminated by type with nine variants', () => {
+  expectTypeOf<Schemas['DeviceEvent']['type']>().toEqualTypeOf<
+    | 'podium.vehicle_detected'
+    | 'entry.credential_presented'
+    | 'barrier.passed'
+    | 'paystation.scan'
+    | 'paystation.lost_ticket'
+    | 'paystation.cash_paid'
+    | 'exit.credential_presented'
+    | 'sensor.space_changed'
+    | 'heartbeat'
+  >();
+  expectTypeOf<Schemas['DeviceEventHeartbeat']['type']>().toEqualTypeOf<'heartbeat'>();
+  expectTypeOf<Schemas['DeviceEventPaystationCashPaid']['payload']['amount_cents']>().toEqualTypeOf<number>();
+});
+
+test('DeviceEventResult.result is ack|open|deny|rejected', () => {
+  expectTypeOf<Schemas['DeviceEventResult']['result']>().toEqualTypeOf<'ack' | 'open' | 'deny' | 'rejected'>();
+  expectTypeOf<Schemas['DeviceEventResult']['breakdown']>().toEqualTypeOf<Schemas['FeeBreakdown'] | undefined>();
+});

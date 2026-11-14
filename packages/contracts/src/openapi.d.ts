@@ -475,6 +475,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/devices/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit one signed device event
+         * @description The single entry point for every parking device. The body is one `DeviceEvent`, a union discriminated by `type`. The request is signed with the device secret (`deviceHmac`) and is strictly decoded: unknown fields at any level are answered 422 `validation.failed` with rule `unknown_field`, a wrong JSON type is 400 `http.invalid_json`, a body that is not `application/json` is 415 and a body over 16 KiB is 413. `event_id` makes the call idempotent per device: a repeat with the same body returns the stored answer with `Idempotent-Replayed: true`, a repeat with a different body is 409 `device.event_conflict`. 4xx and 5xx answers are never stored. Each device kind may send only some types; any other type is 403 `device.event_not_allowed`. A business refusal is a 200 with `result` `deny` or `rejected` and a `reason` code, not an HTTP error.
+         */
+        post: operations["postDeviceEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -799,6 +819,184 @@ export interface components {
             /** Format: date-time */
             as_of: string;
         };
+        /** @description One device event, discriminated by `type`. Allowed device kinds per type: podium (`podium.vehicle_detected`), dispenser and entry barrier (`entry.credential_presented`), entry and exit barrier (`barrier.passed`), pay station (`paystation.*`), exit barrier (`exit.credential_presented`), sensor gateway (`sensor.space_changed`), any kind (`heartbeat`). `occurred_at` must not be more than 60 s ahead of the server clock. */
+        DeviceEvent: components["schemas"]["DeviceEventPodiumVehicleDetected"] | components["schemas"]["DeviceEventEntryCredentialPresented"] | components["schemas"]["DeviceEventBarrierPassed"] | components["schemas"]["DeviceEventPaystationScan"] | components["schemas"]["DeviceEventPaystationLostTicket"] | components["schemas"]["DeviceEventPaystationCashPaid"] | components["schemas"]["DeviceEventExitCredentialPresented"] | components["schemas"]["DeviceEventSensorSpaceChanged"] | components["schemas"]["DeviceEventHeartbeat"];
+        DeviceEventPodiumVehicleDetected: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "podium.vehicle_detected";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: Record<string, never>;
+        };
+        DeviceEventEntryCredentialPresented: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "entry.credential_presented";
+            /** Format: date-time */
+            occurred_at: string;
+            /** @description `value` is required for `employee_card` and `reservation_qr` and absent for `ticket_request`. */
+            payload: {
+                /** @enum {string} */
+                kind: "ticket_request" | "employee_card" | "reservation_qr";
+                value?: string;
+            };
+        };
+        DeviceEventBarrierPassed: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "barrier.passed";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: {
+                /** @enum {string} */
+                direction: "entry" | "exit";
+                /** Format: uuid */
+                stay_id: string;
+            };
+        };
+        DeviceEventPaystationScan: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "paystation.scan";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: {
+                credential: components["schemas"]["DeviceCredential"];
+            };
+        };
+        DeviceEventPaystationLostTicket: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "paystation.lost_ticket";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: {
+                /** Format: uuid */
+                stay_id: string;
+            };
+        };
+        DeviceEventPaystationCashPaid: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "paystation.cash_paid";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: {
+                /** Format: uuid */
+                stay_id: string;
+                /**
+                 * Format: int64
+                 * @description Must equal the amount due. There is no fixed upper bound, so a real amount due is never rejected.
+                 */
+                amount_cents: number;
+            };
+        };
+        DeviceEventExitCredentialPresented: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "exit.credential_presented";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: {
+                credential: components["schemas"]["DeviceCredential"];
+            };
+        };
+        DeviceEventSensorSpaceChanged: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "sensor.space_changed";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: {
+                space_code: string;
+                occupied: boolean;
+            };
+        };
+        DeviceEventHeartbeat: {
+            /** Format: uuid */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "heartbeat";
+            /** Format: date-time */
+            occurred_at: string;
+            payload: Record<string, never>;
+        };
+        DeviceCredential: {
+            /** @enum {string} */
+            kind: "ticket" | "employee_card" | "reservation_qr";
+            value: string;
+        };
+        /** @description How an amount was computed. For `overstay`, the durations describe the segment since the latest payment and `billed_from` is that payment's `paid_at`; for every other kind `billed_from` is null and the durations describe the whole stay. `paid_cents` is always the stay's total paid. */
+        FeeBreakdown: {
+            /** @enum {string} */
+            kind: "time" | "grace" | "lost_ticket" | "employee" | "overstay" | "paid";
+            /** Format: int64 */
+            duration_seconds: number;
+            /** Format: int64 */
+            full_blocks: number;
+            /** Format: int64 */
+            remainder_seconds: number;
+            /** Format: date-time */
+            billed_from: string | null;
+            /** Format: int64 */
+            paid_cents: number;
+            /** Format: date-time */
+            tariff_effective_from: string;
+        };
+        /** @description The synchronous answer to a device event. `open` and `deny` answer credential events, `ack` a handled event, `rejected` a refused one; `reason` carries the error code of a refusal (`gate.*`, `lot.*`) or `gate.duplicate_pass` on an acknowledged duplicate. Which optional fields appear depends on the event type. */
+        DeviceEventResult: {
+            /** @enum {string} */
+            result: "ack" | "open" | "deny" | "rejected";
+            reason?: string;
+            /** Format: uuid */
+            stay_id?: string;
+            ticket_code?: string;
+            status?: string;
+            /** Format: int64 */
+            amount_cents?: number;
+            breakdown?: components["schemas"]["FeeBreakdown"];
+            receipt_no?: string;
+            /** Format: date-time */
+            paid_at?: string;
+            /** Format: date-time */
+            exit_deadline?: string;
+        };
     };
     responses: {
         /** @description Request accepted. The answer is the same whether or not the account exists. */
@@ -1030,6 +1228,12 @@ export interface components {
         };
     };
     parameters: {
+        /** @description Device public id (uuid). */
+        DeviceId: string;
+        /** @description Signing time, RFC 3339 UTC with `Z`, within 60 s of the server clock. Used verbatim in the canonical string. */
+        DeviceTimestamp: string;
+        /** @description Lowercase hex HMAC-SHA256 (64 characters) of the canonical string. */
+        DeviceSignature: string;
         /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
         LotId: string;
     };
@@ -2098,6 +2302,129 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    postDeviceEvent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Device public id (uuid). */
+                "X-Device-Id": components["parameters"]["DeviceId"];
+                /** @description Signing time, RFC 3339 UTC with `Z`, within 60 s of the server clock. Used verbatim in the canonical string. */
+                "X-Timestamp": components["parameters"]["DeviceTimestamp"];
+                /** @description Lowercase hex HMAC-SHA256 (64 characters) of the canonical string. */
+                "X-Signature": components["parameters"]["DeviceSignature"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "019a6d00-0000-7000-8000-0000000000a1",
+                 *       "type": "entry.credential_presented",
+                 *       "occurred_at": "2026-11-24T14:03:10Z",
+                 *       "payload": {
+                 *         "kind": "ticket_request"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["DeviceEvent"];
+            };
+        };
+        responses: {
+            /** @description The event was handled (or replayed). */
+            200: {
+                headers: {
+                    /** @description Present, with the value `true`, only when this is the stored answer of an earlier call. */
+                    "Idempotent-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DeviceEventResult"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description The device headers are missing or malformed, the device is unknown or revoked, the signature is wrong (`device.unauthenticated`), or `X-Timestamp` is more than 60 s from the server clock (`device.timestamp_out_of_window`). A user bearer token is ignored. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The device kind may not send this event type. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "device.event_not_allowed",
+                     *         "message": "event not allowed for this device",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The same `event_id` was already used by this device with a different body. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "device.event_conflict",
+                     *         "message": "event id reused with a different body",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The body is larger than 16 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "http.payload_too_large",
+                     *         "message": "payload too large",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
     };
