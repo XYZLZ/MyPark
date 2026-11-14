@@ -184,3 +184,35 @@ func TestWorkerJobs_RateLimitPurgeEveryMinute(t *testing.T) {
 		t.Fatalf("rows left = %d, %v; want only the live one", left, err)
 	}
 }
+
+func TestWorkerJobs_IncludeVoid(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	if _, err := db.App.Exec(t.Context(),
+		`insert into stays (lot_id, credential_kind, ticket_code_hash, status, tariff_version_id, accepted_at, updated_at)
+		 select $1, 'ticket', sha256(k::bytea), 'entry_pending', v.id, $2::timestamptz - (k || ' seconds')::interval, $2
+		 from unnest(array['61', '30']) k,
+		      (select id from tariff_versions where lot_id = $1 order by effective_from desc limit 1) v`,
+		lotID, clk.Now()); err != nil {
+		t.Fatalf("seed pending: %v", err)
+	}
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "void_unpassed_entries" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != 15*time.Second {
+		t.Fatalf("void_unpassed_entries job = %+v, want one running every 15 s", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var voided int
+	if err := db.App.QueryRow(t.Context(),
+		`select count(*) from stays where status = 'voided' and voided_at = $1`, clk.Now()).Scan(&voided); err != nil || voided != 1 {
+		t.Fatalf("voided at the job clock = %d, %v; want only the 61 s old entry", voided, err)
+	}
+}

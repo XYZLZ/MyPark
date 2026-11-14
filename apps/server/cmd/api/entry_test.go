@@ -18,6 +18,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
@@ -136,11 +137,29 @@ func TestEntry_TicketIssue(t *testing.T) {
 }
 
 // N parallel requests for K free spaces: the lot lock serializes the
-// decisions, so exactly K open and the rest are denied lot_full.
+// decisions, so exactly K open and the rest are denied lot_full. With a pool
+// as large as the burst every request queues on the lock itself, within its
+// 1 s lock_timeout, and none answers 500.
 func TestEntry_ConcurrentLastSpace(t *testing.T) {
-	for _, free := range []int{1, 3} {
-		t.Run(map[int]string{1: "one free", 3: "three free"}[free], func(t *testing.T) {
-			e := newDeviceEnv(t)
+	for _, tc := range []struct {
+		name  string
+		free  int
+		conns int32 // 0 keeps the small test pool
+	}{{"one free", 1, 0}, {"three free", 3, 0}, {"one free, 24 connections", 1, 24}} {
+		free := tc.free
+		t.Run(tc.name, func(t *testing.T) {
+			var mods []func(*deps)
+			if tc.conns > 0 {
+				mods = append(mods, func(d *deps) {
+					pool, err := database.NewPool(t.Context(), d.cfg.DatabaseURL(), tc.conns)
+					if err != nil {
+						t.Fatalf("pool: %v", err)
+					}
+					t.Cleanup(pool.Close)
+					d.pool = pool
+				})
+			}
+			e := newDeviceEnv(t, mods...)
 			testsupport.FillLot(t, e.db, e.lotID, 280-free, e.clk.Now())
 			d := e.device(authz.DeviceDispenser)
 
@@ -324,5 +343,52 @@ func TestEntry_OutOfServiceShrinksCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantDeny(t, e.ticketRequest(e.device(authz.DeviceDispenser)), "gate.lot_full")
+	e.invariant()
+}
+
+// Two entries of one card at once: the lot lock serializes them and the
+// lookup denies the second, so the stays_card_open_key backstop never fires
+// (it would answer 500).
+func TestEntry_EmployeeCardConcurrentSameCard(t *testing.T) {
+	e := newDeviceEnv(t)
+	d := e.device(authz.DeviceEntryBarrier)
+	uid := e.cardUID("EMP-007")
+	recs := make([]*httptest.ResponseRecorder, 2)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range recs {
+		body := e.eventBody(uuid.New(), "entry.credential_presented", map[string]any{"kind": gate.KindEmployeeCard, "value": uid})
+		req := d.Request(t, deviceEventsPath, body, e.clk.Now())
+		req.RemoteAddr = "203.0.113.7:5555"
+		wg.Go(func() {
+			<-start
+			recs[i] = httptest.NewRecorder()
+			e.h.ServeHTTP(recs[i], req)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	outcomes := map[string]int{}
+	for i, rec := range recs {
+		got := entryOf(t, rec)
+		switch {
+		case got.Result == "open" && got.StayID != nil:
+			outcomes["open"]++
+		case got.Result == "deny" && got.Reason == "gate.credential_in_use":
+			outcomes["in use"]++
+		default:
+			t.Errorf("request %d: %+v", i, got)
+		}
+	}
+	if outcomes["open"] != 1 || outcomes["in use"] != 1 {
+		t.Errorf("outcomes = %v, want one open and one credential_in_use", outcomes)
+	}
+	if n := e.count(`select count(*) from stays`); n != 1 {
+		t.Errorf("stays = %d, want 1", n)
+	}
+	if n := e.eventRows(); n != 2 {
+		t.Errorf("events = %d, want 2", n)
+	}
 	e.invariant()
 }

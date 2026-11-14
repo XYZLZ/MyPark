@@ -105,14 +105,20 @@ func wantError(t *testing.T, rec *httptest.ResponseRecorder, status int, code st
 	}
 }
 
-// spaceListener is a dedicated LISTEN space_changed connection.
+// spaceListener is a dedicated LISTEN connection on one channel.
 type spaceListener struct {
-	t    *testing.T
-	e    *deviceEnv
-	conn *pgx.Conn
+	t       *testing.T
+	e       *deviceEnv
+	conn    *pgx.Conn
+	channel string
 }
 
 func (e *deviceEnv) listenSpaces() *spaceListener {
+	e.t.Helper()
+	return e.listen("space_changed")
+}
+
+func (e *deviceEnv) listen(channel string) *spaceListener {
 	e.t.Helper()
 	pc, err := e.db.Super.Acquire(e.t.Context())
 	if err != nil {
@@ -120,10 +126,10 @@ func (e *deviceEnv) listenSpaces() *spaceListener {
 	}
 	conn := pc.Hijack()
 	e.t.Cleanup(func() { _ = conn.Close(context.Background()) })
-	if _, err := conn.Exec(e.t.Context(), `listen space_changed`); err != nil {
+	if _, err := conn.Exec(e.t.Context(), "listen "+pgx.Identifier{channel}.Sanitize()); err != nil {
 		e.t.Fatal(err)
 	}
-	return &spaceListener{t: e.t, e: e, conn: conn}
+	return &spaceListener{t: e.t, e: e, conn: conn, channel: channel}
 }
 
 func (l *spaceListener) next() string {
@@ -142,7 +148,7 @@ func (l *spaceListener) next() string {
 // silence is needed.
 func (l *spaceListener) drain() []string {
 	l.t.Helper()
-	if _, err := l.e.db.Super.Exec(l.t.Context(), `select pg_notify('space_changed', 'sentinel')`); err != nil {
+	if _, err := l.e.db.Super.Exec(l.t.Context(), `select pg_notify($1, 'sentinel')`, l.channel); err != nil {
 		l.t.Fatal(err)
 	}
 	var got []string

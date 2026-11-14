@@ -2,6 +2,7 @@ package testsupport
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,9 +20,42 @@ func (r *failRecorder) Errorf(format string, args ...any) {
 	r.failures = append(r.failures, fmt.Sprintf(format, args...))
 }
 
+// Fatalf is not captured: a fatal failure (a database read error) must reach
+// the real test with its message.
 func (r *failRecorder) Fatalf(format string, args ...any) {
-	r.Errorf(format, args...)
-	r.FailNow()
+	r.TB.Fatalf(format, args...)
+}
+
+// fatalSpy stands in for the real test: it keeps the message of a fatal
+// failure and stops the goroutine as FailNow would.
+type fatalSpy struct {
+	testing.TB
+	fatal string
+}
+
+func (s *fatalSpy) Helper() {}
+
+func (s *fatalSpy) Fatalf(format string, args ...any) {
+	s.fatal = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+func (s *fatalSpy) FailNow() { runtime.Goexit() }
+
+// A database read error inside the helper fails the test with its message,
+// through failRecorder too.
+func TestAssertOccupancyInvariant_ReadErrorIsReported(t *testing.T) {
+	db := NewTestDB(t)
+	spy := &fatalSpy{TB: t}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		AssertOccupancyInvariant(&failRecorder{TB: spy}, db.App, -1)
+	}()
+	<-done
+	if !strings.Contains(spy.fatal, "read occupancy of lot -1") {
+		t.Fatalf("fatal message = %q, want one naming the lot", spy.fatal)
+	}
 }
 
 func TestAssertOccupancyInvariant(t *testing.T) {

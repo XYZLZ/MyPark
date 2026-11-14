@@ -72,6 +72,8 @@ func (s *Service) handlerFor(t EventType) handleFunc {
 		return ack
 	case EventEntryCredential:
 		return s.entry
+	case EventBarrierPassed:
+		return s.pass
 	case EventSensorChanged:
 		return s.sensor
 	default:

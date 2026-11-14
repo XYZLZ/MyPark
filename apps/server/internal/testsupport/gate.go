@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
 )
 
 // AssertOccupancyInvariant fails t unless the lot's occupancy counter equals
@@ -43,4 +46,24 @@ func FillLot(t testing.TB, db *TestDB, lotID int64, n int, now time.Time) {
 		`update lot_occupancy set occupied = $2, version = version + 1, updated_at = $3 where lot_id = $1`, lotID, n, now); err != nil {
 		t.Fatalf("testsupport: set occupancy of lot %d: %v", lotID, err)
 	}
+}
+
+// SeedSecondLot seeds another small lot with its occupancy row and default
+// tariff, for lot-scoping tests, and returns its id.
+func SeedSecondLot(t testing.TB, db *TestDB) int64 {
+	t.Helper()
+	q := dbgen.New(db.App)
+	lotID, err := q.UpsertLotBySlug(t.Context(), dbgen.UpsertLotBySlugParams{
+		Slug: "second-lot", Name: "Second test lot", Address: "Test address", Capacity: 10,
+	})
+	if err != nil {
+		t.Fatalf("testsupport: seed second lot: %v", err)
+	}
+	if err := q.InitLotOccupancy(t.Context(), lotID); err != nil {
+		t.Fatalf("testsupport: second lot occupancy: %v", err)
+	}
+	if err := tariffs.SeedDefaults(t.Context(), q, lotID); err != nil {
+		t.Fatalf("testsupport: second lot tariff: %v", err)
+	}
+	return lotID
 }

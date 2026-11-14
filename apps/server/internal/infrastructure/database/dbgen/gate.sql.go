@@ -12,6 +12,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activateStay = `-- name: ActivateStay :execrows
+update stays
+set status = 'active', entered_at = $1::timestamptz, updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status in ('entry_pending', 'voided')
+`
+
+type ActivateStayParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// The entry pass (design §9.6). voided_at is kept on a late pass.
+func (q *Queries) ActivateStay(ctx context.Context, arg ActivateStayParams) (int64, error) {
+	result, err := q.db.Exec(ctx, activateStay, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const bumpOccupancy = `-- name: BumpOccupancy :one
+update lot_occupancy
+set occupied = occupied + $1, version = version + 1, updated_at = $2::timestamptz
+where lot_id = $3
+returning version
+`
+
+type BumpOccupancyParams struct {
+	Delta int32
+	Now   pgtype.Timestamptz
+	LotID int64
+}
+
+// Only under the lot lock (M2C-29); check (occupied >= 0) backs a decrement.
+func (q *Queries) BumpOccupancy(ctx context.Context, arg BumpOccupancyParams) (int64, error) {
+	row := q.db.QueryRow(ctx, bumpOccupancy, arg.Delta, arg.Now, arg.LotID)
+	var version int64
+	err := row.Scan(&version)
+	return version, err
+}
+
 const countFreshPending = `-- name: CountFreshPending :one
 select count(*) from stays
 where lot_id = $1 and status = 'entry_pending'
@@ -305,6 +347,22 @@ func (q *Queries) LockLotOccupancy(ctx context.Context, lotID int64) (LockLotOcc
 	return i, err
 }
 
+const notifyLotChanged = `-- name: NotifyLotChanged :exec
+select pg_notify('lot_changed', $1::bigint || ':' || $2::bigint)
+`
+
+type NotifyLotChangedParams struct {
+	LotID   int64
+	Version int64
+}
+
+// Delivered on commit; the payload is lot_id:version and never leaves the
+// server (design §8.3).
+func (q *Queries) NotifyLotChanged(ctx context.Context, arg NotifyLotChangedParams) error {
+	_, err := q.db.Exec(ctx, notifyLotChanged, arg.LotID, arg.Version)
+	return err
+}
+
 const notifySpaceChanged = `-- name: NotifySpaceChanged :exec
 select pg_notify('space_changed', $1::text)
 `
@@ -388,4 +446,26 @@ func (q *Queries) UpdateSpaceFromSensor(ctx context.Context, arg UpdateSpaceFrom
 	var code string
 	err := row.Scan(&code)
 	return code, err
+}
+
+const voidUnpassed = `-- name: VoidUnpassed :execrows
+update stays
+set status = 'voided', voided_at = $1::timestamptz, updated_at = $1::timestamptz
+where id in (
+    select id from stays
+    where status = 'entry_pending' and accepted_at < $1::timestamptz - interval '60 seconds'
+    order by accepted_at
+    limit 200
+    for update skip locked
+)
+`
+
+// Entries not passed within 60 s stop holding a space (M2C-30, design
+// §12.5). Batches of 200; occupancy is untouched, so nothing is notified.
+func (q *Queries) VoidUnpassed(ctx context.Context, now pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, voidUnpassed, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -84,3 +84,34 @@ select count(*) from spaces where lot_id = @lot_id and status = 'out_of_service'
 select count(*) from stays
 where lot_id = @lot_id and status = 'entry_pending'
   and accepted_at > sqlc.arg(now)::timestamptz - interval '60 seconds';
+
+-- name: ActivateStay :execrows
+-- The entry pass (design §9.6). voided_at is kept on a late pass.
+update stays
+set status = 'active', entered_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status in ('entry_pending', 'voided');
+
+-- name: BumpOccupancy :one
+-- Only under the lot lock (M2C-29); check (occupied >= 0) backs a decrement.
+update lot_occupancy
+set occupied = occupied + @delta, version = version + 1, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id
+returning version;
+
+-- name: NotifyLotChanged :exec
+-- Delivered on commit; the payload is lot_id:version and never leaves the
+-- server (design §8.3).
+select pg_notify('lot_changed', sqlc.arg(lot_id)::bigint || ':' || sqlc.arg(version)::bigint);
+
+-- name: VoidUnpassed :execrows
+-- Entries not passed within 60 s stop holding a space (M2C-30, design
+-- §12.5). Batches of 200; occupancy is untouched, so nothing is notified.
+update stays
+set status = 'voided', voided_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where id in (
+    select id from stays
+    where status = 'entry_pending' and accepted_at < sqlc.arg(now)::timestamptz - interval '60 seconds'
+    order by accepted_at
+    limit 200
+    for update skip locked
+);

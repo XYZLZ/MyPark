@@ -179,3 +179,63 @@ func (Repo) InsertStay(ctx context.Context, s gate.NewStay) (uuid.UUID, error) {
 }
 
 func ts(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
+
+// StayForUpdate implements gate.Repo.
+func (Repo) StayForUpdate(ctx context.Context, lotID int64, publicID uuid.UUID) (gate.Stay, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Stay{}, err
+	}
+	row, err := qs.GetStayForUpdate(ctx, dbgen.GetStayForUpdateParams{LotID: lotID, PublicID: publicID})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return gate.Stay{}, gate.ErrNotFound
+	case err != nil:
+		return gate.Stay{}, fmt.Errorf("gate: stay for update: %w", err)
+	}
+	return gate.Stay{
+		ID: row.ID, PublicID: row.PublicID, Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64,
+	}, nil
+}
+
+// ActivateStay implements gate.Repo. Exactly one row must change: the
+// caller holds the stay's lock and has checked its status.
+func (Repo) ActivateStay(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.ActivateStay(ctx, dbgen.ActivateStayParams{Now: ts(now), LotID: lotID, ID: stayID})
+	if err != nil {
+		return fmt.Errorf("gate: activate stay: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("gate: activate stay %d: %d rows changed", stayID, n)
+	}
+	return nil
+}
+
+// BumpOccupancy implements gate.Repo.
+func (Repo) BumpOccupancy(ctx context.Context, lotID int64, delta int, now time.Time) (int64, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return 0, err
+	}
+	version, err := qs.BumpOccupancy(ctx, dbgen.BumpOccupancyParams{Delta: int32(delta), Now: ts(now), LotID: lotID})
+	if err != nil {
+		return 0, fmt.Errorf("gate: bump occupancy: %w", err)
+	}
+	return version, nil
+}
+
+// NotifyLotChanged implements gate.Repo.
+func (Repo) NotifyLotChanged(ctx context.Context, lotID, version int64) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	if err := qs.NotifyLotChanged(ctx, dbgen.NotifyLotChangedParams{LotID: lotID, Version: version}); err != nil {
+		return fmt.Errorf("gate: notify lot changed: %w", err)
+	}
+	return nil
+}

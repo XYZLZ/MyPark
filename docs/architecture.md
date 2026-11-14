@@ -360,7 +360,7 @@ type PaymentGateway interface {
 | Expire unpaid reservations | 30 s | `update ... where status='pending_payment' and created_at < now() - timeout` + release slots |
 | Expire no-shows | 30 s | `select ... where status='confirmed' and arrival_at + grace < now() for update skip locked` |
 | Hold boundary notifications | 30 s | NOTIFY lots whose effective holds changed since the last tick |
-| Void unpassed entries | 15 s | `entry_pending` older than 60 s → `voided` |
+| Void unpassed entries | 15 s | `entry_pending` with `accepted_at` older than 60 s → `voided`, `voided_at = $now` (server clock), in batches of 200 claimed with `for update skip locked`, repeated while a batch is full. No occupancy change and no NOTIFY: a pending entry never counted. A car that passes later is a late entry pass (`voided → active`, counted, audited `gate.late_entry_pass`). Rows are never deleted |
 | Occupancy snapshot | 5 min, aligned to the wall clock | `insert ... on conflict (lot_id, captured_at) do nothing` (idempotent across replicas) |
 | Outbox dispatch (email) | 2 s | `for update skip locked`, retry with backoff, max attempts → `dead` |
 | Refund processing | 10 s | same claim pattern on `refunds where status='pending' and next_attempt_at <= now()` |
@@ -370,7 +370,7 @@ type PaymentGateway interface {
 
 Running several worker replicas is safe because every job claims rows with `SKIP LOCKED` or is idempotent by unique key.
 
-**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). The rest arrive with their milestones.
+**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). **Since M2:** void unpassed entries (15 s). The rest arrive with their milestones.
 
 ---
 

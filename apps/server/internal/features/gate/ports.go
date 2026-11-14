@@ -44,6 +44,17 @@ type Repo interface {
 	CardHasOpenStay(ctx context.Context, lotID, cardID int64) (bool, error)
 	// InsertStay inserts an entry_pending stay accepted at now.
 	InsertStay(ctx context.Context, s NewStay) (uuid.UUID, error)
+
+	// StayForUpdate locks the lot's stay with this public id, or returns
+	// ErrNotFound. Called after LockLotOccupancy (M2C-29).
+	StayForUpdate(ctx context.Context, lotID int64, publicID uuid.UUID) (Stay, error)
+	// ActivateStay marks an entry_pending or voided stay active, entered at now.
+	ActivateStay(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// BumpOccupancy adds delta to the locked lot's occupancy and returns the
+	// new version.
+	BumpOccupancy(ctx context.Context, lotID int64, delta int, now time.Time) (int64, error)
+	// NotifyLotChanged queues a lot_changed notification, sent on commit.
+	NotifyLotChanged(ctx context.Context, lotID, version int64) error
 }
 
 // ErrNotFound means the lot has no matching row.
@@ -69,4 +80,13 @@ type NewStay struct {
 	EmployeeCardID  int64
 	TariffVersionID int64
 	AcceptedAt      time.Time
+}
+
+// Stay is a locked stay, as the barrier pass reads it. EmployeeCardID is 0
+// for a ticket.
+type Stay struct {
+	ID             int64
+	PublicID       uuid.UUID
+	Status         Status
+	EmployeeCardID int64
 }

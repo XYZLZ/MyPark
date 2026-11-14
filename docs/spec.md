@@ -411,6 +411,7 @@ stateDiagram-v2
   [*] --> entry_pending: credential accepted
   entry_pending --> active: barrier.passed (entry)
   entry_pending --> voided: not passed within 60 s
+  voided --> active: late barrier.passed (entry) - counted, warn log, audited
   active --> paid: pay station payment
   active --> paid: exit barrier.passed with amount 0 (grace/employee) - zero payment, method none, then exited in the same tx
   paid --> active: exit deadline passed (extra time due)
