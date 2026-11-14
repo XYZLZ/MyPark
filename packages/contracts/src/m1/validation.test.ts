@@ -4,13 +4,14 @@ import adminsHttp from '../../../../apps/server/internal/features/users/admins_h
 import usersHttp from '../../../../apps/server/internal/features/users/http.go?raw';
 import vehiclePlate from '../../../../apps/server/internal/features/vehicles/plate.go?raw';
 import vehiclesHttp from '../../../../apps/server/internal/features/vehicles/http.go?raw';
+import strictGo from '../../../../apps/server/internal/transport/http/httpx/strict.go?raw';
 import validationGo from '../../../../apps/server/internal/infrastructure/validation/validation.go?raw';
 import { CLIENT_ERROR_CODES, VALIDATION_RULES, parseFieldErrors, parseIssueMessage } from './validation';
 
 /** Every rule name the Go server can put in `details.fields[].rule`, read from its sources. */
 function serverRules(): string[] {
   const rules = new Set<string>();
-  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo];
+  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo];
   for (const src of sources) {
     for (const [, tags] of src.matchAll(/validate:"([^"]+)"/g)) {
       for (const tag of (tags ?? '').split(',')) {
@@ -30,8 +31,7 @@ describe('VALIDATION_RULES', () => {
     expect(emitted).toEqual(
       expect.arrayContaining(['required', 'email', 'min', 'max', 'oneof', 'phone', 'code6', 'password_common', 'plate']),
     );
-    // unknown_field is emitted by the strict device/control decoder, which lands in S5.1.
-    expect([...VALIDATION_RULES].filter((r) => r !== 'unknown' && r !== 'unknown_field').sort()).toEqual(emitted);
+    expect([...VALIDATION_RULES].filter((r) => r !== 'unknown').sort()).toEqual(emitted);
     expect(VALIDATION_RULES).toContain('unknown_field');
     expect(VALIDATION_RULES).toContain('unknown');
   });

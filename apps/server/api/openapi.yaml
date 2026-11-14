@@ -1014,7 +1014,7 @@ paths:
                     error: { code: device.timestamp_out_of_window, message: timestamp out of window, details: {} }
                     meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
         "403":
-          description: The device kind may not send this event type.
+          description: The device kind may not send this event type, credential kind or direction.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -1817,8 +1817,12 @@ components:
         (`entry.credential_presented`), entry and exit barrier
         (`barrier.passed`), pay station (`paystation.*`), exit barrier
         (`exit.credential_presented`), sensor gateway
-        (`sensor.space_changed`), any kind (`heartbeat`). `occurred_at` must
-        not be more than 60 s ahead of the server clock.
+        (`sensor.space_changed`), any kind (`heartbeat`). Within a type the
+        credential kind and direction are restricted too: a dispenser may send
+        only `ticket_request`, an entry barrier only `employee_card` or
+        `reservation_qr` and direction `entry`, an exit barrier only direction
+        `exit`. `occurred_at` must not be more than 60 s ahead of the server
+        clock.
       oneOf:
         - $ref: "#/components/schemas/DeviceEventPodiumVehicleDetected"
         - $ref: "#/components/schemas/DeviceEventEntryCredentialPresented"

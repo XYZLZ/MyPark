@@ -1029,7 +1029,7 @@ export interface components {
             /** Format: date-time */
             as_of: string;
         };
-        /** @description One device event, discriminated by `type`. Allowed device kinds per type: podium (`podium.vehicle_detected`), dispenser and entry barrier (`entry.credential_presented`), entry and exit barrier (`barrier.passed`), pay station (`paystation.*`), exit barrier (`exit.credential_presented`), sensor gateway (`sensor.space_changed`), any kind (`heartbeat`). `occurred_at` must not be more than 60 s ahead of the server clock. */
+        /** @description One device event, discriminated by `type`. Allowed device kinds per type: podium (`podium.vehicle_detected`), dispenser and entry barrier (`entry.credential_presented`), entry and exit barrier (`barrier.passed`), pay station (`paystation.*`), exit barrier (`exit.credential_presented`), sensor gateway (`sensor.space_changed`), any kind (`heartbeat`). Within a type the credential kind and direction are restricted too: a dispenser may send only `ticket_request`, an entry barrier only `employee_card` or `reservation_qr` and direction `entry`, an exit barrier only direction `exit`. `occurred_at` must not be more than 60 s ahead of the server clock. */
         DeviceEvent: components["schemas"]["DeviceEventPodiumVehicleDetected"] | components["schemas"]["DeviceEventEntryCredentialPresented"] | components["schemas"]["DeviceEventBarrierPassed"] | components["schemas"]["DeviceEventPaystationScan"] | components["schemas"]["DeviceEventPaystationLostTicket"] | components["schemas"]["DeviceEventPaystationCashPaid"] | components["schemas"]["DeviceEventExitCredentialPresented"] | components["schemas"]["DeviceEventSensorSpaceChanged"] | components["schemas"]["DeviceEventHeartbeat"];
         DeviceEventPodiumVehicleDetected: {
             /** Format: uuid */
@@ -2592,7 +2592,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The device kind may not send this event type. */
+            /** @description The device kind may not send this event type, credential kind or direction. */
             403: {
                 headers: {
                     [name: string]: unknown;
