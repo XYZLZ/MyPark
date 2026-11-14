@@ -40,6 +40,12 @@ func (s *Service) exitCredential(ctx context.Context, d authz.Device, ev Event) 
 		return Result{}, err
 	}
 	if due > 0 { // every overstay lands here: its due is never 0 (O8)
+		// An earlier open must not let the car skip this payment.
+		if !stay.ExitAuthorizedAt.IsZero() {
+			if err := s.repo.ClearExitAuthorization(ctx, d.LotID, stay.ID, now); err != nil {
+				return Result{}, err
+			}
+		}
 		res := deny(errcodes.GatePaymentRequired)
 		res.StayID, res.AmountCents, res.Breakdown = &stay.PublicID, &due, &bd
 		return res, nil

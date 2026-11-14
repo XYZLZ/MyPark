@@ -378,3 +378,13 @@ func (Repo) SetStayExited(ctx context.Context, lotID, stayID int64, now time.Tim
 	n, err := qs.SetStayExited(ctx, dbgen.SetStayExitedParams{Now: ts(now), LotID: lotID, ID: stayID})
 	return oneRow("set stay exited", stayID, n, err)
 }
+
+// ClearExitAuthorization implements gate.Repo.
+func (Repo) ClearExitAuthorization(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.ClearExitAuthorization(ctx, dbgen.ClearExitAuthorizationParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("clear exit authorization", stayID, n, err)
+}

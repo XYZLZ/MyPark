@@ -212,7 +212,7 @@ func TestExit_O8FlowAgreement(t *testing.T) {
 	if got := e.exitPass(e.stayID); got != (passData{Result: "ack"}) {
 		t.Fatalf("exit pass = %+v, want ack", got)
 	}
-	if r := e.exitRow(e.stayID); r.Status != "exited" || !r.PaidAt.Equal(e.t0.Add(110*time.Minute)) {
+	if r := e.exitRow(e.stayID); r.Status != "exited" || r.PaidAt == nil || !r.PaidAt.Equal(e.t0.Add(110*time.Minute)) {
 		t.Errorf("stay = %+v, want exited with paid_at t0+1h50", r)
 	}
 	if n := e.payments(); n != 2 {
@@ -303,7 +303,7 @@ func TestExit_EmployeeCard(t *testing.T) {
 	if got := e.exitPass(card); got != (passData{Result: "ack"}) {
 		t.Fatalf("exit pass = %+v, want ack", got)
 	}
-	if r := e.exitRow(card); r.Status != "exited" || !r.PaidAt.Equal(now) {
+	if r := e.exitRow(card); r.Status != "exited" || r.PaidAt == nil || !r.PaidAt.Equal(now) {
 		t.Errorf("card stay = %+v, want exited, paid at %v", r, now)
 	}
 	e.wantZeroPayment(card, now)
@@ -517,4 +517,64 @@ func TestExit_CredentialRacesCash(t *testing.T) {
 		t.Errorf("payments = %d, want 1", n)
 	}
 	e.invariant()
+}
+
+// wantPassRefused checks an exit pass changed nothing: no payment beyond
+// payments, the stay still inside and occupancy untouched.
+func (e *exitEnv) wantPassRefused(payments int64) {
+	e.t.Helper()
+	occ, ver := e.occupancy()
+	wantRejectedPass(e.t, e.exitPass(e.stayID), "gate.exit_not_authorized")
+	if r := e.exitRow(e.stayID); r.Status != "active" || r.ExitedAt != nil || r.AuthedAt != nil {
+		e.t.Errorf("stay = %+v, want active, not exited, authorization cleared", r)
+	}
+	if n := e.payments(); n != payments {
+		e.t.Errorf("payments = %d, want %d", n, payments)
+	}
+	if occ2, ver2 := e.occupancy(); occ2 != occ || ver2 != ver {
+		e.t.Errorf("occupancy = %d v%d, want %d v%d unchanged", occ2, ver2, occ, ver)
+	}
+	e.invariant()
+}
+
+// Controller ruling: a lost mark makes an authorized stay owe money again,
+// so it cancels the authorization.
+func TestExit_LostMarkCancelsAuthorization(t *testing.T) {
+	e := newExitEnv(t)
+	e.payAt(90*time.Minute, 7500)
+	e.at(100 * time.Minute)
+	wantOpen(t, e.exitCred(gate.KindTicket, e.ticketCode), e.stayID)
+	e.clk.Advance(10 * time.Second)
+	if got := e.lost(e.stayID); got.amount() != 42500 {
+		t.Fatalf("lost = %+v, want 42500", got)
+	}
+	e.clk.Advance(10 * time.Second)
+	e.wantPassRefused(1)
+}
+
+// Controller ruling: the lazy reactivation of a lapsed paid stay cancels its
+// authorization, so the pass inside the 60 s cannot book a free exit.
+func TestExit_ReactivationCancelsAuthorization(t *testing.T) {
+	e := newExitEnv(t)
+	e.payAt(90*time.Minute, 7500) // deadline t0+1h45
+	e.at(104*time.Minute + 50*time.Second)
+	wantOpen(t, e.exitCred(gate.KindTicket, e.ticketCode), e.stayID)
+	e.at(105*time.Minute + 10*time.Second)
+	if got := e.scan(gate.KindTicket, e.ticketCode); got.Status != "active" || got.amount() != 5000 {
+		t.Fatalf("scan = %+v, want active 5000", got)
+	}
+	e.at(105*time.Minute + 20*time.Second)
+	e.wantPassRefused(1)
+}
+
+// Review Minor 1: re-presenting after the fee starts denies and cancels the
+// earlier open, so paying cannot be skipped by passing on the old one.
+func TestExit_PaymentRequiredCancelsAuthorization(t *testing.T) {
+	e := newExitEnv(t)
+	e.at(9*time.Minute + 50*time.Second)
+	wantOpen(t, e.exitCred(gate.KindTicket, e.ticketCode), e.stayID)
+	e.at(10*time.Minute + 10*time.Second)
+	wantPaymentRequired(t, e.exitCred(gate.KindTicket, e.ticketCode), e.stayID, 5000)
+	e.at(10*time.Minute + 20*time.Second)
+	e.wantPassRefused(0)
 }

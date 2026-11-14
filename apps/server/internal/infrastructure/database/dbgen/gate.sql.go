@@ -76,6 +76,28 @@ func (q *Queries) BumpOccupancy(ctx context.Context, arg BumpOccupancyParams) (i
 	return version, err
 }
 
+const clearExitAuthorization = `-- name: ClearExitAuthorization :execrows
+update stays
+set exit_authorized_at = null, updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status in ('active', 'paid')
+`
+
+type ClearExitAuthorizationParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// An exit credential denied for payment cancels an earlier open, so the
+// exit pass cannot use it to skip the payment.
+func (q *Queries) ClearExitAuthorization(ctx context.Context, arg ClearExitAuthorizationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearExitAuthorization, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countFreshPending = `-- name: CountFreshPending :one
 select count(*) from stays
 where lot_id = $1 and status = 'entry_pending'
@@ -396,7 +418,7 @@ func (q *Queries) LockLotOccupancy(ctx context.Context, lotID int64) (LockLotOcc
 
 const markStayLost = `-- name: MarkStayLost :execrows
 update stays
-set lost_ticket = true, ticket_code_hash = $1,
+set lost_ticket = true, ticket_code_hash = $1, exit_authorized_at = null,
     status = case when lost_ticket then status else 'active' end,
     updated_at = $2::timestamptz
 where lot_id = $3 and id = $4 and credential_kind = 'ticket' and status in ('active', 'paid')
@@ -412,7 +434,8 @@ type MarkStayLostParams struct {
 // A lost ticket (design §10.2): the old code stops working and a paid stay
 // owes money again. Marking an already-lost stay again only rotates the
 // code, so a lost stay that paid keeps its status. paid_at and
-// exit_deadline_at are kept (O13).
+// exit_deadline_at are kept (O13). Any exit authorization is cancelled: the
+// stay may owe money again, and the driver presents the new code.
 func (q *Queries) MarkStayLost(ctx context.Context, arg MarkStayLostParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markStayLost,
 		arg.TicketCodeHash,
@@ -481,7 +504,7 @@ func (q *Queries) PaymentTotals(ctx context.Context, arg PaymentTotalsParams) (P
 
 const reactivateStay = `-- name: ReactivateStay :execrows
 update stays
-set status = 'active', updated_at = $1::timestamptz
+set status = 'active', exit_authorized_at = null, updated_at = $1::timestamptz
 where lot_id = $2 and id = $3 and status = 'paid'
 `
 
@@ -492,7 +515,8 @@ type ReactivateStayParams struct {
 }
 
 // The lazy paid -> active transition once the exit window has passed
-// (M2C-35). exit_deadline_at is kept: it keys the overstay pricing.
+// (M2C-35). exit_deadline_at is kept: it keys the overstay pricing. The stay
+// owes money again, so an exit authorization is cancelled.
 func (q *Queries) ReactivateStay(ctx context.Context, arg ReactivateStayParams) (int64, error) {
 	result, err := q.db.Exec(ctx, reactivateStay, arg.Now, arg.LotID, arg.ID)
 	if err != nil {

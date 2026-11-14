@@ -397,6 +397,9 @@ func TestDeviceEvents_ValidationStoresNothing(t *testing.T) {
 	if a, b := fmt.Sprint(strip(first)), fmt.Sprint(strip(second)); a != b {
 		t.Errorf("repeat answered %s, first %s", b, a)
 	}
+	// An event type no device may send is refused before the gate.
+	wantError(t, e.send(d, e.eventBody(uuid.New(), "door.opened", map[string]any{})),
+		http.StatusUnprocessableEntity, "validation.failed")
 	if n := e.eventRows(); n != 0 {
 		t.Errorf("rows = %d, want 0", n)
 	}

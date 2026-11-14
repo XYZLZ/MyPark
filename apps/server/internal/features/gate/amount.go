@@ -34,7 +34,8 @@ func (s *Service) amountDue(ctx context.Context, stay Stay, now time.Time) (int6
 
 // reactivateIfLapsed applies the lazy paid -> active transition (M2C-35): a
 // paid stay whose exit window has closed owes an overstay. It keeps the
-// deadline, which keys the overstay pricing, and updates stay in place.
+// deadline, which keys the overstay pricing, and updates stay in place. The
+// query cancels any exit authorization: the stay owes money again.
 func (s *Service) reactivateIfLapsed(ctx context.Context, stay *Stay, now time.Time) error {
 	if stay.Status != StatusPaid || !now.After(stay.ExitDeadlineAt) {
 		return nil
@@ -45,6 +46,6 @@ func (s *Service) reactivateIfLapsed(ctx context.Context, stay *Stay, now time.T
 	if err := s.repo.ReactivateStay(ctx, stay.LotID, stay.ID, now); err != nil {
 		return err
 	}
-	stay.Status = StatusActive
+	stay.Status, stay.ExitAuthorizedAt = StatusActive, time.Time{}
 	return nil
 }

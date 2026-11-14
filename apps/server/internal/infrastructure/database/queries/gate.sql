@@ -126,18 +126,20 @@ where lot_id = @lot_id and id = @id and status = 'active';
 
 -- name: ReactivateStay :execrows
 -- The lazy paid -> active transition once the exit window has passed
--- (M2C-35). exit_deadline_at is kept: it keys the overstay pricing.
+-- (M2C-35). exit_deadline_at is kept: it keys the overstay pricing. The stay
+-- owes money again, so an exit authorization is cancelled.
 update stays
-set status = 'active', updated_at = sqlc.arg(now)::timestamptz
+set status = 'active', exit_authorized_at = null, updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and status = 'paid';
 
 -- name: MarkStayLost :execrows
 -- A lost ticket (design §10.2): the old code stops working and a paid stay
 -- owes money again. Marking an already-lost stay again only rotates the
 -- code, so a lost stay that paid keeps its status. paid_at and
--- exit_deadline_at are kept (O13).
+-- exit_deadline_at are kept (O13). Any exit authorization is cancelled: the
+-- stay may owe money again, and the driver presents the new code.
 update stays
-set lost_ticket = true, ticket_code_hash = @ticket_code_hash,
+set lost_ticket = true, ticket_code_hash = @ticket_code_hash, exit_authorized_at = null,
     status = case when lost_ticket then status else 'active' end,
     updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and credential_kind = 'ticket' and status in ('active', 'paid');
@@ -162,4 +164,11 @@ where lot_id = @lot_id and id = @id and status in ('active', 'paid');
 update stays
 set status = 'exited', exited_at = sqlc.arg(now)::timestamptz,
     paid_at = coalesce(paid_at, sqlc.arg(now)::timestamptz), updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status in ('active', 'paid');
+
+-- name: ClearExitAuthorization :execrows
+-- An exit credential denied for payment cancels an earlier open, so the
+-- exit pass cannot use it to skip the payment.
+update stays
+set exit_authorized_at = null, updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and status in ('active', 'paid');

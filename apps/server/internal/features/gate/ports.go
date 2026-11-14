@@ -72,10 +72,11 @@ type Repo interface {
 	// deadline.
 	SetStayPaid(ctx context.Context, lotID, stayID int64, now, exitDeadline time.Time) error
 	// ReactivateStay moves the locked paid stay back to active, keeping its
-	// exit deadline (M2C-35).
+	// exit deadline (M2C-35) and cancelling any exit authorization.
 	ReactivateStay(ctx context.Context, lotID, stayID int64, now time.Time) error
 	// MarkStayLost marks the locked active or paid ticket stay lost, replaces
-	// its ticket code hash and makes it active.
+	// its ticket code hash and makes it active. It cancels any exit
+	// authorization.
 	MarkStayLost(ctx context.Context, lotID, stayID int64, hash []byte, now time.Time) error
 
 	// CardByHash returns the lot's employee card with this UID hash whatever
@@ -88,6 +89,9 @@ type Repo interface {
 	// SetStayExited moves the locked active or paid stay to exited at now,
 	// setting paid_at to now only when it has none.
 	SetStayExited(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// ClearExitAuthorization cancels the locked active or paid stay's exit
+	// authorization.
+	ClearExitAuthorization(ctx context.Context, lotID, stayID int64, now time.Time) error
 }
 
 // ErrNotFound means the lot has no matching row.
