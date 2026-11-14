@@ -59,6 +59,9 @@ func newAPIEnv(t *testing.T, mods ...func(*deps)) *apiEnv {
 		"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
 		"JWT_KEY_ID":       "dev-1",
 		"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
+		"SECRETBOX_KEY":    config.DevSecretboxKey,
+		"SECRETBOX_KEY_ID": "dev-1",
+		"CARD_UID_PEPPER":  config.DevCardUIDPepper,
 		"DATABASE_URL":     db.AppURL,
 	}
 	cfg, err := config.Load(func(k string) string { return env[k] })

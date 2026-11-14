@@ -21,6 +21,8 @@ import (
 	"sync"
 
 	"github.com/go-playground/validator/v10"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 )
 
 // Environment variable names.
@@ -37,6 +39,14 @@ const (
 	EnvAuthCodePepper     = "AUTH_CODE_PEPPER"
 	EnvTrustedProxyCIDRs  = "TRUSTED_PROXY_CIDRS"
 	EnvMaxVehiclesPerUser = "MAX_VEHICLES_PER_USER"
+
+	EnvSecretboxKey        = "SECRETBOX_KEY"
+	EnvSecretboxKeyID      = "SECRETBOX_KEY_ID"
+	EnvSecretboxOldKeys    = "SECRETBOX_OLD_KEYS"
+	EnvCardUIDPepper       = "CARD_UID_PEPPER"
+	EnvSSEMaxPerIP         = "SSE_MAX_PER_IP"
+	EnvSSEMaxStreams       = "SSE_MAX_STREAMS"
+	EnvDeviceRateLimitPerS = "DEVICE_RATE_LIMIT_PER_S"
 )
 
 // Default values applied when an optional variable is unset or empty.
@@ -49,10 +59,16 @@ const (
 
 	// DefaultMaxVehiclesPerUser is the per-user vehicle cap when unset.
 	DefaultMaxVehiclesPerUser = 5
+
+	// Limits for the public SSE streams and the device event endpoint.
+	DefaultSSEMaxPerIP         = 20
+	DefaultSSEMaxStreams       = 2000
+	DefaultDeviceRateLimitPerS = 100
 )
 
 const (
 	jwtSeedLen   = ed25519.SeedSize // 32
+	secretboxLen = 32
 	minPepperLen = 32
 	redacted     = "[redacted]"
 )
@@ -73,6 +89,13 @@ type Config struct {
 	authCodePepper     []byte
 	trustedProxyCIDRs  []netip.Prefix
 	maxVehiclesPerUser int
+
+	secretboxKey        secretbox.Key
+	secretboxOldKeys    []secretbox.Key
+	cardUIDPepper       []byte
+	sseMaxPerIP         int
+	sseMaxStreams       int
+	deviceRateLimitPerS int
 }
 
 // Env returns the deployment environment: development, test or production.
@@ -117,6 +140,24 @@ func (c Config) TrustedProxyCIDRs() []netip.Prefix { return slices.Clone(c.trust
 // MaxVehiclesPerUser returns the per-user vehicle cap.
 func (c Config) MaxVehiclesPerUser() int { return c.maxVehiclesPerUser }
 
+// SecretboxKeys returns the key that seals new secrets and the rotated-out
+// keys that still open old ones. Never log them.
+func (c Config) SecretboxKeys() (current secretbox.Key, old []secretbox.Key) {
+	return c.secretboxKey, slices.Clone(c.secretboxOldKeys)
+}
+
+// CardUIDPepper returns a copy of the HMAC pepper for card UIDs. Never log it.
+func (c Config) CardUIDPepper() []byte { return slices.Clone(c.cardUIDPepper) }
+
+// SSEMaxPerIP returns the cap on concurrent SSE streams per client IP.
+func (c Config) SSEMaxPerIP() int { return c.sseMaxPerIP }
+
+// SSEMaxStreams returns the cap on concurrent SSE streams overall.
+func (c Config) SSEMaxStreams() int { return c.sseMaxStreams }
+
+// DeviceRateLimitPerS returns the per-device event rate limit per second.
+func (c Config) DeviceRateLimitPerS() int { return c.deviceRateLimitPerS }
+
 // String renders the redacted LogValue group, so %v, %+v and %s never print
 // credentials.
 func (c Config) String() string { return c.LogValue().String() }
@@ -141,6 +182,13 @@ func (c Config) LogValue() slog.Value {
 		slog.String("auth_code_pepper", redacted),
 		slog.Any("trusted_proxy_cidrs", c.trustedProxyCIDRs),
 		slog.Int("max_vehicles_per_user", c.maxVehiclesPerUser),
+		slog.String("secretbox_key", redacted),
+		slog.String("secretbox_key_id", c.secretboxKey.ID),
+		slog.Int("secretbox_old_keys", len(c.secretboxOldKeys)),
+		slog.String("card_uid_pepper", redacted),
+		slog.Int("sse_max_per_ip", c.sseMaxPerIP),
+		slog.Int("sse_max_streams", c.sseMaxStreams),
+		slog.Int("device_rate_limit_per_s", c.deviceRateLimitPerS),
 	)
 }
 
@@ -188,6 +236,13 @@ type rawEnv struct {
 	JWTKeyID           string `env:"JWT_KEY_ID" validate:"required,max=64"`
 	AuthCodePepper     string `env:"AUTH_CODE_PEPPER" validate:"required"`
 	MaxVehiclesPerUser int64  `env:"MAX_VEHICLES_PER_USER" validate:"min=1,max=20"`
+
+	SecretboxKey        string `env:"SECRETBOX_KEY" validate:"required"`
+	SecretboxKeyID      string `env:"SECRETBOX_KEY_ID" validate:"required,max=64"`
+	CardUIDPepper       string `env:"CARD_UID_PEPPER" validate:"required"`
+	SSEMaxPerIP         int64  `env:"SSE_MAX_PER_IP" validate:"min=1,max=100000"`
+	SSEMaxStreams       int64  `env:"SSE_MAX_STREAMS" validate:"min=1,max=1000000"`
+	DeviceRateLimitPerS int64  `env:"DEVICE_RATE_LIMIT_PER_S" validate:"min=1,max=10000"`
 }
 
 // secretVars are never echoed back in error messages.
@@ -195,6 +250,8 @@ var secretVars = map[string]bool{
 	EnvDatabaseURL:    true,
 	EnvJWTSigningKey:  true,
 	EnvAuthCodePepper: true,
+	EnvSecretboxKey:   true,
+	EnvCardUIDPepper:  true,
 }
 
 var envValidator = sync.OnceValue(func() *validator.Validate {
@@ -233,8 +290,32 @@ func Load(getenv func(string) string) (Config, error) {
 		JWTKeyID:           strings.TrimSpace(getenv(EnvJWTKeyID)),
 		AuthCodePepper:     strings.TrimSpace(getenv(EnvAuthCodePepper)),
 		MaxVehiclesPerUser: DefaultMaxVehiclesPerUser,
+
+		SecretboxKey:        strings.TrimSpace(getenv(EnvSecretboxKey)),
+		SecretboxKeyID:      strings.TrimSpace(getenv(EnvSecretboxKeyID)),
+		CardUIDPepper:       strings.TrimSpace(getenv(EnvCardUIDPepper)),
+		SSEMaxPerIP:         DefaultSSEMaxPerIP,
+		SSEMaxStreams:       DefaultSSEMaxStreams,
+		DeviceRateLimitPerS: DefaultDeviceRateLimitPerS,
 	}
 	var errs []error
+	for _, v := range []struct {
+		name string
+		dst  *int64
+	}{
+		{EnvSSEMaxPerIP, &raw.SSEMaxPerIP},
+		{EnvSSEMaxStreams, &raw.SSEMaxStreams},
+		{EnvDeviceRateLimitPerS, &raw.DeviceRateLimitPerS},
+	} {
+		if s := strings.TrimSpace(getenv(v.name)); s != "" {
+			n, err := strconv.ParseInt(s, 10, 32)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s must be an integer, got %q", v.name, s))
+			} else {
+				*v.dst = n
+			}
+		}
+	}
 
 	if s := strings.TrimSpace(getenv(EnvMaxVehiclesPerUser)); s != "" {
 		n, err := strconv.ParseInt(s, 10, 32)
@@ -283,6 +364,23 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvAuthCodePepper))
 		}
 	}
+	var boxKey secretbox.Key
+	var boxOld []secretbox.Key
+	if raw.SecretboxKey != "" && raw.SecretboxKeyID != "" {
+		var err error
+		if boxKey, boxOld, err = ParseSecretboxKeys(raw.SecretboxKeyID, raw.SecretboxKey, getenv(EnvSecretboxOldKeys), production); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	var cardPepper []byte
+	if raw.CardUIDPepper != "" {
+		var err error
+		if cardPepper, err = decodeKey(EnvCardUIDPepper, raw.CardUIDPepper, minPepperLen, false); err != nil {
+			errs = append(errs, err)
+		} else if production && bytes.Equal(cardPepper, devBytes(DevCardUIDPepper)) {
+			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvCardUIDPepper))
+		}
+	}
 	verifyKeys := map[string]ed25519.PublicKey{}
 	if seed != nil {
 		verifyKeys[raw.JWTKeyID] = ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
@@ -329,6 +427,13 @@ func Load(getenv func(string) string) (Config, error) {
 		authCodePepper:     pepper,
 		trustedProxyCIDRs:  cidrs,
 		maxVehiclesPerUser: int(raw.MaxVehiclesPerUser),
+
+		secretboxKey:        boxKey,
+		secretboxOldKeys:    boxOld,
+		cardUIDPepper:       cardPepper,
+		sseMaxPerIP:         int(raw.SSEMaxPerIP),
+		sseMaxStreams:       int(raw.SSEMaxStreams),
+		deviceRateLimitPerS: int(raw.DeviceRateLimitPerS),
 	}, nil
 }
 
@@ -359,6 +464,51 @@ func decodeKey(name, value string, n int, exact bool) ([]byte, error) {
 		return nil, fmt.Errorf("%s must decode to at least %d bytes", name, n)
 	}
 	return b, nil
+}
+
+// ParseSecretboxKeys parses the current secretbox key (base64 of exactly 32
+// bytes, named id) and the rotated-out keys in old ("kid:base64" entries,
+// comma-separated). It rejects an empty id, a repeated id and, when
+// production is set, the development key in either position. Errors name the
+// variable and never include a key value. Load and any other binary that
+// opens sealed secrets share it.
+func ParseSecretboxKeys(id, key, old string, production bool) (secretbox.Key, []secretbox.Key, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return secretbox.Key{}, nil, fmt.Errorf("%s is required", EnvSecretboxKeyID)
+	}
+	devKey := devBytes(DevSecretboxKey)
+	secret, err := decodeKey(EnvSecretboxKey, strings.TrimSpace(key), secretboxLen, true)
+	if err != nil {
+		return secretbox.Key{}, nil, err
+	}
+	if production && bytes.Equal(secret, devKey) {
+		return secretbox.Key{}, nil, fmt.Errorf("%s must not be the development default in production", EnvSecretboxKey)
+	}
+	current := secretbox.Key{ID: id}
+	copy(current.Secret[:], secret)
+
+	seen := map[string]bool{id: true}
+	var olds []secretbox.Key
+	for _, entry := range splitList(old) {
+		kid, enc, ok := strings.Cut(entry, ":")
+		kid = strings.TrimSpace(kid)
+		b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
+		if !ok || kid == "" || err != nil || len(b) != secretboxLen {
+			return secretbox.Key{}, nil, fmt.Errorf("%s must be comma-separated kid:base64(32-byte key) entries", EnvSecretboxOldKeys)
+		}
+		if seen[kid] {
+			return secretbox.Key{}, nil, fmt.Errorf("%s repeats a key id", EnvSecretboxOldKeys)
+		}
+		seen[kid] = true
+		if production && bytes.Equal(b, devKey) {
+			return secretbox.Key{}, nil, fmt.Errorf("%s must not contain the development key in production", EnvSecretboxOldKeys)
+		}
+		k := secretbox.Key{ID: kid}
+		copy(k.Secret[:], b)
+		olds = append(olds, k)
+	}
+	return current, olds, nil
 }
 
 // parseVerifyKeys parses "kid:base64(public key)" entries, comma-separated.

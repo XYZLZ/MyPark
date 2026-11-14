@@ -36,3 +36,23 @@ func (s *String) UnmarshalJSON(b []byte) error {
 	*s = String(v)
 	return nil
 }
+
+// Bytes holds sensitive raw bytes (a decrypted device secret, a key). Every
+// formatting, logging and JSON-encoding path prints "[redacted]"; only Reveal
+// exposes the bytes.
+type Bytes []byte
+
+// Reveal returns the plaintext bytes.
+func (b Bytes) Reveal() []byte { return b }
+
+// String implements fmt.Stringer.
+func (Bytes) String() string { return redacted }
+
+// GoString implements fmt.GoStringer (%#v).
+func (Bytes) GoString() string { return redacted }
+
+// LogValue implements slog.LogValuer.
+func (Bytes) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// MarshalJSON always encodes the redaction marker.
+func (Bytes) MarshalJSON() ([]byte, error) { return json.Marshal(redacted) }

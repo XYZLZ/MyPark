@@ -492,8 +492,8 @@ src/
 | Logs | `slog` JSON. Fields: `time, level, msg, request_id, user_id?, device_id?, route, status, duration_ms`. PII is not logged (emails and plates are masked) |
 | Request ID | Accepts `X-Request-Id` or generates a UUIDv7; echoed in responses and error envelopes |
 | Health | `/healthz` (process alive), `/readyz` (DB reachable, migrations at the expected version, listener connected) |
-| Metrics | Phase 1: counters exposed at `/metrics` (Prometheus text) for events/s, SSE clients and notify latency **(our call)** |
-| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`; later phases add `SECRETBOX_KEY` and `QR_HMAC_KEY` |
+| Metrics | Counters exposed at `/metrics` (Prometheus text) for events/s, SSE clients and notify latency **(our call)**. Moved from M2 to M5 (M2C-50) |
+| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`, `SECRETBOX_KEY` (with `SECRETBOX_KEY_ID` and `SECRETBOX_OLD_KEYS` for rotation), `CARD_UID_PEPPER`; later phases add `QR_HMAC_KEY`. M2 limits: `SSE_MAX_PER_IP` (20), `SSE_MAX_STREAMS` (2000), `DEVICE_RATE_LIMIT_PER_S` (100, range 1-10000) |
 
 ---
 

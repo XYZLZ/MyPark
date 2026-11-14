@@ -119,6 +119,9 @@ func testEnv(env map[string]string) map[string]string {
 		"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
 		"JWT_KEY_ID":       "dev-1",
 		"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
+		"SECRETBOX_KEY":    config.DevSecretboxKey,
+		"SECRETBOX_KEY_ID": "dev-1",
+		"CARD_UID_PEPPER":  config.DevCardUIDPepper,
 	}
 	maps.Copy(out, env)
 	return out

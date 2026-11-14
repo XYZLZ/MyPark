@@ -28,6 +28,9 @@ var authEnv = map[string]string{
 	"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
 	"JWT_KEY_ID":       "dev-1",
 	"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
+	"SECRETBOX_KEY":    config.DevSecretboxKey,
+	"SECRETBOX_KEY_ID": "dev-1",
+	"CARD_UID_PEPPER":  config.DevCardUIDPepper,
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -138,6 +141,8 @@ func TestLoad_Overrides(t *testing.T) {
 		"APP_ENV":          "production",
 		"JWT_SIGNING_KEY":  "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"AUTH_CODE_PEPPER": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"SECRETBOX_KEY":    "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"CARD_UID_PEPPER":  "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"HTTP_ADDR":        ":9000",
 		"DATABASE_URL":     "postgres://y",
 		"DB_MAX_CONNS":     "25",

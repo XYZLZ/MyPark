@@ -114,6 +114,12 @@ services:
       AUTH_CODE_PEPPER: ${AUTH_CODE_PEPPER:-Vx+9DiL7uyqiwY3gQJqdTNupMJqGdpB+gmkk1YUbEwY=}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
       MAX_VEHICLES_PER_USER: ${MAX_VEHICLES_PER_USER:-5}
+      # Dev-only defaults (config.DevSecretboxKey / DevCardUIDPepper); the API
+      # refuses them when APP_ENV=production.
+      SECRETBOX_KEY: ${SECRETBOX_KEY:-hjcsotOiA0zcCanr6LhEpWwP8Q5QqtFfMdhaD8DU1UQ=}
+      SECRETBOX_KEY_ID: ${SECRETBOX_KEY_ID:-dev-1}
+      SECRETBOX_OLD_KEYS: ${SECRETBOX_OLD_KEYS:-}
+      CARD_UID_PEPPER: ${CARD_UID_PEPPER:-5aolRvJpaNIAVU0GqBsELQfbrdRUYDraaxm64URAA9g=}
     # All interfaces on purpose: a phone running Expo on the LAN must reach the
     # API. Every other published port is bound to loopback.
     ports:

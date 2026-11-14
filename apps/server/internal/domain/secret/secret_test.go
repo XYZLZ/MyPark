@@ -66,3 +66,43 @@ func TestSecret_UnmarshalAcceptsJSONString(t *testing.T) {
 		t.Error("non-string accepted")
 	}
 }
+
+func TestBytes_NeverPrints(t *testing.T) {
+	const plainBytes = "device-secret-plaintext"
+	b := secret.Bytes(plainBytes)
+	type wrapper struct {
+		Key secret.Bytes `json:"key"`
+	}
+	w := wrapper{Key: b}
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	log.Info("direct", slog.Any("b", b))
+	log.Info("nested", slog.Any("w", w))
+
+	jb, err := json.Marshal(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs := map[string]string{
+		"%v":    fmt.Sprintf("%v", b),
+		"%+v":   fmt.Sprintf("%+v", b),
+		"%#v":   fmt.Sprintf("%#v", b),
+		"%s":    fmt.Sprintf("%s", b), //nolint:staticcheck // S1025: the %s verb is what this test exercises
+		"%v w":  fmt.Sprintf("%v", w),
+		"%+v w": fmt.Sprintf("%+v", w),
+		"json":  string(jb),
+		"slog":  buf.String(),
+	}
+	for name, got := range outputs {
+		if strings.Contains(got, plainBytes) {
+			t.Errorf("%s leaks the plaintext: %s", name, got)
+		}
+		if !strings.Contains(got, "[redacted]") {
+			t.Errorf("%s lacks the redaction marker: %s", name, got)
+		}
+	}
+	if string(b.Reveal()) != plainBytes {
+		t.Error("Reveal must return the plaintext")
+	}
+}
