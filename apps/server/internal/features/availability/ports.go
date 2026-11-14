@@ -1,5 +1,6 @@
 // Package availability computes and serves lot availability. This file holds
-// its ports; Compute and the service arrive with the snapshot.
+// its ports; domain.go holds the admission rule. Compute and the service
+// arrive with the snapshot.
 package availability
 
 import (

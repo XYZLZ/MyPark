@@ -66,3 +66,21 @@ select coalesce(sum(p.amount_cents), 0)::bigint as paid_cents,
 from payments p
 join stays s on s.id = p.stay_id
 where s.lot_id = @lot_id and p.stay_id = @stay_id and p.status = 'succeeded';
+
+-- name: LockLotOccupancy :one
+-- The entry decision's lock (design §9.2, M2C-29): only the occupancy row is
+-- locked, so FK inserts referencing lots are not blocked.
+select o.occupied, l.capacity, l.status
+from lot_occupancy o
+join lots l on l.id = o.lot_id
+where o.lot_id = @lot_id
+for update of o;
+
+-- name: CountOutOfService :one
+select count(*) from spaces where lot_id = @lot_id and status = 'out_of_service';
+
+-- name: CountFreshPending :one
+-- Accepted entries hold their space for 60 s until the barrier pass (M2C-30).
+select count(*) from stays
+where lot_id = @lot_id and status = 'entry_pending'
+  and accepted_at > sqlc.arg(now)::timestamptz - interval '60 seconds';

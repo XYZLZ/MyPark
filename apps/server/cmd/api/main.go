@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/availability"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	devicespg "github.com/XYZLZ/MyPark/apps/server/internal/features/devices/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
@@ -198,16 +200,20 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	tariffs.NewHandler(tariffSvc, lotspg.NewRepo(d.pool), d.clock, d.log).Register(r)
 
 	tx := database.NewTxRunner(d.pool)
+	auditRec := auditpg.NewRecorder()
 	devices.NewHandler(devices.HandlerDeps{
-		Tx:     tx,
-		Store:  deviceRepo,
-		Gate:   gate.NewService(gate.Deps{Repo: gatepg.NewRepo(), Clock: d.clock, Log: d.log}),
+		Tx:    tx,
+		Store: deviceRepo,
+		Gate: gate.NewService(gate.Deps{
+			Repo: gatepg.NewRepo(), Clock: d.clock, Log: d.log, Tariffs: tariffSvc, Audit: auditRec,
+			// NoReservations until M3 (M2C-1); ticket codes come from crypto/rand.
+			Holds: availability.NoReservations{}, CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
+		}),
 		Sealer: d.sealer,
 		Clock:  d.clock,
 		Log:    d.log,
 	}).Register(r)
 
-	auditRec := auditpg.NewRecorder()
 	notifier := notificationspg.NewNotifier(d.clock)
 	authSvc := auth.NewService(auth.Deps{
 		Tx:     tx,

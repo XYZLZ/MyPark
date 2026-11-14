@@ -35,6 +35,8 @@ const (
 	AdminInvitationAccepted    = "admin.invitation_accepted"
 	AdminInvitationReissued    = "admin.invitation_reissued"
 	AdminSeeded                = "admin.seeded"
+	GateEmployeeEntry          = "gate.employee_entry"
+	GateLateEntryPass          = "gate.late_entry_pass"
 )
 
 // MetaReplacedPendingDriver is the metadata key set to true on admin.created

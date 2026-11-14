@@ -1,6 +1,12 @@
 package gate
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/base32"
+	"fmt"
+	"io"
+	"strings"
+)
 
 const (
 	ticketCodeLen          = 16
@@ -72,4 +78,29 @@ func NormalizeCardUID(s string) (string, bool) {
 		return "", false
 	}
 	return b.String(), true
+}
+
+// crockford encodes ticket codes: 10 random bytes are exactly 16 characters.
+var crockford = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
+
+// NewTicketCode reads 10 bytes from r (crypto/rand in production) and returns
+// them as 16 Crockford base32 characters. The plain code exists only in the
+// answer to the dispenser; only HashTicketCode of it is stored.
+func NewTicketCode(r io.Reader) (string, error) {
+	var b [10]byte
+	if _, err := io.ReadFull(r, b[:]); err != nil {
+		return "", fmt.Errorf("gate: read ticket code randomness: %w", err)
+	}
+	return crockford.EncodeToString(b[:]), nil
+}
+
+// HashTicketCode returns sha256 of the normalized code, the only form in
+// which a ticket code is stored or compared (M2C-26). A code that does not
+// normalize is hashed as given; it cannot match a stored hash.
+func HashTicketCode(code string) []byte {
+	if n, ok := NormalizeTicketCode(code); ok {
+		code = n
+	}
+	sum := sha256.Sum256([]byte(code))
+	return sum[:]
 }

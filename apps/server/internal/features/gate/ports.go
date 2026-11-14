@@ -2,7 +2,10 @@ package gate
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 )
@@ -24,4 +27,46 @@ type Repo interface {
 	SpaceExists(ctx context.Context, lotID int64, code string) (bool, error)
 	// NotifySpaceChanged queues a space_changed notification, sent on commit.
 	NotifySpaceChanged(ctx context.Context, lotID int64, code, state string) error
+
+	// LockLotOccupancy locks the lot's occupancy row FOR UPDATE, the first
+	// lock of every entry decision (M2C-29), and returns what it guards.
+	LockLotOccupancy(ctx context.Context, lotID int64) (LotOccupancy, error)
+	// CountOutOfService counts the lot's spaces out of service.
+	CountOutOfService(ctx context.Context, lotID int64) (int, error)
+	// CountFreshPending counts the lot's entry_pending stays accepted in the
+	// 60 s before now.
+	CountFreshPending(ctx context.Context, lotID int64, now time.Time) (int, error)
+	// ActiveCardByHash returns the lot's active employee card with this UID
+	// hash, or ErrNotFound.
+	ActiveCardByHash(ctx context.Context, lotID int64, hash []byte) (Card, error)
+	// CardHasOpenStay reports whether the card has an entry_pending, active
+	// or paid stay in the lot.
+	CardHasOpenStay(ctx context.Context, lotID, cardID int64) (bool, error)
+	// InsertStay inserts an entry_pending stay accepted at now.
+	InsertStay(ctx context.Context, s NewStay) (uuid.UUID, error)
+}
+
+// ErrNotFound means the lot has no matching row.
+var ErrNotFound = errors.New("gate: not found")
+
+// LotOccupancy is the locked occupancy row and its lot.
+type LotOccupancy struct {
+	Occupied, Capacity int
+	Closed             bool
+}
+
+// Card is an active employee card.
+type Card struct {
+	ID       int64
+	PublicID uuid.UUID
+}
+
+// NewStay is an accepted entry. TicketCodeHash is set for a ticket,
+// EmployeeCardID for an employee card.
+type NewStay struct {
+	LotID           int64
+	TicketCodeHash  []byte
+	EmployeeCardID  int64
+	TariffVersionID int64
+	AcceptedAt      time.Time
 }

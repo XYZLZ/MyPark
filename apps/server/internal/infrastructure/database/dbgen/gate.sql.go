@@ -12,6 +12,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countFreshPending = `-- name: CountFreshPending :one
+select count(*) from stays
+where lot_id = $1 and status = 'entry_pending'
+  and accepted_at > $2::timestamptz - interval '60 seconds'
+`
+
+type CountFreshPendingParams struct {
+	LotID int64
+	Now   pgtype.Timestamptz
+}
+
+// Accepted entries hold their space for 60 s until the barrier pass (M2C-30).
+func (q *Queries) CountFreshPending(ctx context.Context, arg CountFreshPendingParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countFreshPending, arg.LotID, arg.Now)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countOutOfService = `-- name: CountOutOfService :one
+select count(*) from spaces where lot_id = $1 and status = 'out_of_service'
+`
+
+func (q *Queries) CountOutOfService(ctx context.Context, lotID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countOutOfService, lotID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getActiveCardByHash = `-- name: GetActiveCardByHash :one
 select id, public_id from employee_cards
 where lot_id = $1 and card_uid_hash = $2 and status = 'active'
@@ -249,6 +279,29 @@ func (q *Queries) InsertStay(ctx context.Context, arg InsertStayParams) (InsertS
 	)
 	var i InsertStayRow
 	err := row.Scan(&i.ID, &i.PublicID)
+	return i, err
+}
+
+const lockLotOccupancy = `-- name: LockLotOccupancy :one
+select o.occupied, l.capacity, l.status
+from lot_occupancy o
+join lots l on l.id = o.lot_id
+where o.lot_id = $1
+for update of o
+`
+
+type LockLotOccupancyRow struct {
+	Occupied int32
+	Capacity int32
+	Status   string
+}
+
+// The entry decision's lock (design §9.2, M2C-29): only the occupancy row is
+// locked, so FK inserts referencing lots are not blocked.
+func (q *Queries) LockLotOccupancy(ctx context.Context, lotID int64) (LockLotOccupancyRow, error) {
+	row := q.db.QueryRow(ctx, lockLotOccupancy, lotID)
+	var i LockLotOccupancyRow
+	err := row.Scan(&i.Occupied, &i.Capacity, &i.Status)
 	return i, err
 }
 

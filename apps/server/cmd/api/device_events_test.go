@@ -254,15 +254,18 @@ func TestDeviceEvents_ConcurrentDuplicates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	recs := make([]*httptest.ResponseRecorder, n)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range n {
 		req := d.Request(t, deviceEventsPath, body, e.clk.Now()).WithContext(ctx)
 		req.RemoteAddr = "203.0.113.7:5555"
 		wg.Go(func() {
+			<-start
 			recs[i] = httptest.NewRecorder()
 			e.h.ServeHTTP(recs[i], req)
 		})
 	}
+	close(start) // release every request at once, after all are launched
 	wg.Wait()
 	if ctx.Err() != nil {
 		t.Fatal("requests did not finish within 10 s (deadlock?)")
@@ -306,27 +309,30 @@ func TestDeviceEvents_ConcurrentConflictingBodies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	recs := make([]*httptest.ResponseRecorder, n)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range n {
 		req := d.Request(t, deviceEventsPath, bodies[i%2], e.clk.Now()).WithContext(ctx)
 		req.RemoteAddr = "203.0.113.7:5555"
 		wg.Go(func() {
+			<-start
 			recs[i] = httptest.NewRecorder()
 			e.h.ServeHTTP(recs[i], req)
 		})
 	}
+	close(start) // release every request at once, after all are launched
 	wg.Wait()
 	if ctx.Err() != nil {
 		t.Fatal("requests did not finish within 10 s (deadlock?)")
 	}
 
-	winner := -1
+	winner, winnerReq := -1, -1 // the winning body and the winning request
 	for i, rec := range recs {
 		if rec.Code == http.StatusOK && rec.Header().Get("Idempotent-Replayed") == "" {
-			if winner >= 0 {
-				t.Fatalf("requests %d and %d were both processed", winner, i)
+			if winnerReq >= 0 {
+				t.Fatalf("requests %d and %d were both processed", winnerReq, i)
 			}
-			winner = i % 2
+			winner, winnerReq = i%2, i
 		}
 	}
 	if winner < 0 {
@@ -337,7 +343,7 @@ func TestDeviceEvents_ConcurrentConflictingBodies(t *testing.T) {
 		case i%2 == winner && rec.Code == http.StatusOK:
 		case i%2 != winner && rec.Code == http.StatusConflict && errCode(decodeBody(t, rec)) == "device.event_conflict":
 		default:
-			t.Errorf("request %d (body %d, winner %d): got %d %s", i, i%2, winner, rec.Code, rec.Body)
+			t.Errorf("request %d (body %d; winning request %d, body %d): got %d %s", i, i%2, winnerReq, winner, rec.Code, rec.Body)
 		}
 	}
 
@@ -429,8 +435,9 @@ func TestDeviceEvents_ContentType415(t *testing.T) {
 // device retries once the handler exists.
 func TestDeviceEvents_UnhandledTypeIs500StoresNothing(t *testing.T) {
 	e := newDeviceEnv(t)
-	d := e.device(authz.DeviceDispenser)
-	body := e.eventBody(uuid.New(), "entry.credential_presented", map[string]any{"kind": "ticket_request"})
+	d := e.device(authz.DeviceExitBarrier)
+	body := e.eventBody(uuid.New(), "exit.credential_presented",
+		map[string]any{"credential": map[string]any{"kind": "ticket", "value": "000G40R40M30E209"}})
 	wantError(t, e.send(d, body), http.StatusInternalServerError, "internal.unexpected")
 	if n := e.eventRows(); n != 0 {
 		t.Errorf("rows = %d, want 0", n)
