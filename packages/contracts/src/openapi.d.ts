@@ -495,10 +495,220 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the simulator state
+         * @description The simulator control API is compose-internal (M2C-46): it is served by the simulator service on port 8090, not by this API, and is reached by admins only through the web BFF. Every operation requires `X-Simulator-Token`.
+         */
+        get: operations["getSimulatorStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/scenarios/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a scenario
+         * @description Starts one scenario. `reservation_arrivals` and `no_show` are not available in M2 (M2C-1) and are answered 422 `simulator.scenario_unavailable`. The body is strictly decoded: unknown fields are 422 `validation.failed` with rule `unknown_field`, a wrong JSON type is 400 `http.invalid_json` and a body that is not `application/json` is 415.
+         */
+        post: operations["startSimulatorScenario"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/scenarios/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the running scenario
+         * @description With `drain` true, every car inside is scheduled to leave and the scenario completes when they are gone. The body is strictly decoded (see `startSimulatorScenario`).
+         */
+        post: operations["stopSimulatorScenario"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/cars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inject one car
+         * @description Sends one car through the lot. "Present an employee card" is `credential: employee_card`. A `hold` car parks until `leaveSimulatorCar` is called, which is how the demo shows a real non-zero fee. Injected cars run under the current scenario clock, or the real clock at speed 1 when idle. The body is strictly decoded (see `startSimulatorScenario`).
+         */
+        post: operations["injectSimulatorCar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/cars/{car_id}/leave": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a held car leave
+         * @description The car scans, pays and exits. "Mark ticket lost" is `lose_ticket` true. The body is strictly decoded (see `startSimulatorScenario`).
+         */
+        post: operations["leaveSimulatorCar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/sensors/{code}/fault": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a sensor fault
+         * @description `none` clears the fault. The body is strictly decoded (see `startSimulatorScenario`).
+         */
+        post: operations["setSimulatorSensorFault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List recent device outcomes
+         * @description A ring buffer of the last 500 device outcomes, oldest first. The console polls it with `after` set to the last `seq` it has seen.
+         */
+        get: operations["listSimulatorEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SimulatorStatus: {
+            /**
+             * @description The current or last scenario. Empty when none has run.
+             * @enum {string}
+             */
+            scenario: "" | "idle" | "weekday" | "weekend_peak" | "fill_to_full" | "sensor_drift" | "reservation_arrivals" | "no_show";
+            running: boolean;
+            /** Format: int64 */
+            seed: number;
+            speed: number;
+            /** Format: date-time */
+            virtual_now: string;
+            cars_inside: number;
+            /**
+             * Format: date-time
+             * @description Absent until a scenario has started.
+             */
+            started_at?: string;
+            reached_full: boolean;
+        };
+        SimulatorStatusResponse: {
+            data: components["schemas"]["SimulatorStatus"];
+            meta: components["schemas"]["Meta"];
+        };
+        StartScenarioRequest: {
+            /** @enum {string} */
+            scenario: "idle" | "weekday" | "weekend_peak" | "fill_to_full" | "sensor_drift" | "reservation_arrivals" | "no_show";
+            /** Format: int64 */
+            seed?: number;
+            /** @default 30 */
+            speed: number;
+            /** Format: date-time */
+            start_at?: string;
+        };
+        StopScenarioRequest: {
+            /** @default false */
+            drain: boolean;
+        };
+        InjectCarRequest: {
+            /** @enum {string} */
+            credential: "ticket" | "employee_card";
+            /** @description An employee card label. Only with `employee_card`. */
+            card?: string;
+            /** @default false */
+            hold: boolean;
+            dwell_minutes?: number;
+        };
+        InjectCarResponse: {
+            /** @example car-000001 */
+            car_id: string;
+        };
+        LeaveCarRequest: {
+            /** @default false */
+            lose_ticket: boolean;
+        };
+        SensorFaultRequest: {
+            /** @enum {string} */
+            fault: "stuck_occupied" | "stuck_free" | "silent" | "none";
+        };
+        SimulatorEvent: {
+            /** Format: int64 */
+            seq: number;
+            /** Format: date-time */
+            at: string;
+            device: string;
+            type: string;
+            result: string;
+            reason?: string;
+            car_id?: string;
+        };
         Health: {
             /** @constant */
             status: "ok";
@@ -999,6 +1209,27 @@ export interface components {
         };
     };
     responses: {
+        /** @description The `X-Simulator-Token` header is missing or wrong. */
+        SimulatorUnauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "simulator.unauthorized",
+                 *         "message": "simulator unauthorized",
+                 *         "details": {}
+                 *       },
+                 *       "meta": {
+                 *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
         /** @description Request accepted. The answer is the same whether or not the account exists. */
         Accepted: {
             headers: {
@@ -1228,6 +1459,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description Simulator car id, for example `car-000001`. */
+        CarId: string;
         /** @description Device public id (uuid). */
         DeviceId: string;
         /** @description Signing time, RFC 3339 UTC with `Z`, within 60 s of the server clock. Used verbatim in the canonical string. */
@@ -2425,6 +2658,307 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSimulatorStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current scenario state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulatorStatusResponse"];
+                };
+            };
+            401: components["responses"]["SimulatorUnauthorized"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    startSimulatorScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "scenario": "weekday",
+                 *       "seed": 42,
+                 *       "speed": 30,
+                 *       "start_at": "2026-11-24T11:00:00Z"
+                 *     }
+                 */
+                "application/json": components["schemas"]["StartScenarioRequest"];
+            };
+        };
+        responses: {
+            /** @description The scenario was started. The body is the new state. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulatorStatusResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SimulatorUnauthorized"];
+            /** @description A scenario is already running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "simulator.already_running",
+                     *         "message": "scenario already running",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            415: components["responses"]["UnsupportedMediaType"];
+            /** @description Input validation failed (`validation.failed`), or the scenario is not available in M2 (`simulator.scenario_unavailable`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    stopSimulatorScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "drain": true
+                 *     }
+                 */
+                "application/json": components["schemas"]["StopScenarioRequest"];
+            };
+        };
+        responses: {
+            /** @description The scenario is stopping. The body is the new state. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulatorStatusResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SimulatorUnauthorized"];
+            /** @description No scenario is running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "simulator.not_running",
+                     *         "message": "scenario not running",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    injectSimulatorCar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "credential": "ticket",
+                 *       "hold": true
+                 *     }
+                 */
+                "application/json": components["schemas"]["InjectCarRequest"];
+            };
+        };
+        responses: {
+            /** @description The car was injected. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["InjectCarResponse"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SimulatorUnauthorized"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    leaveSimulatorCar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Simulator car id, for example `car-000001`. */
+                car_id: components["parameters"]["CarId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "lose_ticket": false
+                 *     }
+                 */
+                "application/json": components["schemas"]["LeaveCarRequest"];
+            };
+        };
+        responses: {
+            /** @description The car will leave. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SimulatorUnauthorized"];
+            /** @description There is no such car. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "simulator.car_not_found",
+                     *         "message": "car not found",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    setSimulatorSensorFault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Space code, for example `A-001`. */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "fault": "stuck_occupied"
+                 *     }
+                 */
+                "application/json": components["schemas"]["SensorFaultRequest"];
+            };
+        };
+        responses: {
+            /** @description The fault was set. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SimulatorUnauthorized"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSimulatorEvents: {
+        parameters: {
+            query?: {
+                /** @description Return only entries with a `seq` greater than this. Default 0. */
+                after?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 500 entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SimulatorEvent"][];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            401: components["responses"]["SimulatorUnauthorized"];
+            422: components["responses"]["ValidationFailed"];
             500: components["responses"]["InternalError"];
         };
     };

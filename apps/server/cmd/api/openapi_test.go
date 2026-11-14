@@ -14,6 +14,7 @@ import (
 type operation struct {
 	id      string
 	pending string
+	service string // path-level x-mypark-service; empty means this API
 }
 
 // loadOperations returns every documented operation keyed "METHOD /path".
@@ -31,13 +32,14 @@ func loadOperations(t *testing.T) map[string]operation {
 	}
 	ops := map[string]operation{}
 	for path, item := range doc.Paths {
+		service, _ := item["x-mypark-service"].(string)
 		for method, v := range item {
 			switch method {
 			case "get", "put", "post", "delete", "options", "head", "patch", "trace":
 			default:
 				continue
 			}
-			var op operation
+			op := operation{service: service}
 			if m, ok := v.(map[string]any); ok {
 				op.id, _ = m["operationId"].(string)
 				op.pending, _ = m["x-mypark-pending"].(string)
@@ -61,13 +63,16 @@ func servedRoutes() map[string]bool {
 // The OpenAPI document and the route registry describe the same set of
 // operations: a route without a documented operation, or the reverse, fails.
 //
+// A path carrying x-mypark-service: simulator belongs to the simulator control
+// API (M2C-49), not to this router, and is skipped here.
+//
 // An operation carrying x-mypark-pending (a slice id) is published ahead of its
 // implementation (contract first, M2C-12) and is skipped here until that slice
 // serves it and removes the marker.
 func TestOpenAPI_CoversRegisteredRoutes(t *testing.T) {
 	documented := map[string]bool{}
 	for key, op := range loadOperations(t) {
-		if op.pending != "" {
+		if op.pending != "" || op.service == "simulator" {
 			continue
 		}
 		documented[key] = true
@@ -130,6 +135,36 @@ func TestOpenAPI_PendingOperationsAreNotServed(t *testing.T) {
 		}
 		if served[key] {
 			t.Errorf("%s is served but still marked x-mypark-pending", key)
+		}
+	}
+}
+
+// The simulator control paths live in the same document but are served by
+// another process. They must exist and be tagged, so the API parity test can
+// skip them without hiding a real undocumented route.
+func TestOpenAPI_SimulatorPathsSkippedByAPI(t *testing.T) {
+	var control []string
+	for key, op := range loadOperations(t) {
+		_, path, _ := strings.Cut(key, " ")
+		if !strings.HasPrefix(path, "/control/") {
+			if op.service == "simulator" {
+				t.Errorf("%s is tagged simulator but is not under /control/", key)
+			}
+			continue
+		}
+		control = append(control, key)
+		if op.service != "simulator" {
+			t.Errorf("%s must carry x-mypark-service: simulator", key)
+		}
+	}
+	if len(control) < 7 {
+		t.Errorf("want at least 7 operations under /control/, got %d: %v", len(control), control)
+	}
+
+	served := servedRoutes()
+	for _, key := range control {
+		if served[key] {
+			t.Errorf("%s is a simulator route but the API serves it", key)
 		}
 	}
 }

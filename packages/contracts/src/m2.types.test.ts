@@ -94,3 +94,33 @@ test('DeviceEventResult.result is ack|open|deny|rejected', () => {
   expectTypeOf<Schemas['DeviceEventResult']['result']>().toEqualTypeOf<'ack' | 'open' | 'deny' | 'rejected'>();
   expectTypeOf<Schemas['DeviceEventResult']['breakdown']>().toEqualTypeOf<Schemas['FeeBreakdown'] | undefined>();
 });
+
+test('every simulator control path exists', () => {
+  expectTypeOf<paths['/control/status']['get']>().not.toBeNever();
+  expectTypeOf<paths['/control/scenarios/start']['post']>().not.toBeNever();
+  expectTypeOf<paths['/control/scenarios/stop']['post']>().not.toBeNever();
+  expectTypeOf<paths['/control/cars']['post']>().not.toBeNever();
+  expectTypeOf<paths['/control/cars/{car_id}/leave']['post']>().not.toBeNever();
+  expectTypeOf<paths['/control/sensors/{code}/fault']['post']>().not.toBeNever();
+  expectTypeOf<paths['/control/events']['get']>().not.toBeNever();
+});
+
+test('StartScenarioRequest.scenario lists the seven scenario names', () => {
+  expectTypeOf<Schemas['StartScenarioRequest']['scenario']>().toEqualTypeOf<
+    | 'idle'
+    | 'weekday'
+    | 'weekend_peak'
+    | 'fill_to_full'
+    | 'sensor_drift'
+    | 'reservation_arrivals'
+    | 'no_show'
+  >();
+});
+
+test('InjectCarRequest and SensorFaultRequest use the design 13.3 enums', () => {
+  expectTypeOf<Schemas['InjectCarRequest']['credential']>().toEqualTypeOf<'ticket' | 'employee_card'>();
+  expectTypeOf<Schemas['SensorFaultRequest']['fault']>().toEqualTypeOf<
+    'stuck_occupied' | 'stuck_free' | 'silent' | 'none'
+  >();
+  expectTypeOf<Schemas['InjectCarResponse']['car_id']>().toEqualTypeOf<string>();
+});

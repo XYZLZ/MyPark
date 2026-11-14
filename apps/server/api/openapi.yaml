@@ -28,6 +28,8 @@ tags:
     description: Admin user management.
   - name: devices
     description: Signed device events from the parking hardware.
+  - name: simulator
+    description: Control API of the device simulator (compose-internal, served by the simulator service).
 paths:
   /healthz:
     get:
@@ -1040,8 +1042,350 @@ paths:
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /control/status:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    get:
+      operationId: getSimulatorStatus
+      summary: Read the simulator state
+      description: >-
+        The simulator control API is compose-internal (M2C-46): it is served by
+        the simulator service on port 8090, not by this API, and is reached by
+        admins only through the web BFF. Every operation requires
+        `X-Simulator-Token`.
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      responses:
+        "200":
+          description: The current scenario state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulatorStatusResponse" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /control/scenarios/start:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    post:
+      operationId: startSimulatorScenario
+      summary: Start a scenario
+      description: >-
+        Starts one scenario. `reservation_arrivals` and `no_show` are not
+        available in M2 (M2C-1) and are answered 422
+        `simulator.scenario_unavailable`. The body is strictly decoded: unknown
+        fields are 422 `validation.failed` with rule `unknown_field`, a wrong
+        JSON type is 400 `http.invalid_json` and a body that is not
+        `application/json` is 415.
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartScenarioRequest" }
+            example: { scenario: weekday, seed: 42, speed: 30, start_at: "2026-11-24T11:00:00Z" }
+      responses:
+        "202":
+          description: The scenario was started. The body is the new state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulatorStatusResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "409":
+          description: A scenario is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: simulator.already_running, message: scenario already running, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422":
+          description: >-
+            Input validation failed (`validation.failed`), or the scenario is
+            not available in M2 (`simulator.scenario_unavailable`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                validationFailed:
+                  summary: A field is invalid or unknown.
+                  value:
+                    error:
+                      code: validation.failed
+                      message: validation failed
+                      details: { fields: [{ field: speed, rule: max, param: "120" }] }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+                scenarioUnavailable:
+                  summary: The scenario is not built in M2.
+                  value:
+                    error: { code: simulator.scenario_unavailable, message: scenario unavailable, details: {} }
+                    meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /control/scenarios/stop:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    post:
+      operationId: stopSimulatorScenario
+      summary: Stop the running scenario
+      description: >-
+        With `drain` true, every car inside is scheduled to leave and the
+        scenario completes when they are gone. The body is strictly decoded
+        (see `startSimulatorScenario`).
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StopScenarioRequest" }
+            example: { drain: true }
+      responses:
+        "202":
+          description: The scenario is stopping. The body is the new state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulatorStatusResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "409":
+          description: No scenario is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: simulator.not_running, message: scenario not running, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /control/cars:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    post:
+      operationId: injectSimulatorCar
+      summary: Inject one car
+      description: >-
+        Sends one car through the lot. "Present an employee card" is
+        `credential: employee_card`. A `hold` car parks until
+        `leaveSimulatorCar` is called, which is how the demo shows a real
+        non-zero fee. Injected cars run under the current scenario clock, or
+        the real clock at speed 1 when idle. The body is strictly decoded (see
+        `startSimulatorScenario`).
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InjectCarRequest" }
+            example: { credential: ticket, hold: true }
+      responses:
+        "202":
+          description: The car was injected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/InjectCarResponse" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /control/cars/{car_id}/leave:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    post:
+      operationId: leaveSimulatorCar
+      summary: Make a held car leave
+      description: >-
+        The car scans, pays and exits. "Mark ticket lost" is `lose_ticket`
+        true. The body is strictly decoded (see `startSimulatorScenario`).
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      parameters:
+        - $ref: "#/components/parameters/CarId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LeaveCarRequest" }
+            example: { lose_ticket: false }
+      responses:
+        "202": { description: The car will leave. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "404":
+          description: There is no such car.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: simulator.car_not_found, message: car not found, details: {} }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /control/sensors/{code}/fault:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    post:
+      operationId: setSimulatorSensorFault
+      summary: Set a sensor fault
+      description: >-
+        `none` clears the fault. The body is strictly decoded (see
+        `startSimulatorScenario`).
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Space code, for example `A-001`.
+          schema: { type: string, minLength: 1, maxLength: 32 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SensorFaultRequest" }
+            example: { fault: stuck_occupied }
+      responses:
+        "204": { description: The fault was set. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /control/events:
+    servers: [{ url: "http://simulator:8090" }]
+    x-mypark-service: simulator
+    get:
+      operationId: listSimulatorEvents
+      summary: List recent device outcomes
+      description: >-
+        A ring buffer of the last 500 device outcomes, oldest first. The
+        console polls it with `after` set to the last `seq` it has seen.
+      tags: [simulator]
+      security: [{ simulatorToken: [] }]
+      x-mypark-pending: S13.2
+      parameters:
+        - name: after
+          in: query
+          required: false
+          description: Return only entries with a `seq` greater than this. Default 0.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Up to 500 entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    maxItems: 500
+                    items: { $ref: "#/components/schemas/SimulatorEvent" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
 components:
   schemas:
+    SimulatorStatus:
+      type: object
+      additionalProperties: false
+      required: [scenario, running, seed, speed, virtual_now, cars_inside, reached_full]
+      properties:
+        scenario:
+          description: The current or last scenario. Empty when none has run.
+          type: string
+          enum: ["", idle, weekday, weekend_peak, fill_to_full, sensor_drift, reservation_arrivals, no_show]
+        running: { type: boolean }
+        seed: { type: integer, format: int64, minimum: 0 }
+        speed: { type: integer, minimum: 1, maximum: 120 }
+        virtual_now: { type: string, format: date-time }
+        cars_inside: { type: integer, minimum: 0 }
+        started_at:
+          description: Absent until a scenario has started.
+          type: string
+          format: date-time
+        reached_full: { type: boolean }
+    SimulatorStatusResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/SimulatorStatus" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    StartScenarioRequest:
+      type: object
+      additionalProperties: false
+      required: [scenario]
+      properties:
+        scenario:
+          type: string
+          enum: [idle, weekday, weekend_peak, fill_to_full, sensor_drift, reservation_arrivals, no_show]
+        seed: { type: integer, format: int64, minimum: 0 }
+        speed: { type: integer, minimum: 1, maximum: 120, default: 30 }
+        start_at: { type: string, format: date-time }
+    StopScenarioRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        drain: { type: boolean, default: false }
+    InjectCarRequest:
+      type: object
+      additionalProperties: false
+      required: [credential]
+      properties:
+        credential: { type: string, enum: [ticket, employee_card] }
+        card:
+          description: An employee card label. Only with `employee_card`.
+          type: string
+          pattern: '^EMP-[0-9]{3}$'
+        hold: { type: boolean, default: false }
+        dwell_minutes: { type: integer, minimum: 1, maximum: 600 }
+    InjectCarResponse:
+      type: object
+      additionalProperties: false
+      required: [car_id]
+      properties:
+        car_id: { type: string, example: car-000001 }
+    LeaveCarRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        lose_ticket: { type: boolean, default: false }
+    SensorFaultRequest:
+      type: object
+      additionalProperties: false
+      required: [fault]
+      properties:
+        fault: { type: string, enum: [stuck_occupied, stuck_free, silent, none] }
+    SimulatorEvent:
+      type: object
+      additionalProperties: false
+      required: [seq, at, device, type, result]
+      properties:
+        seq: { type: integer, format: int64, minimum: 1 }
+        at: { type: string, format: date-time }
+        device: { type: string }
+        type: { type: string }
+        result: { type: string }
+        reason: { type: string }
+        car_id: { type: string }
     Health:
       type: object
       additionalProperties: false
@@ -1680,6 +2024,12 @@ components:
         paid_at: { type: string, format: date-time }
         exit_deadline: { type: string, format: date-time }
   parameters:
+    CarId:
+      name: car_id
+      in: path
+      required: true
+      description: Simulator car id, for example `car-000001`.
+      schema: { type: string, pattern: '^car-[0-9]{6,}$' }
     DeviceId:
       name: X-Device-Id
       in: header
@@ -1705,6 +2055,13 @@ components:
       description: Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found.
       schema: { type: string, format: uuid }
   securitySchemes:
+    simulatorToken:
+      type: apiKey
+      in: header
+      name: X-Simulator-Token
+      description: >-
+        Shared secret of the simulator control API, compared in constant time.
+        A missing or wrong value is 401 `simulator.unauthorized`.
     bearerAuth:
       type: http
       scheme: bearer
@@ -1731,6 +2088,14 @@ components:
       name: X-Signature
       description: Lowercase hex HMAC-SHA256 of the canonical string. Part of the `deviceHmac` requirement.
   responses:
+    SimulatorUnauthorized:
+      description: The `X-Simulator-Token` header is missing or wrong.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: simulator.unauthorized, message: simulator unauthorized, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
     Accepted:
       description: Request accepted. The answer is the same whether or not the account exists.
       content:
