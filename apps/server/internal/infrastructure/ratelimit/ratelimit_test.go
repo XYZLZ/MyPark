@@ -60,3 +60,39 @@ func TestIPKey_InvalidAddrUsesFixedKey(t *testing.T) {
 		t.Errorf("IPKey(mapped) = %q, want unmapped", got)
 	}
 }
+
+func TestRules_M1RulesStayShared(t *testing.T) {
+	for _, r := range []ratelimit.Rule{
+		ratelimit.LoginIPEmail, ratelimit.LoginEmail, ratelimit.RegisterIP, ratelimit.CodeRequestIP,
+		ratelimit.CodeRequestEmail, ratelimit.CodeSubmitIP, ratelimit.RefreshIP,
+		ratelimit.VehicleWriteUser, ratelimit.DeleteAccountUser,
+	} {
+		if r.Scope != ratelimit.ScopeShared {
+			t.Errorf("%s scope = %d, want ScopeShared", r.Name, r.Scope)
+		}
+	}
+	if ratelimit.ScopeShared != 0 {
+		t.Error("ScopeShared must be the zero value")
+	}
+}
+
+func TestRules_M2LocalRules(t *testing.T) {
+	tests := []struct {
+		rule   ratelimit.Rule
+		name   string
+		limit  int
+		window time.Duration
+		prefix string
+	}{
+		{ratelimit.DeviceIP, "device_ip", 1000, time.Second, "dev_ip:"},
+		{ratelimit.PublicReadIP, "public_read_ip", 120, time.Minute, "pub:"},
+		{ratelimit.SSEConnectIP, "sse_connect_ip", 30, time.Minute, "sse:"},
+	}
+	for _, tc := range tests {
+		r := tc.rule
+		if r.Name != tc.name || r.Limit != tc.limit || r.Window != tc.window || r.Prefix != tc.prefix ||
+			r.Key != ratelimit.KeyIP || r.Scope != ratelimit.ScopeLocal || r.FailOpen {
+			t.Errorf("%s = %+v", tc.name, r)
+		}
+	}
+}

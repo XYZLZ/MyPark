@@ -34,3 +34,16 @@ func TestParseRole(t *testing.T) {
 		t.Error("root accepted")
 	}
 }
+
+func TestDeviceKinds(t *testing.T) {
+	want := map[authz.DeviceKind]string{
+		authz.DevicePodium: "podium", authz.DeviceDispenser: "dispenser",
+		authz.DeviceEntryBarrier: "entry_barrier", authz.DeviceExitBarrier: "exit_barrier",
+		authz.DevicePayStation: "pay_station", authz.DeviceSensorGateway: "sensor_gateway",
+	}
+	for k, s := range want {
+		if string(k) != s {
+			t.Errorf("%q != %q", k, s)
+		}
+	}
+}

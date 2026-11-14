@@ -30,7 +30,22 @@ type Rule struct {
 	Prefix string
 	// FailOpen allows the request when the limiter errors; otherwise it fails closed.
 	FailOpen bool
+	// Scope picks the backing store. The zero value is ScopeShared, so every
+	// rule that does not opt in stays on Postgres.
+	Scope Scope
 }
+
+// Scope says which Limiter backs a Rule.
+type Scope int
+
+const (
+	// ScopeShared counts across every API instance (Postgres).
+	ScopeShared Scope = iota
+	// ScopeLocal counts per API instance in memory (Memory): cheap, but N
+	// instances allow up to N times the limit. Only for rules that guard
+	// capacity, not abuse that needs an exact global count.
+	ScopeLocal
+)
 
 // Decision is the outcome of a limiter check.
 type Decision struct {

@@ -51,3 +51,15 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(ctxKey{}).(Principal)
 	return p, ok
 }
+
+// DeviceKind is the kind of a parking-lot device (design §6.2).
+type DeviceKind string
+
+const (
+	DevicePodium        DeviceKind = "podium"
+	DeviceDispenser     DeviceKind = "dispenser"
+	DeviceEntryBarrier  DeviceKind = "entry_barrier"
+	DeviceExitBarrier   DeviceKind = "exit_barrier"
+	DevicePayStation    DeviceKind = "pay_station"
+	DeviceSensorGateway DeviceKind = "sensor_gateway"
+)

@@ -119,7 +119,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		// Argon2id with the spec 7.1 parameters; at most 4 derivations at once.
 		hasher:  hashing.NewArgon2id(hashing.DefaultParams, maxConcurrentHashes),
 		codes:   codes,
-		limiter: ratelimit.NewPostgres(pool, clock.System{}),
+		limiter: ratelimit.NewComposite(ratelimit.NewPostgres(pool, clock.System{}), ratelimit.NewMemory(clock.System{})),
 		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
 	}
 	srv := httpserver.New(cfg.HTTPAddr(), newHandler(d), log)

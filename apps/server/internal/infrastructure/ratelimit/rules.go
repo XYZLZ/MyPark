@@ -18,3 +18,12 @@ var (
 // password, so a stolen access token must not be able to brute-force it. It
 // fails closed. Not in spec 10.1: recorded as a spec update (A20 ruling).
 var DeleteAccountUser = Rule{Name: "delete_account_user", Limit: 5, Window: 15 * time.Minute, Key: KeyUser, Prefix: "delme:"}
+
+// M2 rules (design §7.6, M2C-5/M2C-22). They guard capacity on hot paths and
+// run in the per-instance Memory limiter (ScopeLocal), so with N instances the
+// effective limit is up to N times the value here.
+var (
+	DeviceIP     = Rule{Name: "device_ip", Limit: 1000, Window: time.Second, Key: KeyIP, Prefix: "dev_ip:", Scope: ScopeLocal}
+	PublicReadIP = Rule{Name: "public_read_ip", Limit: 120, Window: time.Minute, Key: KeyIP, Prefix: "pub:", Scope: ScopeLocal}
+	SSEConnectIP = Rule{Name: "sse_connect_ip", Limit: 30, Window: time.Minute, Key: KeyIP, Prefix: "sse:", Scope: ScopeLocal}
+)
