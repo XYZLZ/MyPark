@@ -3,6 +3,7 @@ package devices
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/reqctx"
@@ -85,6 +87,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			httpx.WriteError(w, r, a.log, apperr.New(apperr.KindBadRequest, errcodes.HTTPInvalidJSON).Wrap(err))
 			return
 		}
+		// r.RequestURI is the request-target exactly as sent; r.URL.RequestURI() re-encodes it, so a valid signature over the raw query could fail.
 		canonical := devicesig.Canonical(r.Method, r.RequestURI, ts, raw)
 
 		rec, err := a.reg.DeviceByPublicID(r.Context(), id)
@@ -146,7 +149,9 @@ func (a *Authenticator) refuse(w http.ResponseWriter, r *http.Request, claimed u
 	a.log.WarnContext(r.Context(), "device auth failed",
 		"claimed_device_id", claimedID,
 		"reason", reason,
-		"client_ip", reqctx.ClientIP(r.Context()).String())
+		// Never the raw IP: the rate limiter's hash of the device_ip bucket key,
+		// so it matches that rule's throttle logs (key_hash).
+		"client_ip_hash", hex.EncodeToString(ratelimit.HashKey(ratelimit.DeviceIP, ratelimit.IPKey(reqctx.ClientIP(r.Context())))))
 	httpx.WriteError(w, r, a.log, apperr.Unauthenticated(code))
 }
 

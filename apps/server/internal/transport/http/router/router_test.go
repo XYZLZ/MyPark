@@ -232,6 +232,7 @@ func TestHandle_PanicsOnBadDevicePolicy(t *testing.T) {
 		{"device+limit", devPath, router.Policy{Device: true, Limit: &ratelimit.DeviceIP}, nil, "Limit"},
 		{"device off /v1/devices/", "POST /v1/lots", router.Policy{Device: true}, nil, "/v1/devices/"},
 		{"device prefix lookalike", "POST /v1/devicesx", router.Policy{Device: true}, nil, "/v1/devices/"},
+		{"nil ClientIP", devPath, router.Policy{Device: true}, func(m *router.Middlewares) { m.ClientIP = nil }, "ClientIP"},
 		{"nil DeviceAuth", devPath, router.Policy{Device: true}, func(m *router.Middlewares) { m.DeviceAuth = nil }, "DeviceAuth"},
 		{"nil RateLimit", devPath, router.Policy{Device: true}, func(m *router.Middlewares) { m.RateLimit = nil }, "RateLimit"},
 		{"zero DeviceLimit", devPath, router.Policy{Device: true}, func(m *router.Middlewares) { m.DeviceLimit = ratelimit.Rule{} }, "DeviceLimit"},

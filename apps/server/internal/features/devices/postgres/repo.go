@@ -1,4 +1,4 @@
-// Package postgres implements devices.Repository over sqlc.
+// Package postgres implements devices.Registry over sqlc.
 package postgres
 
 import (
@@ -13,27 +13,31 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
-	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
-	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 )
 
-// Repo is the Postgres-backed devices.Repository. It uses the transaction in
-// the context when there is one, otherwise the pool.
+// Repo is the Postgres-backed devices.Registry. It uses the transaction in
+// the context when there is one, otherwise the pool. It never opens a device
+// secret: the authenticator does, only for an active device.
 type Repo struct {
-	pool   *pgxpool.Pool
-	sealer *secretbox.Sealer
+	pool *pgxpool.Pool
 }
 
-var (
-	_ devices.Repository = (*Repo)(nil)
-	_ devices.Registry   = (*Repo)(nil)
-)
+var _ devices.Registry = (*Repo)(nil)
+
+// NewRepo returns a Repo over pool.
+func NewRepo(pool *pgxpool.Pool) *Repo {
+	return &Repo{pool: pool}
+}
+
+func (r *Repo) q(ctx context.Context) *dbgen.Queries {
+	return dbgen.New(database.Conn(ctx, r.pool))
+}
 
 // DeviceByPublicID implements devices.Registry: the row with its secret still
-// sealed, so the authenticator decides when to open it.
+// sealed. Any status other than active counts as revoked (fail closed).
 func (r *Repo) DeviceByPublicID(ctx context.Context, id uuid.UUID) (devices.Record, error) {
 	row, err := r.q(ctx).GetDeviceByPublicID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -52,36 +56,7 @@ func (r *Repo) DeviceByPublicID(ctx context.Context, id uuid.UUID) (devices.Reco
 	return rec, nil
 }
 
-// NewRepo returns a Repo that opens device secrets with sealer.
-func NewRepo(pool *pgxpool.Pool, sealer *secretbox.Sealer) *Repo {
-	return &Repo{pool: pool, sealer: sealer}
-}
-
-func (r *Repo) q(ctx context.Context) *dbgen.Queries {
-	return dbgen.New(database.Conn(ctx, r.pool))
-}
-
-// GetByPublicID implements devices.Repository. A secret that cannot be opened
-// is an error, never a device with an empty secret.
-func (r *Repo) GetByPublicID(ctx context.Context, publicID uuid.UUID) (devices.Device, error) {
-	row, err := r.q(ctx).GetDeviceByPublicID(ctx, publicID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return devices.Device{}, devices.ErrNotFound
-	}
-	if err != nil {
-		return devices.Device{}, fmt.Errorf("devices: get by public id: %w", err)
-	}
-	plain, err := r.sealer.Open(row.SecretCiphertext, row.SecretKeyID)
-	if err != nil {
-		return devices.Device{}, fmt.Errorf("devices: open secret of %s: %w", publicID, err)
-	}
-	return devices.Device{
-		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, Kind: authz.DeviceKind(row.Kind),
-		Name: row.Name, Status: row.Status, Secret: secret.Bytes(plain),
-	}, nil
-}
-
-// TouchLastSeen implements devices.Repository.
+// TouchLastSeen implements devices.Registry.
 func (r *Repo) TouchLastSeen(ctx context.Context, id int64, now time.Time) error {
 	err := r.q(ctx).TouchDeviceLastSeen(ctx, dbgen.TouchDeviceLastSeenParams{
 		ID: id, Now: pgtype.Timestamptz{Time: now, Valid: true},

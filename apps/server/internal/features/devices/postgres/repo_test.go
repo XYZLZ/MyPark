@@ -3,7 +3,6 @@ package postgres_test
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -19,7 +18,9 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
-func TestRepo_GetByPublicIDOpensSecretAndTouchThrottles(t *testing.T) {
+// A seeded fleet device comes back sealed, and its sealed secret opens to the
+// secret derived from the fleet secret. The touch is throttled in SQL too.
+func TestRepo_SeededDeviceOpensToDerivedSecretAndTouchThrottles(t *testing.T) {
 	db := testsupport.NewTestDB(t)
 	lotID := testsupport.SeedPilotLot(t, db)
 	s, err := secretbox.NewSealer(secretbox.Key{ID: "k1", Secret: [32]byte(bytes.Repeat([]byte{1}, 32))})
@@ -30,24 +31,22 @@ func TestRepo_GetByPublicIDOpensSecretAndTouchThrottles(t *testing.T) {
 	if _, err := devices.SeedFleet(t.Context(), dbgen.New(db.App), s, lotID, fleet); err != nil {
 		t.Fatal(err)
 	}
-	repo := devpg.NewRepo(db.App, s)
+	repo := devpg.NewRepo(db.App)
 	pod := devicefleet.ByKind(authz.DevicePodium)
 
-	got, err := repo.GetByPublicID(t.Context(), pod.PublicID)
+	got, err := repo.DeviceByPublicID(t.Context(), pod.PublicID)
 	if err != nil {
-		t.Fatalf("GetByPublicID: %v", err)
+		t.Fatalf("DeviceByPublicID: %v", err)
 	}
-	if got.Kind != authz.DevicePodium || got.LotID != lotID || !got.Active() {
-		t.Errorf("device = %+v", got)
+	if got.Kind != authz.DevicePodium || got.LotID != lotID || got.Revoked {
+		t.Errorf("record = %+v", got)
 	}
-	if !bytes.Equal(got.Secret.Reveal(), devicefleet.DeviceSecret(fleet, pod.PublicID).Reveal()) {
-		t.Error("opened secret differs from the derived one")
+	derived := devicefleet.DeviceSecret(fleet, pod.PublicID).Reveal()
+	if bytes.Contains(got.SecretCiphertext, derived) {
+		t.Error("record carries the plain secret")
 	}
-	if out := fmt.Sprintf("%v %+v %#v", got, got, got); bytes.Contains([]byte(out), got.Secret.Reveal()) {
-		t.Error("formatting a Device leaks the secret")
-	}
-	if _, err := repo.GetByPublicID(t.Context(), uuid.New()); !errors.Is(err, devices.ErrNotFound) {
-		t.Errorf("unknown id error = %v, want ErrNotFound", err)
+	if plain, err := s.Open(got.SecretCiphertext, got.SecretKeyID); err != nil || !bytes.Equal(plain, derived) {
+		t.Errorf("sealed secret does not open to the derived one: %v", err)
 	}
 
 	t0 := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -71,30 +70,12 @@ func TestRepo_GetByPublicIDOpensSecretAndTouchThrottles(t *testing.T) {
 	}
 }
 
-func TestRepo_UnopenableSecretIsAnError(t *testing.T) {
-	db := testsupport.NewTestDB(t)
-	lotID := testsupport.SeedPilotLot(t, db)
-	k := func(id string, b byte) secretbox.Key {
-		return secretbox.Key{ID: id, Secret: [32]byte(bytes.Repeat([]byte{b}, 32))}
-	}
-	sealed, _ := secretbox.NewSealer(k("k1", 1))
-	fleet := secret.Bytes(bytes.Repeat([]byte{7}, 32))
-	if _, err := devices.SeedFleet(t.Context(), dbgen.New(db.App), sealed, lotID, fleet); err != nil {
-		t.Fatal(err)
-	}
-	other, _ := secretbox.NewSealer(k("k2", 2))
-	_, err := devpg.NewRepo(db.App, other).GetByPublicID(t.Context(), devicefleet.Devices()[0].PublicID)
-	if err == nil {
-		t.Fatal("GetByPublicID with the wrong keyring succeeded")
-	}
-}
-
 func TestRepo_DeviceByPublicIDReturnsSealedRecord(t *testing.T) {
 	db := testsupport.NewTestDB(t)
 	lotID := testsupport.SeedPilotLot(t, db)
 	s := testsupport.TestSealer(t)
 	dev := testsupport.NewTestDevice(t, db, s, lotID, authz.DeviceExitBarrier)
-	repo := devpg.NewRepo(db.App, s)
+	repo := devpg.NewRepo(db.App)
 
 	var reg devices.Registry = repo
 	rec, err := reg.DeviceByPublicID(t.Context(), dev.PublicID)

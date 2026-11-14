@@ -179,7 +179,7 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	authRepo := authpg.NewRepo(d.pool)
 	verifier := jwt.NewVerifier(d.cfg.JWTVerifyKeys(), d.clock)
 	gates := authn.New(auth.NewAuthenticator(verifier, authRepo, legalSvc, d.clock), d.log, authn.WithLegal(legalSvc))
-	deviceAuth := devices.NewAuthenticator(devicespg.NewRepo(d.pool, d.sealer), d.sealer, d.clock, d.log)
+	deviceAuth := devices.NewAuthenticator(devicespg.NewRepo(d.pool), d.sealer, d.clock, d.log)
 	r := router.New(mux, router.Middlewares{
 		ClientIP:    middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
 		RateLimit:   middleware.RateLimit(d.limiter, d.log),

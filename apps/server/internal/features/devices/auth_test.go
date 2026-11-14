@@ -160,7 +160,7 @@ func TestDeviceAuth_Valid(t *testing.T) {
 	lotID := testsupport.SeedPilotLot(t, db)
 	s := testsupport.TestSealer(t)
 	dev := testsupport.NewTestDevice(t, db, s, lotID, authz.DevicePayStation)
-	f := newFixture(t, devpg.NewRepo(db.App, s), s)
+	f := newFixture(t, devpg.NewRepo(db.App), s)
 
 	rec := f.serve(dev.Request(t, eventsURI+"?trace=1", body, t0))
 	if rec.Code != http.StatusOK || !f.seen.called {
@@ -313,7 +313,7 @@ func TestDeviceAuth_TouchLastSeenThrottled(t *testing.T) {
 	lotID := testsupport.SeedPilotLot(t, db)
 	s := testsupport.TestSealer(t)
 	dev := testsupport.NewTestDevice(t, db, s, lotID, authz.DeviceSensorGateway)
-	f := newFixture(t, devpg.NewRepo(db.App, s), s)
+	f := newFixture(t, devpg.NewRepo(db.App), s)
 	lastSeen := func() time.Time {
 		var ts time.Time
 		if err := db.App.QueryRow(t.Context(), "select last_seen_at from devices where id = $1", dev.ID).Scan(&ts); err != nil {
@@ -348,6 +348,43 @@ func TestDeviceAuth_TouchFailureIsBestEffort(t *testing.T) {
 	}
 }
 
+// The Go-side throttle skips the write while last_seen_at is fresh, so a
+// busy device does not run an UPDATE per request.
+func TestDeviceAuth_TouchSkippedWhileRecent(t *testing.T) {
+	s := testsupport.TestSealer(t)
+	for _, tc := range []struct {
+		age     time.Duration
+		touches int
+	}{{10 * time.Second, 0}, {30 * time.Second, 0}, {31 * time.Second, 1}} {
+		reg := &fakeRegistry{}
+		dev := reg.addDevice(t, s, authz.DevicePodium, false)
+		rec := reg.recs[dev.PublicID]
+		rec.LastSeenAt = t0.Add(-tc.age)
+		reg.recs[dev.PublicID] = rec
+		f := newFixture(t, reg, s)
+		if r := f.serve(dev.Request(t, eventsURI, body, t0)); r.Code != http.StatusOK || len(reg.touches) != tc.touches {
+			t.Errorf("last seen %v ago: status %d, touches %d; want 200 and %d", tc.age, r.Code, len(reg.touches), tc.touches)
+		}
+	}
+}
+
+// A secret sealed under the right key id but other key bytes (a wrong
+// SECRETBOX_KEY) is a 500 through the real repository, never a 401 or a pass.
+func TestDeviceAuth_WrongKeyringIs500(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	dev := testsupport.NewTestDevice(t, db, testsupport.TestSealer(t), lotID, authz.DevicePodium)
+	wrong, err := secretbox.NewSealer(secretbox.Key{ID: testsupport.TestSealerKey.ID, Secret: [32]byte{7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t, devpg.NewRepo(db.App), wrong)
+	assertRefused(t, f, f.serve(dev.Request(t, eventsURI, body, t0)), http.StatusInternalServerError, "internal.unexpected")
+	if strings.Contains(f.logs.String(), hex.EncodeToString(dev.Secret)) {
+		t.Error("log leaks the device secret")
+	}
+}
+
 func TestDeviceAuth_UnopenableSecretIs500(t *testing.T) {
 	s := testsupport.TestSealer(t)
 	reg := &fakeRegistry{}
@@ -370,6 +407,8 @@ func TestDeviceAuth_LogsReasonNotSecret(t *testing.T) {
 	revoked := reg.addDevice(t, s, authz.DevicePodium, true)
 	unknown := testsupport.TestDevice{PublicID: uuid.New(), Secret: bytes.Repeat([]byte{9}, 32)}
 	var all strings.Builder
+	// The IP is logged only as the rate limiter's hash of its device_ip bucket key.
+	ipHash := hex.EncodeToString(ratelimit.HashKey(ratelimit.DeviceIP, ratelimit.IPKey(netip.MustParseAddr("198.51.100.7"))))
 
 	badSig := dev.Request(t, eventsURI, body, t0)
 	expected := badSig.Header.Get("X-Signature")
@@ -399,13 +438,13 @@ func TestDeviceAuth_LogsReasonNotSecret(t *testing.T) {
 				t.Fatalf("want one log line, got %q", f.logs)
 			}
 			if line["msg"] != "device auth failed" || line["level"] != "WARN" || line["reason"] != tc.reason ||
-				line["claimed_device_id"] != tc.claimed || line["client_ip"] != "198.51.100.7" {
-				t.Errorf("log = %v", line)
+				line["claimed_device_id"] != tc.claimed || line["client_ip_hash"] != ipHash || line["client_ip"] != nil {
+				t.Errorf("log = %v, want client_ip_hash %s and no client_ip", line, ipHash)
 			}
 		})
 	}
 	out := all.String()
-	for _, leak := range []string{hex.EncodeToString(dev.Secret), expected} {
+	for _, leak := range []string{hex.EncodeToString(dev.Secret), expected, "198.51.100.7"} {
 		if strings.Contains(out, leak) {
 			t.Errorf("log leaks %q", leak)
 		}
