@@ -106,3 +106,24 @@ func TestBytes_NeverPrints(t *testing.T) {
 		t.Error("Reveal must return the plaintext")
 	}
 }
+
+func TestSecret_NeverPrintsUnderAnyVerb(t *testing.T) {
+	verbs := []string{"%v", "%+v", "%#v", "%s", "%d", "%x", "%X", "%q", "%c", "%o", "%b", "%U", "%e", "%t", "%10s", "%-10v"}
+	values := map[string]any{
+		"String": secret.String("hunter2-secret"),
+		"Bytes":  secret.Bytes("device-secret-plaintext"),
+	}
+	for name, v := range values {
+		for _, verb := range verbs {
+			got := fmt.Sprintf(verb, v)
+			if !strings.Contains(got, "[redacted]") {
+				t.Errorf("%s %s = %q; want the redaction marker", name, verb, got)
+			}
+			for _, leak := range []string{"hunter2", "device-secret", "104 117", "6875", "6465"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("%s %s leaks %q: %s", name, verb, leak, got)
+				}
+			}
+		}
+	}
+}

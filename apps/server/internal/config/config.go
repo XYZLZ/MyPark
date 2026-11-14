@@ -69,6 +69,7 @@ const (
 const (
 	jwtSeedLen   = ed25519.SeedSize // 32
 	secretboxLen = 32
+	maxKeyIDLen  = 64 // longest key id: JWT_KEY_ID, SECRETBOX_KEY_ID, old key ids
 	minPepperLen = 32
 	redacted     = "[redacted]"
 )
@@ -240,8 +241,8 @@ type rawEnv struct {
 	SecretboxKey        string `env:"SECRETBOX_KEY" validate:"required"`
 	SecretboxKeyID      string `env:"SECRETBOX_KEY_ID" validate:"required,max=64"`
 	CardUIDPepper       string `env:"CARD_UID_PEPPER" validate:"required"`
-	SSEMaxPerIP         int64  `env:"SSE_MAX_PER_IP" validate:"min=1,max=100000"`
-	SSEMaxStreams       int64  `env:"SSE_MAX_STREAMS" validate:"min=1,max=1000000"`
+	SSEMaxPerIP         int64  `env:"SSE_MAX_PER_IP" validate:"min=1,max=1000"`
+	SSEMaxStreams       int64  `env:"SSE_MAX_STREAMS" validate:"min=1,max=100000"`
 	DeviceRateLimitPerS int64  `env:"DEVICE_RATE_LIMIT_PER_S" validate:"min=1,max=10000"`
 }
 
@@ -363,6 +364,9 @@ func Load(getenv func(string) string) (Config, error) {
 		} else if production && bytes.Equal(pepper, devBytes(DevAuthCodePepper)) {
 			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvAuthCodePepper))
 		}
+	}
+	if raw.SSEMaxPerIP > raw.SSEMaxStreams {
+		errs = append(errs, fmt.Errorf("%s must not exceed %s", EnvSSEMaxPerIP, EnvSSEMaxStreams))
 	}
 	var boxKey secretbox.Key
 	var boxOld []secretbox.Key
@@ -494,8 +498,8 @@ func ParseSecretboxKeys(id, key, old string, production bool) (secretbox.Key, []
 		kid, enc, ok := strings.Cut(entry, ":")
 		kid = strings.TrimSpace(kid)
 		b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
-		if !ok || kid == "" || err != nil || len(b) != secretboxLen {
-			return secretbox.Key{}, nil, fmt.Errorf("%s must be comma-separated kid:base64(32-byte key) entries", EnvSecretboxOldKeys)
+		if !ok || kid == "" || len(kid) > maxKeyIDLen || err != nil || len(b) != secretboxLen {
+			return secretbox.Key{}, nil, fmt.Errorf("%s must be comma-separated kid:base64(32-byte key) entries, kid up to %d characters", EnvSecretboxOldKeys, maxKeyIDLen)
 		}
 		if seen[kid] {
 			return secretbox.Key{}, nil, fmt.Errorf("%s repeats a key id", EnvSecretboxOldKeys)

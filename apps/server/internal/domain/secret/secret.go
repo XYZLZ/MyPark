@@ -3,6 +3,8 @@ package secret
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 )
 
@@ -11,6 +13,10 @@ const redacted = "[redacted]"
 // String holds a sensitive value (password, code, token). Every formatting,
 // logging and JSON-encoding path prints "[redacted]"; only Reveal exposes it.
 type String string
+
+// Format implements fmt.Formatter so that every verb (%d, %x, %c, %o...) prints
+// the marker; fmt calls String only for %v, %s, %x, %X and %q.
+func (String) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redacted) }
 
 // Reveal returns the plaintext value.
 func (s String) Reveal() string { return string(s) }
@@ -40,7 +46,15 @@ func (s *String) UnmarshalJSON(b []byte) error {
 // Bytes holds sensitive raw bytes (a decrypted device secret, a key). Every
 // formatting, logging and JSON-encoding path prints "[redacted]"; only Reveal
 // exposes the bytes.
+//
+// Limitation: fmt cannot call methods on unexported struct fields, so a Bytes
+// held in an unexported field of a struct that gets printed (%v, %+v) still
+// shows its raw bytes. Keep secrets out of structs that are logged.
 type Bytes []byte
+
+// Format implements fmt.Formatter so that every verb (%d, %x, %c, %o...) prints
+// the marker; fmt calls String only for %v, %s, %x, %X and %q.
+func (Bytes) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redacted) }
 
 // Reveal returns the plaintext bytes.
 func (b Bytes) Reveal() []byte { return b }

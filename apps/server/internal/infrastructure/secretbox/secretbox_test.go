@@ -107,3 +107,12 @@ func TestNewSealer_RejectsBadIDs(t *testing.T) {
 		t.Error("duplicate old ids accepted")
 	}
 }
+
+func TestNewSealer_RejectsZeroKey(t *testing.T) {
+	if _, err := secretbox.NewSealer(key("k1", 0)); err == nil {
+		t.Error("all-zero current key accepted")
+	}
+	if _, err := secretbox.NewSealer(key("k1", 1), key("k0", 0)); err == nil {
+		t.Error("all-zero old key accepted")
+	}
+}

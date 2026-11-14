@@ -36,12 +36,16 @@ type Sealer struct {
 }
 
 // NewSealer builds a keyring whose current key seals new values and whose old
-// keys only open values sealed earlier. Ids must be non-empty and unique.
+// keys only open values sealed earlier. Ids must be non-empty and unique, and
+// no key may be all zeros (an unset value, never a real key).
 func NewSealer(current Key, old ...Key) (*Sealer, error) {
 	keys := make(map[string]Key, 1+len(old))
 	for _, k := range append([]Key{current}, old...) {
 		if k.ID == "" {
 			return nil, errors.New("secretbox: key id must not be empty")
+		}
+		if k.Secret == ([32]byte{}) {
+			return nil, fmt.Errorf("secretbox: key %q is all zeros", k.ID)
 		}
 		if _, dup := keys[k.ID]; dup {
 			return nil, fmt.Errorf("secretbox: duplicate key id %q", k.ID)

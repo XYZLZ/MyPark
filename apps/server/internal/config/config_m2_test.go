@@ -197,3 +197,37 @@ func TestComposeDefaultsMatchM2DevConstants(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_OldKeyIDLengthBound(t *testing.T) {
+	old := b64(32, 5)
+	long := strings.Repeat("a", 65)
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "SECRETBOX_OLD_KEYS": long + ":" + old}))
+	if err == nil || !strings.Contains(err.Error(), "SECRETBOX_OLD_KEYS") {
+		t.Errorf("65-char old key id: err = %v", err)
+	}
+	if _, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "SECRETBOX_OLD_KEYS": long[:64] + ":" + old})); err != nil {
+		t.Errorf("64-char old key id rejected: %v", err)
+	}
+}
+
+func TestLoad_SSEUpperBounds(t *testing.T) {
+	for name, value := range map[string]string{"SSE_MAX_PER_IP": "1001", "SSE_MAX_STREAMS": "100001"} {
+		_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", name: value}))
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s=%s: err = %v", name, value, err)
+		}
+	}
+	if _, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "SSE_MAX_PER_IP": "1000", "SSE_MAX_STREAMS": "100000"})); err != nil {
+		t.Errorf("upper bounds rejected: %v", err)
+	}
+}
+
+func TestLoad_SSEPerIPNotAboveTotal(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "SSE_MAX_PER_IP": "50", "SSE_MAX_STREAMS": "10"}))
+	if err == nil || !strings.Contains(err.Error(), "SSE_MAX_PER_IP") {
+		t.Errorf("per-IP > total: err = %v", err)
+	}
+	if _, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "SSE_MAX_PER_IP": "10", "SSE_MAX_STREAMS": "10"})); err != nil {
+		t.Errorf("equal caps rejected: %v", err)
+	}
+}
