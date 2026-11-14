@@ -295,3 +295,65 @@ func TestPass_ExitStillUnhandled(t *testing.T) {
 	}
 	e.invariant()
 }
+
+// The void job and a late pass of the same stay at once: whichever runs
+// first, the car is inside exactly once (design §9.6, M2C-31).
+func TestPass_ConcurrentVoidAndLatePass(t *testing.T) {
+	e := newDeviceEnv(t)
+	barrier := e.device(authz.DeviceEntryBarrier)
+	id := e.openStay(e.device(authz.DeviceDispenser), "")
+	e.clk.Advance(61 * time.Second)
+	occ, _ := e.occupancy()
+	req := barrier.Request(t, deviceEventsPath, e.passBody(gate.DirectionEntry, id), e.clk.Now())
+	req.RemoteAddr = "203.0.113.7:5555"
+
+	rec := httptest.NewRecorder()
+	var voidErr error
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		<-start
+		_, voidErr = gate.VoidUnpassedEntries(t.Context(), e.db.App, e.clk.Now())
+	})
+	wg.Go(func() {
+		<-start
+		e.h.ServeHTTP(rec, req)
+	})
+	close(start)
+	wg.Wait()
+
+	if voidErr != nil {
+		t.Fatalf("void: %v", voidErr)
+	}
+	if got := passOf(t, rec); got != (passData{Result: "ack"}) {
+		t.Errorf("pass = %+v, want a plain ack", got)
+	}
+	if s := e.stay(id); s.Status != "active" {
+		t.Errorf("stay = %s, want active", s.Status)
+	}
+	if occ2, _ := e.occupancy(); occ2 != occ+1 {
+		t.Errorf("occupied = %d, want %d", occ2, occ+1)
+	}
+	if n := e.count(`select count(*) from audit_log where action = 'gate.late_entry_pass'`); n > 1 {
+		t.Errorf("late pass audit rows = %d, want at most 1", n)
+	}
+	e.invariant()
+}
+
+// The barrier is the physical truth (design §9.6): a late pass on a full lot
+// still counts the car, past capacity, and never fails.
+func TestPass_LateEntryOnFullLot(t *testing.T) {
+	e := newDeviceEnv(t)
+	id := e.openStay(e.device(authz.DeviceDispenser), "")
+	e.voidStale()
+	capacity := e.count(`select capacity from lots where id = $1`, e.lotID)
+	testsupport.FillLot(t, e.db, e.lotID, int(capacity), e.clk.Now())
+
+	if got := e.pass(e.device(authz.DeviceEntryBarrier), id); got != (passData{Result: "ack"}) {
+		t.Fatalf("late pass = %+v, want ack", got)
+	}
+	if occ2, _ := e.occupancy(); occ2 != capacity+1 {
+		t.Errorf("occupied = %d, want capacity + 1 = %d", occ2, capacity+1)
+	}
+	e.invariant()
+}

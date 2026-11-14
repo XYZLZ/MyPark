@@ -186,7 +186,11 @@ func (Repo) StayForUpdate(ctx context.Context, lotID int64, publicID uuid.UUID) 
 	if err != nil {
 		return gate.Stay{}, err
 	}
-	row, err := qs.GetStayForUpdate(ctx, dbgen.GetStayForUpdateParams{LotID: lotID, PublicID: publicID})
+	return toStay(qs.GetStayForUpdate(ctx, dbgen.GetStayForUpdateParams{LotID: lotID, PublicID: publicID}))
+}
+
+// toStay maps a locked stays row, or its lookup error.
+func toStay(row dbgen.Stay, err error) (gate.Stay, error) {
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return gate.Stay{}, gate.ErrNotFound
@@ -194,7 +198,9 @@ func (Repo) StayForUpdate(ctx context.Context, lotID int64, publicID uuid.UUID) 
 		return gate.Stay{}, fmt.Errorf("gate: stay for update: %w", err)
 	}
 	return gate.Stay{
-		ID: row.ID, PublicID: row.PublicID, Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64,
+		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, CredentialKind: row.CredentialKind,
+		Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64, TariffVersionID: row.TariffVersionID,
+		EnteredAt: row.EnteredAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, LostTicket: row.LostTicket,
 	}, nil
 }
 
@@ -236,6 +242,102 @@ func (Repo) NotifyLotChanged(ctx context.Context, lotID, version int64) error {
 	}
 	if err := qs.NotifyLotChanged(ctx, dbgen.NotifyLotChangedParams{LotID: lotID, Version: version}); err != nil {
 		return fmt.Errorf("gate: notify lot changed: %w", err)
+	}
+	return nil
+}
+
+// StayByTicketHashForUpdate implements gate.Repo.
+func (Repo) StayByTicketHashForUpdate(ctx context.Context, lotID int64, hash []byte) (gate.Stay, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Stay{}, err
+	}
+	return toStay(qs.GetStayByTicketHashForUpdate(ctx, dbgen.GetStayByTicketHashForUpdateParams{LotID: lotID, TicketCodeHash: hash}))
+}
+
+// OpenCardStayForUpdate implements gate.Repo.
+func (Repo) OpenCardStayForUpdate(ctx context.Context, lotID, cardID int64) (gate.Stay, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Stay{}, err
+	}
+	return toStay(qs.GetOpenStayByCardForUpdate(ctx, dbgen.GetOpenStayByCardForUpdateParams{
+		LotID: lotID, EmployeeCardID: pgtype.Int8{Int64: cardID, Valid: true},
+	}))
+}
+
+// PaymentTotals implements gate.Repo.
+func (Repo) PaymentTotals(ctx context.Context, lotID, stayID int64) (int64, time.Time, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	row, err := qs.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: stayID})
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("gate: payment totals: %w", err)
+	}
+	return row.PaidCents, row.LastSucceededAt.Time, nil
+}
+
+// InsertPayment implements gate.Repo: a succeeded parking fee.
+func (Repo) InsertPayment(ctx context.Context, p gate.NewPayment) (int64, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return 0, err
+	}
+	id, err := qs.InsertPayment(ctx, dbgen.InsertPaymentParams{
+		Kind: "parking_fee", StayID: p.StayID, Method: p.Method, AmountCents: p.AmountCents, Status: "succeeded",
+		IdempotencyKey: p.IdempotencyKey, DeviceID: pgtype.Int8{Int64: p.DeviceID, Valid: p.DeviceID != 0},
+		Now: ts(p.SucceededAt), SucceededAt: ts(p.SucceededAt),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("gate: insert payment: %w", err)
+	}
+	return id, nil
+}
+
+// SetStayPaid implements gate.Repo.
+func (Repo) SetStayPaid(ctx context.Context, lotID, stayID int64, now, exitDeadline time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.SetStayPaid(ctx, dbgen.SetStayPaidParams{Now: ts(now), ExitDeadlineAt: ts(exitDeadline), LotID: lotID, ID: stayID})
+	return oneRow("set stay paid", stayID, n, err)
+}
+
+// ReactivateStay implements gate.Repo.
+func (Repo) ReactivateStay(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.ReactivateStay(ctx, dbgen.ReactivateStayParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("reactivate stay", stayID, n, err)
+}
+
+// MarkStayLost implements gate.Repo. The error never carries the driver's
+// text, which could quote the ticket code hash.
+func (Repo) MarkStayLost(ctx context.Context, lotID, stayID int64, hash []byte, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.MarkStayLost(ctx, dbgen.MarkStayLostParams{TicketCodeHash: hash, Now: ts(now), LotID: lotID, ID: stayID})
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		return fmt.Errorf("gate: mark stay lost: SQLSTATE %s (%s)", pgErr.Code, pgErr.ConstraintName)
+	}
+	return oneRow("mark stay lost", stayID, n, err)
+}
+
+// oneRow checks a guarded update of a locked stay: exactly one row changes,
+// because the caller holds the lock and has checked the status.
+func oneRow(op string, stayID, n int64, err error) error {
+	if err != nil {
+		return fmt.Errorf("gate: %s: %w", op, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("gate: %s %d: %d rows changed", op, stayID, n)
 	}
 	return nil
 }

@@ -347,6 +347,35 @@ func (q *Queries) LockLotOccupancy(ctx context.Context, lotID int64) (LockLotOcc
 	return i, err
 }
 
+const markStayLost = `-- name: MarkStayLost :execrows
+update stays
+set lost_ticket = true, ticket_code_hash = $1, status = 'active',
+    updated_at = $2::timestamptz
+where lot_id = $3 and id = $4 and credential_kind = 'ticket' and status in ('active', 'paid')
+`
+
+type MarkStayLostParams struct {
+	TicketCodeHash []byte
+	Now            pgtype.Timestamptz
+	LotID          int64
+	ID             int64
+}
+
+// A lost ticket (design §10.2): the old code stops working and a paid stay
+// owes money again. paid_at and exit_deadline_at are kept (O13).
+func (q *Queries) MarkStayLost(ctx context.Context, arg MarkStayLostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markStayLost,
+		arg.TicketCodeHash,
+		arg.Now,
+		arg.LotID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const notifyLotChanged = `-- name: NotifyLotChanged :exec
 select pg_notify('lot_changed', $1::bigint || ':' || $2::bigint)
 `
@@ -398,6 +427,57 @@ func (q *Queries) PaymentTotals(ctx context.Context, arg PaymentTotalsParams) (P
 	var i PaymentTotalsRow
 	err := row.Scan(&i.PaidCents, &i.LastSucceededAt)
 	return i, err
+}
+
+const reactivateStay = `-- name: ReactivateStay :execrows
+update stays
+set status = 'active', updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status = 'paid'
+`
+
+type ReactivateStayParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// The lazy paid -> active transition once the exit window has passed
+// (M2C-35). exit_deadline_at is kept: it keys the overstay pricing.
+func (q *Queries) ReactivateStay(ctx context.Context, arg ReactivateStayParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reactivateStay, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setStayPaid = `-- name: SetStayPaid :execrows
+update stays
+set status = 'paid', paid_at = $1::timestamptz,
+    exit_deadline_at = $2::timestamptz, updated_at = $1::timestamptz
+where lot_id = $3 and id = $4 and status = 'active'
+`
+
+type SetStayPaidParams struct {
+	Now            pgtype.Timestamptz
+	ExitDeadlineAt pgtype.Timestamptz
+	LotID          int64
+	ID             int64
+}
+
+// A cash payment (design §10.3): paid_at and the exit window move together,
+// so a later overstay is billed from this payment (M2C-35).
+func (q *Queries) SetStayPaid(ctx context.Context, arg SetStayPaidParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setStayPaid,
+		arg.Now,
+		arg.ExitDeadlineAt,
+		arg.LotID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const spaceExists = `-- name: SpaceExists :one

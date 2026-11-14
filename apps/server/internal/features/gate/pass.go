@@ -49,8 +49,10 @@ func (s *Service) entryPass(ctx context.Context, d authz.Device, p BarrierPassed
 		return s.lateEntryPass(ctx, d, stay, now)
 	case StatusActive, StatusPaid:
 		return Result{Result: OutcomeAck, Reason: string(errcodes.GateDuplicatePass)}, nil
-	default: // exited: the stay is over
+	case StatusExited: // the stay is over
 		return rejected(errcodes.GateStayUnknown), nil
+	default:
+		return Result{}, fmt.Errorf("gate: stay %s has unknown status %q", stay.PublicID, stay.Status)
 	}
 }
 
@@ -71,8 +73,6 @@ func (s *Service) lateEntryPass(ctx context.Context, d authz.Device, stay Stay, 
 	if err != nil {
 		return Result{}, err
 	}
-	s.log.WarnContext(ctx, "gate: late entry pass on a voided stay",
-		"lot_id", d.LotID, "stay_id", stay.PublicID.String(), "device_id", d.PublicID.String())
 	if err := s.audit.Record(ctx, audit.Entry{
 		Action: audit.GateLateEntryPass, Actor: audit.ActorSystem, EntityType: "stay", EntityID: stay.PublicID.String(),
 		Before: map[string]any{"status": string(StatusVoided)},
@@ -80,6 +80,9 @@ func (s *Service) lateEntryPass(ctx context.Context, d authz.Device, stay Stay, 
 	}); err != nil {
 		return Result{}, fmt.Errorf("gate: audit %s: %w", audit.GateLateEntryPass, err)
 	}
+	// Warn only once the audit row is written: the log claims an audited pass.
+	s.log.WarnContext(ctx, "gate: late entry pass on a voided stay",
+		"lot_id", d.LotID, "stay_id", stay.PublicID.String(), "device_id", d.PublicID.String())
 	return res, nil
 }
 

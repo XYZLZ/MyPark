@@ -74,6 +74,12 @@ func (s *Service) handlerFor(t EventType) handleFunc {
 		return s.entry
 	case EventBarrierPassed:
 		return s.pass
+	case EventPayScan:
+		return s.payScan
+	case EventLostTicket:
+		return s.lostTicket
+	case EventCashPaid:
+		return s.cashPaid
 	case EventSensorChanged:
 		return s.sensor
 	default:

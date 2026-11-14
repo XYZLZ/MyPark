@@ -55,6 +55,28 @@ type Repo interface {
 	BumpOccupancy(ctx context.Context, lotID int64, delta int, now time.Time) (int64, error)
 	// NotifyLotChanged queues a lot_changed notification, sent on commit.
 	NotifyLotChanged(ctx context.Context, lotID, version int64) error
+
+	// StayByTicketHashForUpdate locks the lot's stay with this ticket code
+	// hash, or returns ErrNotFound.
+	StayByTicketHashForUpdate(ctx context.Context, lotID int64, hash []byte) (Stay, error)
+	// OpenCardStayForUpdate locks the card's entry_pending, active or paid
+	// stay in the lot, or returns ErrNotFound.
+	OpenCardStayForUpdate(ctx context.Context, lotID, cardID int64) (Stay, error)
+	// PaymentTotals sums the stay's succeeded payments and returns the time
+	// of the latest one (zero when there is none).
+	PaymentTotals(ctx context.Context, lotID, stayID int64) (paidCents int64, lastPaidAt time.Time, err error)
+	// InsertPayment inserts a succeeded payment and returns its id. The stay
+	// must come from a lot-scoped lock.
+	InsertPayment(ctx context.Context, p NewPayment) (int64, error)
+	// SetStayPaid moves the locked active stay to paid at now with its exit
+	// deadline.
+	SetStayPaid(ctx context.Context, lotID, stayID int64, now, exitDeadline time.Time) error
+	// ReactivateStay moves the locked paid stay back to active, keeping its
+	// exit deadline (M2C-35).
+	ReactivateStay(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// MarkStayLost marks the locked active or paid ticket stay lost, replaces
+	// its ticket code hash and makes it active.
+	MarkStayLost(ctx context.Context, lotID, stayID int64, hash []byte, now time.Time) error
 }
 
 // ErrNotFound means the lot has no matching row.
@@ -82,11 +104,28 @@ type NewStay struct {
 	AcceptedAt      time.Time
 }
 
-// Stay is a locked stay, as the barrier pass reads it. EmployeeCardID is 0
-// for a ticket.
+// Stay is a locked stay. EmployeeCardID is 0 for a ticket; a zero time is a
+// null column.
 type Stay struct {
-	ID             int64
-	PublicID       uuid.UUID
-	Status         Status
-	EmployeeCardID int64
+	ID              int64
+	PublicID        uuid.UUID
+	LotID           int64
+	CredentialKind  string
+	Status          Status
+	EmployeeCardID  int64
+	TariffVersionID int64
+	EnteredAt       time.Time
+	ExitDeadlineAt  time.Time
+	LostTicket      bool
+}
+
+// NewPayment is a succeeded payment of a stay (design §5.4). DeviceID is the
+// pay station.
+type NewPayment struct {
+	StayID         int64
+	Method         string
+	AmountCents    int64
+	IdempotencyKey string
+	DeviceID       int64
+	SucceededAt    time.Time
 }

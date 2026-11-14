@@ -115,3 +115,26 @@ where id in (
     limit 200
     for update skip locked
 );
+
+-- name: SetStayPaid :execrows
+-- A cash payment (design §10.3): paid_at and the exit window move together,
+-- so a later overstay is billed from this payment (M2C-35).
+update stays
+set status = 'paid', paid_at = sqlc.arg(now)::timestamptz,
+    exit_deadline_at = sqlc.arg(exit_deadline_at)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status = 'active';
+
+-- name: ReactivateStay :execrows
+-- The lazy paid -> active transition once the exit window has passed
+-- (M2C-35). exit_deadline_at is kept: it keys the overstay pricing.
+update stays
+set status = 'active', updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status = 'paid';
+
+-- name: MarkStayLost :execrows
+-- A lost ticket (design §10.2): the old code stops working and a paid stay
+-- owes money again. paid_at and exit_deadline_at are kept (O13).
+update stays
+set lost_ticket = true, ticket_code_hash = @ticket_code_hash, status = 'active',
+    updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and credential_kind = 'ticket' and status in ('active', 'paid');
