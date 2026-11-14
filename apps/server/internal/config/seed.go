@@ -1,14 +1,18 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 )
 
 // Seed admin variable names (spec 13.1, OC-20).
@@ -97,4 +101,101 @@ func LoadSeedAdmin(getenv func(string) string) (SeedAdmin, bool, error) {
 		email: raw.Email, firstName: raw.FirstName, lastName: raw.LastName,
 		password: secret.String(raw.Password),
 	}, true, nil
+}
+
+// Simulator fleet seed variable names (design M2C-25).
+const (
+	EnvSeedSimulatorFleet   = "SEED_SIMULATOR_FLEET"
+	EnvSimulatorFleetSecret = "SIMULATOR_FLEET_SECRET"
+)
+
+// SeedFleet is the configuration cmd/seed needs to provision the simulator
+// fleet: the secretbox keyring that seals the device secrets, the card UID
+// pepper and the fleet secret the device secrets derive from. When the fleet
+// seed is disabled only Enabled is meaningful. String, GoString and LogValue
+// are redacted.
+type SeedFleet struct {
+	enabled bool
+	current secretbox.Key
+	old     []secretbox.Key
+	pepper  []byte
+	fleet   secret.Bytes
+}
+
+// Enabled reports whether SEED_SIMULATOR_FLEET is true.
+func (s SeedFleet) Enabled() bool { return s.enabled }
+
+// SecretboxKeys returns the key that seals new secrets and the rotated-out keys.
+func (s SeedFleet) SecretboxKeys() (current secretbox.Key, old []secretbox.Key) {
+	return s.current, slices.Clone(s.old)
+}
+
+// CardUIDPepper returns a copy of the card UID pepper. Never log it.
+func (s SeedFleet) CardUIDPepper() []byte { return slices.Clone(s.pepper) }
+
+// FleetSecret returns a copy of the fleet secret as a redacting type.
+func (s SeedFleet) FleetSecret() secret.Bytes { return slices.Clone(s.fleet) }
+
+// String renders a redacted value, so %v, %+v and %s never print key material.
+func (SeedFleet) String() string { return "SeedFleet{" + redacted + "}" }
+
+// GoString renders the same redacted value for %#v.
+func (s SeedFleet) GoString() string { return s.String() }
+
+// LogValue implements slog.LogValuer.
+func (SeedFleet) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// LoadSeedFleet reads the simulator fleet seed variables. With
+// SEED_SIMULATOR_FLEET unset or false it returns a disabled SeedFleet and
+// ignores every other variable. When true it requires the secretbox keyring,
+// CARD_UID_PEPPER and SIMULATOR_FLEET_SECRET (base64, at least 32 bytes each,
+// the pepper rule), and with APP_ENV=production it refuses the committed dev
+// values. Errors name variables and never include a value.
+func LoadSeedFleet(getenv func(string) string) (SeedFleet, error) {
+	flag := strings.TrimSpace(getenv(EnvSeedSimulatorFleet))
+	if flag == "" {
+		return SeedFleet{}, nil
+	}
+	enabled, err := strconv.ParseBool(flag)
+	if err != nil {
+		return SeedFleet{}, fmt.Errorf("%s must be true or false", EnvSeedSimulatorFleet)
+	}
+	if !enabled {
+		return SeedFleet{}, nil
+	}
+	production := valueOr(getenv(EnvAppEnv), DefaultEnv) == "production"
+	var errs []error
+	current, old, err := ParseSecretboxKeys(getenv(EnvSecretboxKeyID), getenv(EnvSecretboxKey), getenv(EnvSecretboxOldKeys), production)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	pepper, err := loadSecretVar(getenv, EnvCardUIDPepper, DevCardUIDPepper, production)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	fleet, err := loadSecretVar(getenv, EnvSimulatorFleetSecret, DevSimulatorFleetSecret, production)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return SeedFleet{}, fmt.Errorf("invalid seed configuration: %w", errors.Join(errs...))
+	}
+	return SeedFleet{enabled: true, current: current, old: old, pepper: pepper, fleet: secret.Bytes(fleet)}, nil
+}
+
+// loadSecretVar reads a required base64 variable of at least minPepperLen
+// bytes and refuses the committed dev value in production.
+func loadSecretVar(getenv func(string) string, name, dev string, production bool) ([]byte, error) {
+	raw := strings.TrimSpace(getenv(name))
+	if raw == "" {
+		return nil, fmt.Errorf("%s is required", name)
+	}
+	b, err := decodeKey(name, raw, minPepperLen, false)
+	if err != nil {
+		return nil, err
+	}
+	if production && bytes.Equal(b, devBytes(dev)) {
+		return nil, fmt.Errorf("%s must not be the development default in production", name)
+	}
+	return b, nil
 }

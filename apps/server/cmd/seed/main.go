@@ -1,5 +1,5 @@
 // Command seed creates the pilot parking lot, its 280 spaces, the initial
-// legal documents and, when none exists, the first admin in the database at
+// legal documents, the default tariff, optionally the simulator fleet and, when none exists, the first admin in the database at
 // DATABASE_URL. Seeding is DML only, so it runs as the app role mypark_app.
 // It is idempotent and safe to run on every compose start.
 package main
@@ -16,6 +16,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
@@ -23,6 +24,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 )
 
 // seedMaxConns is enough: the seed runs in a single transaction.
@@ -38,7 +40,8 @@ func main() {
 	}
 }
 
-// run seeds the pilot lot, the legal documents and the first admin in one
+// run seeds the pilot lot, the legal documents, the tariff, the simulator
+// fleet (SEED_SIMULATOR_FLEET) and the first admin in one
 // transaction and logs the lot id. The admin variables are validated before
 // anything is written, and the password is never logged.
 func run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
@@ -49,6 +52,18 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	admin, withAdmin, err := config.LoadSeedAdmin(getenv)
 	if err != nil {
 		return err
+	}
+	fleet, err := config.LoadSeedFleet(getenv)
+	if err != nil {
+		return err
+	}
+	// The sealer is built here, where it is consumed; cmd/api wires its own in run().
+	var sealer *secretbox.Sealer
+	if fleet.Enabled() {
+		current, old := fleet.SecretboxKeys()
+		if sealer, err = secretbox.NewSealer(current, old...); err != nil {
+			return fmt.Errorf("seed: secretbox keyring: %w", err)
+		}
 	}
 	log := slog.New(slog.NewJSONHandler(stdout, nil))
 	if !withAdmin {
@@ -68,6 +83,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	var lotID int64
 	adminCreated := false
+	var fleetResult devices.SeedResult
 	err = database.NewTxRunner(pool).InTx(ctx, func(ctx context.Context) error {
 		tx, err := database.MustTx(ctx)
 		if err != nil {
@@ -82,6 +98,11 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		if err := tariffs.SeedDefaults(ctx, dbgen.New(tx), lotID); err != nil {
 			return err
 		}
+		if fleet.Enabled() {
+			if fleetResult, err = devices.SeedFleet(ctx, dbgen.New(tx), sealer, lotID, fleet.FleetSecret()); err != nil {
+				return err
+			}
+		}
 		if !withAdmin {
 			return nil
 		}
@@ -95,6 +116,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		return err
 	}
 	log.Info("seed applied", "lot_id", lotID)
+	if fleet.Enabled() {
+		log.Info("simulator fleet seeded", "inserted", fleetResult.Inserted, "resealed", fleetResult.Resealed)
+	}
 	switch {
 	case !withAdmin:
 	case adminCreated:

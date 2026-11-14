@@ -1,16 +1,16 @@
-package testsupport_test
+package fakeclock_test
 
 import (
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport/fakeclock"
 )
 
-func TestFakeClock_AdvanceIsRaceFree(t *testing.T) {
+func TestClock_AdvanceIsRaceFree(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	c := testsupport.NewFakeClock(start)
+	c := fakeclock.New(start)
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() { c.Advance(time.Second) })

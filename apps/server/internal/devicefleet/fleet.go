@@ -92,7 +92,13 @@ func CardUID(fleetSecret secret.Bytes, code string) string {
 	return strings.ToUpper(hex.EncodeToString(derive(fleetSecret, cardUIDLabel+code)[:cardUIDBytes]))
 }
 
+// derive panics on an empty fleet secret: that is a programming error (the
+// seed and the simulator validate the variable at load time), and an HMAC
+// keyed with nothing would silently yield guessable device secrets.
 func derive(fleetSecret secret.Bytes, msg string) []byte {
+	if len(fleetSecret) == 0 {
+		panic("devicefleet: empty fleet secret")
+	}
 	mac := hmac.New(sha256.New, fleetSecret.Reveal())
 	mac.Write([]byte(msg))
 	return mac.Sum(nil)

@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
@@ -141,4 +145,68 @@ func TestSeed_ProductionRefusesDevAdminPasswordAndWritesNothing(t *testing.T) {
 	if err := db.App.QueryRow(t.Context(), "select count(*) from lots").Scan(&lots); err != nil || lots != 0 {
 		t.Errorf("lots = %d, err = %v: a refused seed must write nothing", lots, err)
 	}
+}
+
+func fleetSeedEnv(dbURL, flag string) map[string]string {
+	return map[string]string{
+		"DATABASE_URL": dbURL, "SEED_SIMULATOR_FLEET": flag,
+		"SECRETBOX_KEY": config.DevSecretboxKey, "SECRETBOX_KEY_ID": "k1",
+		"CARD_UID_PEPPER": config.DevCardUIDPepper, "SIMULATOR_FLEET_SECRET": config.DevSimulatorFleetSecret,
+	}
+}
+
+func TestSeedCommand_SeedsFleetWhenEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		want int
+	}{{"true", 6}, {"false", 0}} {
+		t.Run(tc.flag, func(t *testing.T) {
+			db := testsupport.NewTestDB(t)
+			env := fleetSeedEnv(db.AppURL, tc.flag)
+			var out bytes.Buffer
+			for range 2 {
+				if err := run(t.Context(), func(k string) string { return env[k] }, &out); err != nil {
+					t.Fatalf("run: %v", err)
+				}
+			}
+			var n int
+			if err := db.App.QueryRow(t.Context(), "select count(*) from devices").Scan(&n); err != nil || n != tc.want {
+				t.Errorf("devices = %d, %v, want %d", n, err, tc.want)
+			}
+			secrets := [][]byte{[]byte(config.DevSimulatorFleetSecret), []byte(config.DevSecretboxKey), []byte(config.DevCardUIDPepper)}
+			fleet := secret.Bytes(mustB64(t, config.DevSimulatorFleetSecret))
+			for _, d := range devicefleet.Devices() {
+				s := devicefleet.DeviceSecret(fleet, d.PublicID).Reveal()
+				secrets = append(secrets, []byte(base64.StdEncoding.EncodeToString(s)),
+					[]byte(base64.RawURLEncoding.EncodeToString(s)), []byte(hex.EncodeToString(s)))
+			}
+			for _, s := range secrets {
+				if bytes.Contains(out.Bytes(), s) {
+					t.Errorf("seed output contains secret material %q...", s[:6])
+				}
+			}
+		})
+	}
+}
+
+func TestSeedCommand_FleetEnabledWithBadConfigWritesNothing(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	env := fleetSeedEnv(db.AppURL, "true")
+	env["SIMULATOR_FLEET_SECRET"] = ""
+	if err := run(t.Context(), func(k string) string { return env[k] }, io.Discard); err == nil {
+		t.Fatal("run succeeded with SIMULATOR_FLEET_SECRET unset")
+	}
+	var n int
+	if err := db.App.QueryRow(t.Context(), "select count(*) from lots").Scan(&n); err != nil || n != 0 {
+		t.Errorf("lots = %d, %v, want 0 (validate before writing)", n, err)
+	}
+}
+
+func mustB64(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

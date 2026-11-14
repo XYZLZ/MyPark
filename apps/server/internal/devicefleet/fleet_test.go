@@ -101,3 +101,25 @@ func TestCards_Manifest(t *testing.T) {
 		t.Errorf("card 7 = %+v", cards[6])
 	}
 }
+
+func TestDeviceSecret_EmptyFleetSecretPanics(t *testing.T) {
+	for _, key := range []secret.Bytes{nil, {}} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("DeviceSecret with fleet key %v did not panic", []byte(key))
+				}
+			}()
+			devicefleet.DeviceSecret(key, devicefleet.Devices()[0].PublicID)
+		}()
+	}
+}
+
+func TestCardUID_EmptyFleetSecretPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("CardUID with an empty fleet key did not panic")
+		}
+	}()
+	devicefleet.CardUID(nil, "EMP-001")
+}

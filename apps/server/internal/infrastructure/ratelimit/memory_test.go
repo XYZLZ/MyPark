@@ -6,13 +6,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport/fakeclock"
 )
 
 // memStart is 250 ms into a one-second window (and 10 s into a minute).
 var memStart = time.Date(2026, 11, 20, 12, 0, 10, 250_000_000, time.UTC)
 
 func TestMemory_FixedWindowWithFakeClock(t *testing.T) {
-	clk := newMemClock(memStart)
+	clk := fakeclock.New(memStart)
 	m := NewMemory(clk)
 	rule := Rule{Name: "t", Limit: 3, Window: time.Second, Prefix: "t:"}
 	for i := range 3 {
@@ -38,7 +40,7 @@ func TestMemory_FixedWindowWithFakeClock(t *testing.T) {
 }
 
 func TestMemory_PrefixNamespacesBuckets(t *testing.T) {
-	m := NewMemory(newMemClock(memStart))
+	m := NewMemory(fakeclock.New(memStart))
 	a := Rule{Limit: 1, Window: time.Minute, Prefix: "a:"}
 	b := Rule{Limit: 1, Window: time.Minute, Prefix: "b:"}
 	_, _ = m.Allow(t.Context(), a, "k")
@@ -48,7 +50,7 @@ func TestMemory_PrefixNamespacesBuckets(t *testing.T) {
 }
 
 func TestMemory_ConcurrentAllow(t *testing.T) {
-	m := NewMemory(newMemClock(memStart))
+	m := NewMemory(fakeclock.New(memStart))
 	rule := Rule{Limit: 20, Window: time.Minute, Prefix: "c:"}
 	var allowed atomic.Int64
 	var wg sync.WaitGroup
@@ -66,7 +68,7 @@ func TestMemory_ConcurrentAllow(t *testing.T) {
 }
 
 func TestMemory_SweepDropsExpired(t *testing.T) {
-	clk := newMemClock(memStart)
+	clk := fakeclock.New(memStart)
 	m := NewMemory(clk)
 	rule := Rule{Limit: 5, Window: time.Second, Prefix: "s:"}
 	for i := range 100 {
@@ -83,7 +85,7 @@ func TestMemory_SweepDropsExpired(t *testing.T) {
 }
 
 func TestMemory_SweepRunsAtMostOncePerMinute(t *testing.T) {
-	clk := newMemClock(memStart)
+	clk := fakeclock.New(memStart)
 	m := NewMemory(clk)
 	rule := Rule{Limit: 5, Window: time.Second, Prefix: "s:"}
 	_, _ = m.Allow(t.Context(), rule, "a")
@@ -93,12 +95,3 @@ func TestMemory_SweepRunsAtMostOncePerMinute(t *testing.T) {
 		t.Errorf("buckets = %d, want 2 (no sweep inside a minute)", got)
 	}
 }
-
-// memClock is a manually advanced clock. It is local because testsupport
-// imports the tariffs feature, which imports this package.
-type memClock struct{ now time.Time }
-
-func newMemClock(t time.Time) *memClock { return &memClock{now: t} }
-
-func (c *memClock) Now() time.Time          { return c.now }
-func (c *memClock) Advance(d time.Duration) { c.now = c.now.Add(d) }

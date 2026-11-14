@@ -84,6 +84,16 @@ services:
       SEED_ADMIN_FIRST_NAME: ${SEED_ADMIN_FIRST_NAME:-MyPark}
       SEED_ADMIN_LAST_NAME: ${SEED_ADMIN_LAST_NAME:-Admin}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-mypark-dev-admin-2026}
+      # Simulator fleet (M2C-25): six devices whose secrets derive from
+      # SIMULATOR_FLEET_SECRET and are sealed with SECRETBOX_KEY. Same dev-only
+      # defaults as the api and simulator services; refused when
+      # APP_ENV=production. SECRETBOX_KEY_ID must match the api's.
+      SEED_SIMULATOR_FLEET: ${SEED_SIMULATOR_FLEET:-true}
+      SECRETBOX_KEY: ${SECRETBOX_KEY:-hjcsotOiA0zcCanr6LhEpWwP8Q5QqtFfMdhaD8DU1UQ=}
+      SECRETBOX_KEY_ID: ${SECRETBOX_KEY_ID:-dev-1}
+      SECRETBOX_OLD_KEYS: ${SECRETBOX_OLD_KEYS:-}
+      CARD_UID_PEPPER: ${CARD_UID_PEPPER:-5aolRvJpaNIAVU0GqBsELQfbrdRUYDraaxm64URAA9g=}
+      SIMULATOR_FLEET_SECRET: ${SIMULATOR_FLEET_SECRET:-WXDXaWhcsK1yFwswbHoQjtSo1CqGtuoMo6QHfFvF7dY=}
     depends_on:
       postgres:
         condition: service_healthy

@@ -50,6 +50,33 @@ type AuthSession struct {
 	UserAgent         pgtype.Text
 }
 
+type Device struct {
+	ID               int64
+	PublicID         uuid.UUID
+	LotID            int64
+	Kind             string
+	Name             string
+	SecretCiphertext []byte
+	SecretKeyID      string
+	Status           string
+	LastSeenAt       pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
+type DeviceEvent struct {
+	ID         int64
+	LotID      int64
+	DeviceID   int64
+	EventID    uuid.UUID
+	Type       string
+	OccurredAt pgtype.Timestamptz
+	ReceivedAt pgtype.Timestamptz
+	BodySha256 []byte
+	Payload    []byte
+	Response   []byte
+}
+
 type LegalDocument struct {
 	ID          int64
 	Kind        string
