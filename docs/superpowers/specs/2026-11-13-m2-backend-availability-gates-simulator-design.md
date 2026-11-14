@@ -1,6 +1,6 @@
 # M2 Track A — Backend Availability, Gates and Simulator: Design
 
-**Status:** draft — pending user approval (overstay rule decided by the user on 2026-11-13) · **Date:** 2026-11-13 · **Milestone:** M2 (Nov 23 – Nov 27) · **Track:** A (Go backend, simulator, API contract)
+**Status:** approved by the user on 2026-11-13 (overstay rule decided by the user the same day) · **Date:** 2026-11-13 · **Milestone:** M2 (Nov 23 – Nov 27) · **Track:** A (Go backend, simulator, API contract)
 
 This document designs the Go side of M2: the device API with per-device HMAC keys, the gate flows (entry, pay station, exit), the occupancy counter, live availability over SSE, the per-space sensor map, the pay-station fee calculator, and the simulator with its control API. **The gate count and the money are the center of gravity.** Every other part is shaped so it cannot let the count drift or let a car leave without the right charge.
 
