@@ -17,6 +17,8 @@ type (
 // returns. It must hold no personal data, only opaque public IDs.
 type LogFields struct {
 	UserPublicID string
+	// DeviceID is the public id of the authenticated device.
+	DeviceID string
 }
 
 // WithRequestID returns ctx carrying the request ID.

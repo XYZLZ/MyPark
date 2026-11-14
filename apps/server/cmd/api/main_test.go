@@ -21,6 +21,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 )
@@ -56,6 +57,7 @@ func testDeps(h *health.Handler, pool *pgxpool.Pool) deps {
 
 		hasher:  hashing.NewArgon2id(hashing.Params{Memory: 1024, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}, 2),
 		limiter: ratelimit.Noop{},
+		sealer:  testSealer,
 	}
 }
 
@@ -365,3 +367,13 @@ func TestNewHandler_ProtectedRoutesRequireBearer(t *testing.T) {
 		}
 	}
 }
+
+// testSealer is the device-secret sealer of testDeps, which has no *testing.T
+// to hand to testsupport.TestSealer.
+var testSealer = func() *secretbox.Sealer {
+	s, err := secretbox.NewSealer(secretbox.Key{ID: "test", Secret: [32]byte{1}})
+	if err != nil {
+		panic(err)
+	}
+	return s
+}()

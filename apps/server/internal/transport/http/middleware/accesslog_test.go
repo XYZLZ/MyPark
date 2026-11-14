@@ -53,3 +53,22 @@ func TestAccessLog_UserIDFromLogFields(t *testing.T) {
 		t.Errorf("panicked should be absent on a normal request: %v", m)
 	}
 }
+
+func TestAccessLog_DeviceIDFromLogFields(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	h := middleware.RequestID(middleware.AccessLog(log)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		reqctx.Fields(r.Context()).DeviceID = "d1"
+	})))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", nil))
+	if m := logLine(t, &buf); m["device_id"] != "d1" || m["user_id"] != nil {
+		t.Fatalf("log = %v", m)
+	}
+
+	buf.Reset()
+	h = middleware.RequestID(middleware.AccessLog(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if m := logLine(t, &buf); m["device_id"] != nil {
+		t.Errorf("device_id should be absent when empty: %v", m)
+	}
+}

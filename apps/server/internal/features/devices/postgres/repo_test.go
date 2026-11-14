@@ -88,3 +88,42 @@ func TestRepo_UnopenableSecretIsAnError(t *testing.T) {
 		t.Fatal("GetByPublicID with the wrong keyring succeeded")
 	}
 }
+
+func TestRepo_DeviceByPublicIDReturnsSealedRecord(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	s := testsupport.TestSealer(t)
+	dev := testsupport.NewTestDevice(t, db, s, lotID, authz.DeviceExitBarrier)
+	repo := devpg.NewRepo(db.App, s)
+
+	var reg devices.Registry = repo
+	rec, err := reg.DeviceByPublicID(t.Context(), dev.PublicID)
+	if err != nil {
+		t.Fatalf("DeviceByPublicID: %v", err)
+	}
+	if rec.ID != dev.ID || rec.LotID != lotID || rec.Kind != authz.DeviceExitBarrier || rec.Revoked || !rec.LastSeenAt.IsZero() {
+		t.Errorf("record = %+v", rec)
+	}
+	if bytes.Contains(rec.SecretCiphertext, dev.Secret) {
+		t.Error("record carries the plain secret")
+	}
+	plain, err := s.Open(rec.SecretCiphertext, rec.SecretKeyID)
+	if err != nil || !bytes.Equal(plain, dev.Secret) {
+		t.Errorf("sealed secret does not open to the device secret: %v", err)
+	}
+
+	at := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	if err := reg.TouchLastSeen(t.Context(), dev.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Super.Exec(t.Context(),
+		"update devices set status = 'revoked', revoked_at = now() where id = $1", dev.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err = reg.DeviceByPublicID(t.Context(), dev.PublicID); err != nil || !rec.Revoked || !rec.LastSeenAt.Equal(at) {
+		t.Errorf("after revoke: %+v, %v", rec, err)
+	}
+	if _, err := reg.DeviceByPublicID(t.Context(), uuid.New()); !errors.Is(err, devices.ErrDeviceNotFound) {
+		t.Errorf("unknown id error = %v, want ErrDeviceNotFound", err)
+	}
+}

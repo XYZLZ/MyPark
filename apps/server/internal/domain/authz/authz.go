@@ -63,3 +63,25 @@ const (
 	DevicePayStation    DeviceKind = "pay_station"
 	DeviceSensorGateway DeviceKind = "sensor_gateway"
 )
+
+// Device is an authenticated device (design §7.3). It is set only by the
+// device HMAC middleware and is never a user Principal.
+type Device struct {
+	ID       int64
+	PublicID uuid.UUID
+	LotID    int64
+	Kind     DeviceKind
+}
+
+type deviceKey struct{}
+
+// WithDevice returns ctx carrying d.
+func WithDevice(ctx context.Context, d Device) context.Context {
+	return context.WithValue(ctx, deviceKey{}, d)
+}
+
+// DeviceFrom returns the device stored in ctx.
+func DeviceFrom(ctx context.Context) (Device, bool) {
+	d, ok := ctx.Value(deviceKey{}).(Device)
+	return d, ok
+}

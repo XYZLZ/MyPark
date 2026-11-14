@@ -96,3 +96,14 @@ func TestRules_M2LocalRules(t *testing.T) {
 		}
 	}
 }
+
+func TestDeviceRule(t *testing.T) {
+	want := ratelimit.Rule{Name: "device", Limit: 100, Window: time.Second, Key: ratelimit.KeyDevice, Prefix: "dev:", Scope: ratelimit.ScopeLocal}
+	if got := ratelimit.DeviceRule(100); got != want {
+		t.Errorf("DeviceRule(100) = %+v, want %+v", got, want)
+	}
+	// KeyDevice is appended after the M1 kinds, so their values never move.
+	if ratelimit.KeyIP != 0 || ratelimit.KeyUser != 1 || ratelimit.KeyCustom != 2 || ratelimit.KeyDevice != 3 {
+		t.Error("KeyKind values were renumbered")
+	}
+}

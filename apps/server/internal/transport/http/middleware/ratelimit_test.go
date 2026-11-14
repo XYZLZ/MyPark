@@ -154,3 +154,22 @@ func TestRateLimit_UnknownIPUsesSharedKey(t *testing.T) {
 		t.Errorf("key = %q, want ip:unknown", l.key)
 	}
 }
+
+func TestRateLimit_DeviceKeyIsDevicePublicID(t *testing.T) {
+	var logs testsupport.SyncBuffer
+	id := uuid.New()
+	l := &stubLimiter{dec: ratelimit.Decision{Allowed: true}}
+	rec, ran := serve(l, ratelimit.DeviceRule(5), &logs, func(r *http.Request) *http.Request {
+		return r.WithContext(authz.WithDevice(r.Context(), authz.Device{ID: 1, PublicID: id}))
+	})
+	if !ran || rec.Code != http.StatusNoContent || l.key != id.String() {
+		t.Errorf("ran=%v status=%d key=%q, want the device public id", ran, rec.Code, l.key)
+	}
+
+	// Without an authenticated device the fail-closed rule refuses the request.
+	l = &stubLimiter{dec: ratelimit.Decision{Allowed: true}}
+	rec, ran = serve(l, ratelimit.DeviceRule(5), &logs, nil)
+	if ran || rec.Code != http.StatusInternalServerError || l.key != "" {
+		t.Errorf("no device: ran=%v status=%d key=%q, want 500 without a limiter call", ran, rec.Code, l.key)
+	}
+}

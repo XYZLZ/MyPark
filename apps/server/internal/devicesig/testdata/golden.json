@@ -1,0 +1,9 @@
+{
+  "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "method": "POST",
+  "uri": "/v1/devices/events?trace=1",
+  "timestamp": "2026-11-24T14:03:11Z",
+  "body": "{\"event_id\":\"019a6d00-0000-7000-8000-0000000000aa\",\"type\":\"heartbeat\",\"occurred_at\":\"2026-11-24T14:03:10Z\",\"payload\":{}}",
+  "body_sha256": "7881d77120ebab304ff011636f6782176e4c9fb8715453376ca4ea876d8c61e8",
+  "signature": "3e65ccf587e080778fe040d5dd123ea3679f0e902b6fe8e6aca681b7bdec14e0"
+}

@@ -37,8 +37,13 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 					slog.Int("status", status),
 					slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
 				}
-				if f := reqctx.Fields(r.Context()); f != nil && f.UserPublicID != "" {
-					attrs = append(attrs, slog.String("user_id", f.UserPublicID))
+				if f := reqctx.Fields(r.Context()); f != nil {
+					if f.UserPublicID != "" {
+						attrs = append(attrs, slog.String("user_id", f.UserPublicID))
+					}
+					if f.DeviceID != "" {
+						attrs = append(attrs, slog.String("device_id", f.DeviceID))
+					}
 				}
 				if panicked {
 					attrs = append(attrs, slog.Bool("panicked", true))

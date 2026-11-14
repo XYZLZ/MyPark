@@ -47,3 +47,17 @@ func TestDeviceKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestDeviceRoundTrip(t *testing.T) {
+	if _, ok := authz.DeviceFrom(t.Context()); ok {
+		t.Fatal("empty context carries a device")
+	}
+	d := authz.Device{ID: 7, PublicID: uuid.New(), LotID: 3, Kind: authz.DevicePayStation}
+	got, ok := authz.DeviceFrom(authz.WithDevice(t.Context(), d))
+	if !ok || got != d {
+		t.Errorf("DeviceFrom = %+v, %v; want %+v", got, ok, d)
+	}
+	if _, ok := authz.PrincipalFrom(authz.WithDevice(t.Context(), d)); ok {
+		t.Error("a device is not a user principal")
+	}
+}

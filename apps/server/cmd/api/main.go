@@ -25,6 +25,8 @@ import (
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
+	devicespg "github.com/XYZLZ/MyPark/apps/server/internal/features/devices/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
@@ -41,6 +43,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/authn"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
@@ -113,8 +116,14 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
+	current, old := cfg.SecretboxKeys()
+	sealer, err := secretbox.NewSealer(current, old...)
+	if err != nil {
+		return err
+	}
 	d := deps{
 		signer: signer,
+		sealer: sealer,
 		log:    log,
 		cfg:    cfg,
 		pool:   pool,
@@ -146,6 +155,7 @@ type deps struct {
 	health *health.Handler
 
 	signer  *jwt.Signer
+	sealer  *secretbox.Sealer // opens device secrets (PF8)
 	hasher  hashing.PasswordHasher
 	codes   hashing.CodeHasher
 	limiter ratelimit.Limiter
@@ -169,12 +179,15 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	authRepo := authpg.NewRepo(d.pool)
 	verifier := jwt.NewVerifier(d.cfg.JWTVerifyKeys(), d.clock)
 	gates := authn.New(auth.NewAuthenticator(verifier, authRepo, legalSvc, d.clock), d.log, authn.WithLegal(legalSvc))
+	deviceAuth := devices.NewAuthenticator(devicespg.NewRepo(d.pool, d.sealer), d.sealer, d.clock, d.log)
 	r := router.New(mux, router.Middlewares{
-		ClientIP:  middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
-		RateLimit: middleware.RateLimit(d.limiter, d.log),
-		Authn:     gates.Authn,
-		Roles:     gates.Roles,
-		Legal:     gates.Legal,
+		ClientIP:    middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
+		RateLimit:   middleware.RateLimit(d.limiter, d.log),
+		Authn:       gates.Authn,
+		Roles:       gates.Roles,
+		Legal:       gates.Legal,
+		DeviceAuth:  deviceAuth.Middleware,
+		DeviceLimit: ratelimit.DeviceRule(d.cfg.DeviceRateLimitPerS()),
 	})
 	legal.NewHandler(legalSvc, d.log).Register(r)
 

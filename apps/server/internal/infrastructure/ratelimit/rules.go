@@ -27,3 +27,9 @@ var (
 	PublicReadIP = Rule{Name: "public_read_ip", Limit: 120, Window: time.Minute, Key: KeyIP, Prefix: "pub:", Scope: ScopeLocal}
 	SSEConnectIP = Rule{Name: "sse_connect_ip", Limit: 30, Window: time.Minute, Key: KeyIP, Prefix: "sse:", Scope: ScopeLocal}
 )
+
+// DeviceRule is the per-device limit (design §7.6, DEVICE_RATE_LIMIT_PER_S),
+// keyed by the device public id after DeviceAuth. It fails closed.
+func DeviceRule(perSecond int) Rule {
+	return Rule{Name: "device", Limit: perSecond, Window: time.Second, Key: KeyDevice, Prefix: "dev:", Scope: ScopeLocal}
+}

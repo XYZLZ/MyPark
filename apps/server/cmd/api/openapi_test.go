@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -165,6 +166,45 @@ func TestOpenAPI_SimulatorPathsSkippedByAPI(t *testing.T) {
 	for _, key := range control {
 		if served[key] {
 			t.Errorf("%s is a simulator route but the API serves it", key)
+		}
+	}
+}
+
+// postDeviceEvent is signed by the device HMAC and nothing else (design §7.3,
+// §7.8): exactly one security requirement holding the three device schemes
+// together, each with no scopes. openapi.d.ts drops security, so only this
+// test pins it.
+func TestOpenAPI_PostDeviceEventSecurity(t *testing.T) {
+	raw, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	var doc struct {
+		Paths map[string]struct {
+			Post *struct {
+				OperationID string                `yaml:"operationId"`
+				Security    []map[string][]string `yaml:"security"`
+			} `yaml:"post"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse openapi.yaml: %v", err)
+	}
+	op := doc.Paths["/v1/devices/events"].Post
+	if op == nil || op.OperationID != "postDeviceEvent" {
+		t.Fatalf("POST /v1/devices/events is not postDeviceEvent: %+v", op)
+	}
+	if len(op.Security) != 1 {
+		t.Fatalf("security has %d requirement objects, want exactly 1: %v", len(op.Security), op.Security)
+	}
+	req := op.Security[0]
+	keys := slices.Sorted(maps.Keys(req))
+	if want := []string{"deviceId", "deviceSignature", "deviceTimestamp"}; !slices.Equal(keys, want) {
+		t.Errorf("security schemes = %v, want %v", keys, want)
+	}
+	for k, scopes := range req {
+		if len(scopes) != 0 {
+			t.Errorf("%s has scopes %v, want none", k, scopes)
 		}
 	}
 }

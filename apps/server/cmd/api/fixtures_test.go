@@ -92,6 +92,7 @@ func newAPIEnv(t *testing.T, mods ...func(*deps)) *apiEnv {
 		hasher:  hasher,
 		codes:   codes,
 		limiter: ratelimit.Noop{},
+		sealer:  testsupport.TestSealer(t),
 	}
 	for _, m := range mods {
 		m(&d)

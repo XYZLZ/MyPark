@@ -15,7 +15,8 @@ import (
 
 // RateLimit returns the per-route rate-limit middleware factory. KeyIP rules
 // are keyed by the client IP (ClientIP must run first), KeyUser rules by the
-// authenticated user's public id (Authn must run first). A denied request
+// authenticated user's public id (Authn must run first), KeyDevice rules by
+// the authenticated device's public id (DeviceAuth must run first). A denied request
 // gets 429 with Retry-After. A limiter failure returns 500 for fail-closed
 // rules and is logged and ignored for FailOpen rules (spec 10.2). Throttling
 // is logged at warn level with the rule name and the hashed key, never the IP
@@ -63,6 +64,12 @@ func bucketKey(r *http.Request, rule ratelimit.Rule) (string, error) {
 			return "", errors.New("user-keyed rule without an authenticated principal")
 		}
 		return p.UserPublicID.String(), nil
+	case ratelimit.KeyDevice:
+		d, ok := authz.DeviceFrom(r.Context())
+		if !ok {
+			return "", errors.New("device-keyed rule without an authenticated device")
+		}
+		return d.PublicID.String(), nil
 	default:
 		return "", fmt.Errorf("rule %s is not keyed by the router", rule.Name)
 	}

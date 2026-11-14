@@ -19,6 +19,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
 
@@ -332,30 +333,31 @@ func TestEveryServedPatternIsRegisteredOrAllowListed(t *testing.T) {
 // independently of the registry, so a wrong policy in a feature's Register
 // fails here instead of being echoed by the matrix.
 var specPolicy = map[string]struct {
-	access      string // public | driver | admin | any
+	access      string // public | driver | admin | any | device
 	legalExempt bool
+	limit       *ratelimit.Rule // the route's Policy.Limit; nil means none
 }{
 	"GET /v1/legal/current":            {access: "public"},
-	"GET /v1/lots/{id}/tariff":         {access: "public"},
-	"POST /v1/auth/register":           {access: "public"},
-	"POST /v1/auth/verify":             {access: "public"},
-	"POST /v1/auth/verify/resend":      {access: "public"},
-	"POST /v1/auth/password/forgot":    {access: "public"},
-	"POST /v1/auth/password/reset":     {access: "public"},
-	"POST /v1/auth/invitations/accept": {access: "public"},
+	"GET /v1/lots/{id}/tariff":         {access: "public", limit: &ratelimit.PublicReadIP},
+	"POST /v1/auth/register":           {access: "public", limit: &ratelimit.RegisterIP},
+	"POST /v1/auth/verify":             {access: "public", limit: &ratelimit.CodeSubmitIP},
+	"POST /v1/auth/verify/resend":      {access: "public", limit: &ratelimit.CodeRequestIP},
+	"POST /v1/auth/password/forgot":    {access: "public", limit: &ratelimit.CodeRequestIP},
+	"POST /v1/auth/password/reset":     {access: "public", limit: &ratelimit.CodeSubmitIP},
+	"POST /v1/auth/invitations/accept": {access: "public", limit: &ratelimit.CodeSubmitIP},
 	"POST /v1/auth/login":              {access: "public"},
-	"POST /v1/auth/refresh":            {access: "public"},
+	"POST /v1/auth/refresh":            {access: "public", limit: &ratelimit.RefreshIP},
 	"POST /v1/auth/logout":             {access: "any", legalExempt: true},
 	"POST /v1/auth/logout-all":         {access: "any", legalExempt: true},
 	"GET /v1/me":                       {access: "any", legalExempt: true},
 	"PATCH /v1/me":                     {access: "any"},
-	"DELETE /v1/me":                    {access: "driver", legalExempt: true},
+	"DELETE /v1/me":                    {access: "driver", legalExempt: true, limit: &ratelimit.DeleteAccountUser},
 	"POST /v1/me/legal-acceptance":     {access: "driver", legalExempt: true},
 	"GET /v1/vehicles":                 {access: "driver"},
-	"POST /v1/vehicles":                {access: "driver"},
+	"POST /v1/vehicles":                {access: "driver", limit: &ratelimit.VehicleWriteUser},
 	"GET /v1/vehicles/{id}":            {access: "driver"},
-	"PATCH /v1/vehicles/{id}":          {access: "driver"},
-	"DELETE /v1/vehicles/{id}":         {access: "driver"},
+	"PATCH /v1/vehicles/{id}":          {access: "driver", limit: &ratelimit.VehicleWriteUser},
+	"DELETE /v1/vehicles/{id}":         {access: "driver", limit: &ratelimit.VehicleWriteUser},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},
 }
@@ -371,6 +373,8 @@ func TestRegistryMatchesSpecPolicies(t *testing.T) {
 		got := "public"
 		if !rt.Policy.Public {
 			switch {
+			case rt.Policy.Device:
+				got = "device"
 			case slices.Equal(rt.Policy.Roles, router.DriverOnly):
 				got = "driver"
 			case slices.Equal(rt.Policy.Roles, router.AdminOnly):
@@ -387,8 +391,22 @@ func TestRegistryMatchesSpecPolicies(t *testing.T) {
 		if rt.Policy.LegalExempt != want.legalExempt {
 			t.Errorf("%s: legalExempt %v, spec says %v", rt.Pattern, rt.Policy.LegalExempt, want.legalExempt)
 		}
+		// A device route's limits (DeviceIP, DeviceLimit) are fixed by the
+		// router and pinned by its chain test, so its Policy.Limit is nil here.
+		switch got := rt.Policy.Limit; {
+		case got == nil && want.limit == nil:
+		case got == nil || want.limit == nil || *got != *want.limit:
+			t.Errorf("%s: limit %s, spec says %s", rt.Pattern, ruleName(got), ruleName(want.limit))
+		}
 	}
 	if len(specPolicy) != len(e.routes) {
 		t.Errorf("spec lists %d routes, registry has %d", len(specPolicy), len(e.routes))
 	}
+}
+
+func ruleName(r *ratelimit.Rule) string {
+	if r == nil {
+		return "none"
+	}
+	return r.Name
 }

@@ -18,6 +18,9 @@ const (
 	KeyUser
 	// KeyCustom keys are built by the handler (e.g. IP+email).
 	KeyCustom
+	// KeyDevice keys by the authenticated device's public id (DeviceAuth must
+	// run first). Appended so the M1 values never move.
+	KeyDevice
 )
 
 // Rule is one rate-limit rule.

@@ -27,7 +27,30 @@ type Repo struct {
 	sealer *secretbox.Sealer
 }
 
-var _ devices.Repository = (*Repo)(nil)
+var (
+	_ devices.Repository = (*Repo)(nil)
+	_ devices.Registry   = (*Repo)(nil)
+)
+
+// DeviceByPublicID implements devices.Registry: the row with its secret still
+// sealed, so the authenticator decides when to open it.
+func (r *Repo) DeviceByPublicID(ctx context.Context, id uuid.UUID) (devices.Record, error) {
+	row, err := r.q(ctx).GetDeviceByPublicID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return devices.Record{}, devices.ErrDeviceNotFound
+	}
+	if err != nil {
+		return devices.Record{}, fmt.Errorf("devices: device by public id: %w", err)
+	}
+	rec := devices.Record{
+		ID: row.ID, LotID: row.LotID, PublicID: row.PublicID, Kind: authz.DeviceKind(row.Kind),
+		Revoked: row.Status != devices.StatusActive, SecretCiphertext: row.SecretCiphertext, SecretKeyID: row.SecretKeyID,
+	}
+	if row.LastSeenAt.Valid {
+		rec.LastSeenAt = row.LastSeenAt.Time
+	}
+	return rec, nil
+}
 
 // NewRepo returns a Repo that opens device secrets with sealer.
 func NewRepo(pool *pgxpool.Pool, sealer *secretbox.Sealer) *Repo {
