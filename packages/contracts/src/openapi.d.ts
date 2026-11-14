@@ -331,6 +331,129 @@ export interface paths {
         patch: operations["updateVehicle"];
         trace?: never;
     };
+    "/v1/lots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the lots
+         * @description Discovery call for both clients: the lot public id differs per database. M2 has one lot, so the page never has a next cursor.
+         */
+        get: operations["listLots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/lots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        /** Get one lot */
+        get: operations["getLot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/lots/{id}/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        /** Get the current availability of a lot */
+        get: operations["getLotAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/lots/{id}/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        /** Get the state of every space in a lot */
+        get: operations["getLotSpaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/lots/{id}/tariff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        /** Get the current tariff of a lot */
+        get: operations["getLotTariff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/lots/{id}/availability/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Stream the availability of a lot (server-sent events)
+         * @description The first event is always the current `availability` snapshot. Event `data` lines are bare JSON objects, not wrapped in the response envelope. The stream sends `retry: 3000` once, then three named events. `availability` (payload `Availability`, event id is its `version`) is sent on every change, at most one push per 250 ms. `spaces` (payload `SpacesEvent`, only with `include=spaces`) starts with a full snapshot and continues with deltas; after a missed update or a reconnect the server sends a full snapshot again. `heartbeat` (payload `HeartbeatEvent`) is sent every 15 seconds. Unknown `include` values and a malformed `Last-Event-ID` are ignored. The connection caps are checked before the stream starts and answer 429 with `Retry-After`.
+         */
+        get: operations["streamLotAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/admins": {
         parameters: {
             query?: never;
@@ -369,6 +492,11 @@ export interface components {
             database: "ok" | "fail";
             /** @enum {string} */
             migrations: "ok" | "behind" | "fail";
+            /**
+             * @description Postgres LISTEN connection behind the availability stream. Present once the listener runs.
+             * @enum {string}
+             */
+            listener?: "ok" | "fail";
         };
         Readiness: {
             /** @constant */
@@ -580,6 +708,97 @@ export interface components {
              */
             locale: "es-DO" | "en";
         };
+        LotSummary: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
+        };
+        Lot: {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            name: string;
+            address: string;
+            latitude: number | null;
+            longitude: number | null;
+            /** @description Built server-side, from the coordinates when present, else the address. */
+            map_url: string;
+            /** @example America/Santo_Domingo */
+            timezone: string;
+            capacity: number;
+            /** @description Only always_open exists in M2. */
+            opening_hours: {
+                always_open: boolean;
+            };
+            /** @enum {string} */
+            status: "open" | "full" | "closed";
+        };
+        Availability: {
+            /** Format: uuid */
+            lot_id: string;
+            available: number;
+            occupied: number;
+            /** @description Capacity minus the spaces that are out of service. */
+            effective_capacity: number;
+            capacity: number;
+            effective_holds: number;
+            upcoming_reservations_2h: number;
+            /**
+             * @description Precedence is closed, then full, then open.
+             * @enum {string}
+             */
+            status: "open" | "full" | "closed";
+            /**
+             * Format: int64
+             * @description Increases with every change. It is the SSE event id.
+             */
+            version: number;
+            /**
+             * Format: date-time
+             * @description When the occupancy last changed.
+             */
+            updated_at: string;
+        };
+        SpaceState: {
+            /** @example E001 */
+            code: string;
+            /** @enum {string} */
+            state: "free" | "occupied" | "out_of_service";
+        };
+        LotSpaces: {
+            /** @description Every space, ordered by code. */
+            spaces: components["schemas"]["SpaceState"][];
+        };
+        Tariff: {
+            /** Format: date-time */
+            effective_from: string;
+            /** @example DOP */
+            currency: string;
+            /** Format: int64 */
+            first_hour_cents: number;
+            /** Format: int64 */
+            additional_hour_cents: number;
+            exit_grace_minutes: number;
+            post_payment_exit_minutes: number;
+            /** Format: int64 */
+            daily_cap_cents: number;
+            /** Format: int64 */
+            lost_ticket_cents: number;
+            /** Format: int64 */
+            reservation_fee_cents: number;
+        };
+        /** @description Payload of the `spaces` SSE event. */
+        SpacesEvent: {
+            /** @description True for a complete snapshot, false for a delta. */
+            full: boolean;
+            spaces: components["schemas"]["SpaceState"][];
+        };
+        /** @description Payload of the `heartbeat` SSE event. */
+        HeartbeatEvent: {
+            /** Format: date-time */
+            as_of: string;
+        };
     };
     responses: {
         /** @description Request accepted. The answer is the same whether or not the account exists. */
@@ -788,8 +1007,32 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
+        /** @description The lot does not exist, or the id is malformed. */
+        LotNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "lot.not_found",
+                 *         "message": "lot not found",
+                 *         "details": {}
+                 *       },
+                 *       "meta": {
+                 *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
     };
-    parameters: never;
+    parameters: {
+        /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+        LotId: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -1579,6 +1822,182 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listLots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["LotSummary"][];
+                        meta: components["schemas"]["Meta"] & {
+                            page: components["schemas"]["Page"];
+                        };
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Lot"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            404: components["responses"]["LotNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLotAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current availability snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Availability"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            404: components["responses"]["LotNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLotSpaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every space, ordered by code. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["LotSpaces"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            404: components["responses"]["LotNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLotTariff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tariff version in force. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Tariff"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            404: components["responses"]["LotNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    streamLotAvailability: {
+        parameters: {
+            query?: {
+                /** @description Add the `spaces` event to the stream. */
+                include?: "spaces";
+            };
+            header?: {
+                /** @description The id of the last `availability` event received. */
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                /** @description Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found. */
+                id: components["parameters"]["LotId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An open event stream. Events are `availability` (Availability), `spaces` (SpacesEvent) and `heartbeat` (HeartbeatEvent). */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            404: components["responses"]["LotNotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

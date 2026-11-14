@@ -177,7 +177,7 @@ Every response uses one baseline envelope (decided 2026-11-07, see the M1 backen
 | Legal | `GET /v1/legal/current` (current terms + privacy versions); `register` requires `accepted_terms_version` + `accepted_privacy_version`; `POST /v1/me/legal-acceptance` re-accepts after a version bump | public / driver |
 | Me | `GET/PATCH /v1/me`, `DELETE /v1/me` (password re-check, rate limited 5 per 15 min per user) | driver (`GET` also admin) |
 | Vehicles | `GET/POST /v1/vehicles`, `GET/PATCH/DELETE /v1/vehicles/{id}` | driver |
-| Lot (public) | `GET /v1/lots/{id}`, `GET /v1/lots/{id}/availability`, `GET /v1/lots/{id}/availability/stream` (SSE), `GET /v1/lots/{id}/tariff` | public |
+| Lot (public) | `GET /v1/lots`, `GET /v1/lots/{id}`, `GET /v1/lots/{id}/availability`, `GET /v1/lots/{id}/spaces`, `GET /v1/lots/{id}/availability/stream` (SSE), `GET /v1/lots/{id}/tariff` | public |
 | Reservations | `POST /v1/reservations/quote`, `POST /v1/reservations`, `GET /v1/reservations`, `GET /v1/reservations/{id}`, `PATCH /v1/reservations/{id}` (change vehicle until arrival), `POST /v1/reservations/{id}/pay`, `POST /v1/reservations/{id}/cancel`, `GET /v1/reservations/{id}/qr` | driver |
 | Payments | `GET /v1/payments`, `GET /v1/payments/{id}` | driver |
 | Device API | `POST /v1/devices/events` (single endpoint, typed events), `POST /v1/devices/heartbeat` | device HMAC |

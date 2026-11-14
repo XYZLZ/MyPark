@@ -22,6 +22,8 @@ tags:
     description: The current user.
   - name: vehicles
     description: The current driver's vehicles.
+  - name: lots
+    description: Public lot discovery, availability, spaces and tariff.
   - name: admin
     description: Admin user management.
 paths:
@@ -657,6 +659,196 @@ paths:
                 meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /v1/lots:
+    get:
+      operationId: listLots
+      summary: List the lots
+      description: >-
+        Discovery call for both clients: the lot public id differs per
+        database. M2 has one lot, so the page never has a next cursor.
+      tags: [lots]
+      security: []
+      x-mypark-pending: S10
+      responses:
+        "200":
+          description: The lots.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LotSummary" }
+                  meta:
+                    allOf:
+                      - $ref: "#/components/schemas/Meta"
+                      - type: object
+                        required: [page]
+                        properties:
+                          page: { $ref: "#/components/schemas/Page" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/lots/{id}:
+    parameters:
+      - $ref: "#/components/parameters/LotId"
+    get:
+      operationId: getLot
+      summary: Get one lot
+      tags: [lots]
+      security: []
+      x-mypark-pending: S10
+      responses:
+        "200":
+          description: The lot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Lot" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "404": { $ref: "#/components/responses/LotNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/lots/{id}/availability:
+    parameters:
+      - $ref: "#/components/parameters/LotId"
+    get:
+      operationId: getLotAvailability
+      summary: Get the current availability of a lot
+      tags: [lots]
+      security: []
+      x-mypark-pending: S10
+      responses:
+        "200":
+          description: The current availability snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Availability" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "404": { $ref: "#/components/responses/LotNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/lots/{id}/spaces:
+    parameters:
+      - $ref: "#/components/parameters/LotId"
+    get:
+      operationId: getLotSpaces
+      summary: Get the state of every space in a lot
+      tags: [lots]
+      security: []
+      x-mypark-pending: S10
+      responses:
+        "200":
+          description: Every space, ordered by code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/LotSpaces" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "404": { $ref: "#/components/responses/LotNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/lots/{id}/tariff:
+    parameters:
+      - $ref: "#/components/parameters/LotId"
+    get:
+      operationId: getLotTariff
+      summary: Get the current tariff of a lot
+      tags: [lots]
+      security: []
+      x-mypark-pending: S2.2
+      responses:
+        "200":
+          description: The tariff version in force.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Tariff" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "404": { $ref: "#/components/responses/LotNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/lots/{id}/availability/stream:
+    parameters:
+      - $ref: "#/components/parameters/LotId"
+    get:
+      operationId: streamLotAvailability
+      summary: Stream the availability of a lot (server-sent events)
+      description: >-
+        The first event is always the current `availability` snapshot. Event
+        `data` lines are bare JSON objects, not wrapped in the response
+        envelope. The stream sends `retry: 3000` once, then three named
+        events. `availability` (payload `Availability`, event id is its
+        `version`) is sent on every change, at most one push per 250 ms.
+        `spaces` (payload `SpacesEvent`, only with `include=spaces`) starts
+        with a full snapshot and continues with deltas; after a missed update
+        or a reconnect the server sends a full snapshot again. `heartbeat`
+        (payload `HeartbeatEvent`) is sent every 15 seconds. Unknown `include`
+        values and a malformed `Last-Event-ID` are ignored. The connection
+        caps are checked before the stream starts and answer 429 with
+        `Retry-After`.
+      tags: [lots]
+      security: []
+      x-mypark-pending: S11.2
+      parameters:
+        - name: include
+          in: query
+          required: false
+          description: Add the `spaces` event to the stream.
+          schema: { type: string, enum: [spaces] }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: The id of the last `availability` event received.
+          schema: { type: string }
+      responses:
+        "200":
+          description: >-
+            An open event stream. Events are `availability` (Availability),
+            `spaces` (SpacesEvent) and `heartbeat` (HeartbeatEvent).
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >-
+                  Server-sent events. The `data` of an `availability` event is
+                  an Availability object, of a `spaces` event a SpacesEvent, and
+                  of a `heartbeat` event a HeartbeatEvent.
+              examples:
+                stream:
+                  summary: First frames of a stream with include=spaces.
+                  value: |
+                    retry: 3000
+
+                    event: availability
+                    id: 1042
+                    data: {"lot_id":"0192f4a0-7b1c-7c3e-9d52-3f6a8b1c2d4e","available":12,"occupied":268,"effective_capacity":280,"capacity":280,"effective_holds":0,"upcoming_reservations_2h":0,"status":"open","version":1042,"updated_at":"2026-11-24T14:03:11Z"}
+
+                    event: spaces
+                    data: {"full":true,"spaces":[{"code":"E001","state":"occupied"}]}
+
+                    event: heartbeat
+                    data: {"as_of":"2026-11-24T14:03:26Z"}
+        "404": { $ref: "#/components/responses/LotNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /v1/admin/admins:
     get:
       operationId: listAdmins
@@ -771,6 +963,10 @@ components:
         migrations:
           type: string
           enum: [ok, behind, fail]
+        listener:
+          type: string
+          description: Postgres LISTEN connection behind the availability stream. Present once the listener runs.
+          enum: [ok, fail]
     Readiness:
       type: object
       additionalProperties: false
@@ -1037,6 +1233,143 @@ components:
         first_name: { type: string, minLength: 1, maxLength: 60 }
         last_name: { type: string, minLength: 1, maxLength: 80 }
         locale: { type: string, enum: [es-DO, en], default: es-DO }
+    LotSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+    Lot:
+      type: object
+      additionalProperties: false
+      required: [id, slug, name, address, latitude, longitude, map_url, timezone, capacity, opening_hours, status]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        address: { type: string }
+        latitude: { type: [number, "null"] }
+        longitude: { type: [number, "null"] }
+        map_url:
+          type: string
+          description: Built server-side, from the coordinates when present, else the address.
+        timezone: { type: string, examples: [America/Santo_Domingo] }
+        capacity: { type: integer }
+        opening_hours:
+          type: object
+          additionalProperties: false
+          description: Only always_open exists in M2.
+          required: [always_open]
+          properties:
+            always_open: { type: boolean }
+        status:
+          type: string
+          enum: [open, full, closed]
+    Availability:
+      type: object
+      additionalProperties: false
+      required:
+        - lot_id
+        - available
+        - occupied
+        - effective_capacity
+        - capacity
+        - effective_holds
+        - upcoming_reservations_2h
+        - status
+        - version
+        - updated_at
+      properties:
+        lot_id: { type: string, format: uuid }
+        available: { type: integer, minimum: 0 }
+        occupied: { type: integer, minimum: 0 }
+        effective_capacity:
+          type: integer
+          description: Capacity minus the spaces that are out of service.
+        capacity: { type: integer }
+        effective_holds: { type: integer, minimum: 0 }
+        upcoming_reservations_2h: { type: integer, minimum: 0 }
+        status:
+          type: string
+          description: Precedence is closed, then full, then open.
+          enum: [open, full, closed]
+        version:
+          type: integer
+          format: int64
+          description: Increases with every change. It is the SSE event id.
+        updated_at:
+          type: string
+          format: date-time
+          description: When the occupancy last changed.
+    SpaceState:
+      type: object
+      additionalProperties: false
+      required: [code, state]
+      properties:
+        code: { type: string, examples: [E001] }
+        state:
+          type: string
+          enum: [free, occupied, out_of_service]
+    LotSpaces:
+      type: object
+      additionalProperties: false
+      required: [spaces]
+      properties:
+        spaces:
+          type: array
+          description: Every space, ordered by code.
+          items: { $ref: "#/components/schemas/SpaceState" }
+    Tariff:
+      type: object
+      additionalProperties: false
+      required:
+        - effective_from
+        - currency
+        - first_hour_cents
+        - additional_hour_cents
+        - exit_grace_minutes
+        - post_payment_exit_minutes
+        - daily_cap_cents
+        - lost_ticket_cents
+        - reservation_fee_cents
+      properties:
+        effective_from: { type: string, format: date-time }
+        currency: { type: string, examples: [DOP] }
+        first_hour_cents: { type: integer, format: int64 }
+        additional_hour_cents: { type: integer, format: int64 }
+        exit_grace_minutes: { type: integer }
+        post_payment_exit_minutes: { type: integer }
+        daily_cap_cents: { type: integer, format: int64 }
+        lost_ticket_cents: { type: integer, format: int64 }
+        reservation_fee_cents: { type: integer, format: int64 }
+    SpacesEvent:
+      type: object
+      additionalProperties: false
+      description: Payload of the `spaces` SSE event.
+      required: [full, spaces]
+      properties:
+        full:
+          type: boolean
+          description: True for a complete snapshot, false for a delta.
+        spaces:
+          type: array
+          items: { $ref: "#/components/schemas/SpaceState" }
+    HeartbeatEvent:
+      type: object
+      additionalProperties: false
+      description: Payload of the `heartbeat` SSE event.
+      required: [as_of]
+      properties:
+        as_of: { type: string, format: date-time }
+  parameters:
+    LotId:
+      name: id
+      in: path
+      required: true
+      description: Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found.
+      schema: { type: string, format: uuid }
   securitySchemes:
     bearerAuth:
       type: http
@@ -1202,4 +1535,12 @@ components:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
           example:
             error: { code: internal.unexpected, message: internal error, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    LotNotFound:
+      description: The lot does not exist, or the id is malformed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: lot.not_found, message: lot not found, details: {} }
             meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }

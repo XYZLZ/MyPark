@@ -44,3 +44,10 @@ test('toHealthState maps a 503 success envelope to unavailable', () =>
   expect(
     toHealthState({ status: 503, body: ok({ status: 'ready', checks: { database: 'ok', migrations: 'ok' } }) }),
   ).toBe('unavailable'));
+
+test('readiness accepts an optional listener check', () => {
+  const body = (checks: Record<string, string>) => ok({ status: 'ready', checks });
+  expect(toHealthState({ status: 200, body: body({ database: 'ok', migrations: 'ok', listener: 'ok' }) })).toBe('healthy');
+  expect(toHealthState({ status: 200, body: body({ database: 'ok', migrations: 'ok' }) })).toBe('healthy');
+  expect(toHealthState({ status: 200, body: body({ database: 'ok', migrations: 'ok', listener: 'down' }) })).toBe('unavailable');
+});

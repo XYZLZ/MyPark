@@ -19,6 +19,7 @@ export const healthSchema = z.strictObject({
 export const readinessChecksSchema = z.strictObject({
   database: z.enum(['ok', 'fail']),
   migrations: z.enum(['ok', 'behind', 'fail']),
+  listener: z.enum(['ok', 'fail']).optional(),
 });
 
 export const readinessSchema = z.strictObject({
