@@ -90,6 +90,10 @@ func TestDecodeStrict_InvalidJSONIs400(t *testing.T) {
 		"float for int":   `{"amt":5000.5}`,
 		"string for int":  `{"amt":"5000"}`,
 		"int64 overflow":  `{"amt":1e20}`,
+		// S5.1 carry: the syntax is checked before the key walk, so an
+		// unknown key ahead of the error does not turn it into a 422.
+		"unknown key then malformed": `{"zzz":1,"a":`,
+		"unknown nested then cut":    `{"inner":{"zz":1,`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ae := strictErr(t, raw)

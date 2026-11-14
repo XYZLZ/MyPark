@@ -27,6 +27,8 @@ import (
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	devicespg "github.com/XYZLZ/MyPark/apps/server/internal/features/devices/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
+	gatepg "github.com/XYZLZ/MyPark/apps/server/internal/features/gate/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
@@ -179,7 +181,8 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	authRepo := authpg.NewRepo(d.pool)
 	verifier := jwt.NewVerifier(d.cfg.JWTVerifyKeys(), d.clock)
 	gates := authn.New(auth.NewAuthenticator(verifier, authRepo, legalSvc, d.clock), d.log, authn.WithLegal(legalSvc))
-	deviceAuth := devices.NewAuthenticator(devicespg.NewRepo(d.pool), d.sealer, d.clock, d.log)
+	deviceRepo := devicespg.NewRepo(d.pool)
+	deviceAuth := devices.NewAuthenticator(deviceRepo, d.sealer, d.clock, d.log)
 	r := router.New(mux, router.Middlewares{
 		ClientIP:    middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
 		RateLimit:   middleware.RateLimit(d.limiter, d.log),
@@ -195,6 +198,15 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	tariffs.NewHandler(tariffSvc, lotspg.NewRepo(d.pool), d.clock, d.log).Register(r)
 
 	tx := database.NewTxRunner(d.pool)
+	devices.NewHandler(devices.HandlerDeps{
+		Tx:     tx,
+		Store:  deviceRepo,
+		Gate:   gate.NewService(gate.Deps{Repo: gatepg.NewRepo(), Clock: d.clock, Log: d.log}),
+		Sealer: d.sealer,
+		Clock:  d.clock,
+		Log:    d.log,
+	}).Register(r)
+
 	auditRec := auditpg.NewRecorder()
 	notifier := notificationspg.NewNotifier(d.clock)
 	authSvc := auth.NewService(auth.Deps{

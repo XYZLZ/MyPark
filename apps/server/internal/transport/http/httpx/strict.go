@@ -40,7 +40,9 @@ func DecodeStrict(raw []byte, out any) error { return DecodeStrictAt(raw, out, "
 // reported as prefix + "." + key, so a payload error reads "payload.x".
 func DecodeStrictAt(raw []byte, out any, prefix string) error {
 	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || raw[0] != '{' {
+	// Syntax first: an unknown key ahead of a syntax error must not make a
+	// malformed body a 422.
+	if len(raw) == 0 || raw[0] != '{' || !json.Valid(raw) {
 		return badJSON()
 	}
 	if err := checkKeys(raw, reflect.TypeOf(out), prefix); err != nil {

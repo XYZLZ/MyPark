@@ -1,4 +1,4 @@
-// Package postgres implements devices.Registry over sqlc.
+// Package postgres implements devices.Registry and devices.Store over sqlc.
 package postgres
 
 import (

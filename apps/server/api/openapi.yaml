@@ -962,7 +962,6 @@ paths:
         - deviceId: []
           deviceTimestamp: []
           deviceSignature: []
-      x-mypark-pending: S5.2
       parameters:
         - $ref: "#/components/parameters/DeviceId"
         - $ref: "#/components/parameters/DeviceTimestamp"

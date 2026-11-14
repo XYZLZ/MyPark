@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,14 +13,17 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
 
@@ -104,6 +108,14 @@ var matrix = map[string]matrixEntry{
 	}},
 
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
+
+	// Unsigned: the user rows carry at most a bearer, which a device route
+	// ignores. The device principals are signed in deviceRows.
+	"POST /v1/devices/events": {build: func(*fixture) *http.Request {
+		return jsonReq("POST", "/v1/devices/events", map[string]any{
+			"event_id": uuid.NewString(), "type": "heartbeat", "occurred_at": "2026-11-20T11:59:59Z", "payload": map[string]any{},
+		})
+	}},
 	"POST /v1/admin/admins": {build: func(f *fixture) *http.Request {
 		return jsonReq("POST", "/v1/admin/admins",
 			map[string]any{"email": f.email(), "first_name": "New", "last_name": "Admin"})
@@ -151,6 +163,11 @@ var rows = []row{
 func expected(p router.Policy, r row) outcome {
 	if p.Public {
 		return outcome{}
+	}
+	// A device route ignores bearer tokens: every user principal is anonymous
+	// to it (design §7.8).
+	if p.Device {
+		return outcome{http.StatusUnauthorized, string(errcodes.DeviceUnauthenticated)}
 	}
 	switch r.kind {
 	case "anonymous", "bad-token":
@@ -225,7 +242,28 @@ func TestAuthzMatrix(t *testing.T) {
 					t.Errorf("%s: got %d %q, want 2xx (body %s)", r.name, rec.Code, errCode(body), rec.Body)
 				}
 			}
+			if rt.Policy.Device {
+				deviceRows(t, e)
+			}
 		})
+	}
+}
+
+// deviceRows are the device principals of a device route (design §7.8): a
+// signed device sending a type its kind allows passes, any other type is 403.
+func deviceRows(t *testing.T, e *apiEnv) {
+	t.Helper()
+	de := &deviceEnv{apiEnv: e, lotID: testsupport.SeedPilotLot(t, e.db)}
+	podium := de.device(authz.DevicePodium)
+	gateway := de.device(authz.DeviceSensorGateway)
+
+	if rec := de.send(podium, de.eventBody(uuid.New(), "heartbeat", map[string]any{})); rec.Code != http.StatusOK {
+		t.Errorf("device, allowed type: got %d %s, want 200", rec.Code, rec.Body)
+	}
+	scan := map[string]any{"credential": map[string]any{"kind": "ticket", "value": "ABCD1234EFGH5678"}}
+	rec := de.send(gateway, de.eventBody(uuid.New(), "paystation.scan", scan))
+	if rec.Code != http.StatusForbidden || errCode(decodeBody(t, rec)) != string(errcodes.DeviceEventNotAllowed) {
+		t.Errorf("device, disallowed type: got %d %s, want 403 %s", rec.Code, rec.Body, errcodes.DeviceEventNotAllowed)
 	}
 }
 
@@ -336,6 +374,8 @@ var specPolicy = map[string]struct {
 	access      string // public | driver | admin | any | device
 	legalExempt bool
 	limit       *ratelimit.Rule // the route's Policy.Limit; nil means none
+	// deviceLimits are the rules a device route consults, in order.
+	deviceLimits []ratelimit.Rule
 }{
 	"GET /v1/legal/current":            {access: "public"},
 	"GET /v1/lots/{id}/tariff":         {access: "public", limit: &ratelimit.PublicReadIP},
@@ -360,10 +400,16 @@ var specPolicy = map[string]struct {
 	"DELETE /v1/vehicles/{id}":         {access: "driver", limit: &ratelimit.VehicleWriteUser},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},
+	// A device route declares no Policy.Limit: the router applies DeviceIP
+	// before DeviceAuth and the per-device rule after it.
+	"POST /v1/devices/events": {access: "device", deviceLimits: []ratelimit.Rule{
+		ratelimit.DeviceIP, ratelimit.DeviceRule(config.DefaultDeviceRateLimitPerS),
+	}},
 }
 
 func TestRegistryMatchesSpecPolicies(t *testing.T) {
-	e := newAPIEnv(t)
+	limiter := &recordingLimiter{}
+	e := newAPIEnv(t, func(d *deps) { d.limiter = limiter })
 	for _, rt := range e.routes {
 		want, ok := specPolicy[rt.Pattern]
 		if !ok {
@@ -391,17 +437,54 @@ func TestRegistryMatchesSpecPolicies(t *testing.T) {
 		if rt.Policy.LegalExempt != want.legalExempt {
 			t.Errorf("%s: legalExempt %v, spec says %v", rt.Pattern, rt.Policy.LegalExempt, want.legalExempt)
 		}
-		// A device route's limits (DeviceIP, DeviceLimit) are fixed by the
-		// router and pinned by its chain test, so its Policy.Limit is nil here.
+		// A device route's Policy.Limit is nil; its fixed limits are checked
+		// below through the rules the live route consults.
 		switch got := rt.Policy.Limit; {
 		case got == nil && want.limit == nil:
 		case got == nil || want.limit == nil || *got != *want.limit:
 			t.Errorf("%s: limit %s, spec says %s", rt.Pattern, ruleName(got), ruleName(want.limit))
 		}
+		if rt.Policy.Device {
+			if got := deviceRouteRules(t, e, limiter); !slices.Equal(got, want.deviceLimits) {
+				t.Errorf("%s: device limits %+v, spec says %+v", rt.Pattern, got, want.deviceLimits)
+			}
+		} else if want.deviceLimits != nil {
+			t.Errorf("%s: spec lists device limits on a non-device route", rt.Pattern)
+		}
 	}
 	if len(specPolicy) != len(e.routes) {
 		t.Errorf("spec lists %d routes, registry has %d", len(specPolicy), len(e.routes))
 	}
+}
+
+// recordingLimiter allows everything and records the rules it was asked about.
+type recordingLimiter struct {
+	mu    sync.Mutex
+	rules []ratelimit.Rule
+}
+
+func (l *recordingLimiter) Allow(_ context.Context, r ratelimit.Rule, _ string) (ratelimit.Decision, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rules = append(l.rules, r)
+	return ratelimit.Decision{Allowed: true}, nil
+}
+
+// deviceRouteRules sends one signed heartbeat and returns the rules the route
+// consulted, in order.
+func deviceRouteRules(t *testing.T, e *apiEnv, l *recordingLimiter) []ratelimit.Rule {
+	t.Helper()
+	de := &deviceEnv{apiEnv: e, lotID: testsupport.SeedPilotLot(t, e.db)}
+	d := de.device(authz.DevicePodium)
+	l.mu.Lock()
+	l.rules = nil
+	l.mu.Unlock()
+	if rec := de.send(d, de.eventBody(uuid.New(), "heartbeat", map[string]any{})); rec.Code != http.StatusOK {
+		t.Fatalf("signed heartbeat: %d %s", rec.Code, rec.Body)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.rules)
 }
 
 func ruleName(r *ratelimit.Rule) string {
