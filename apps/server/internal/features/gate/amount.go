@@ -14,21 +14,22 @@ func ReceiptNo(paymentID int64) string { return fmt.Sprintf("MP-%08d", paymentID
 
 // amountDue is what the locked stay owes at now under the tariff version it
 // entered with (M2C-2). Scan, lost ticket, cash and exit all price through it,
-// so their amounts always agree (design §12.2).
-func (s *Service) amountDue(ctx context.Context, stay Stay, now time.Time) (int64, tariffs.Breakdown, error) {
+// so their amounts always agree (design §12.2). It also returns the tariff it
+// priced with, which sets a payment's exit window.
+func (s *Service) amountDue(ctx context.Context, stay Stay, now time.Time) (int64, tariffs.Breakdown, tariffs.Tariff, error) {
 	v, err := s.tariffs.ByID(ctx, stay.TariffVersionID)
 	if err != nil {
-		return 0, tariffs.Breakdown{}, fmt.Errorf("gate: tariff of stay: %w", err)
+		return 0, tariffs.Breakdown{}, tariffs.Tariff{}, fmt.Errorf("gate: tariff of stay: %w", err)
 	}
 	paid, paidAt, err := s.repo.PaymentTotals(ctx, stay.LotID, stay.ID)
 	if err != nil {
-		return 0, tariffs.Breakdown{}, err
+		return 0, tariffs.Breakdown{}, tariffs.Tariff{}, err
 	}
 	due, bd := tariffs.AmountDue(v.Tariff, tariffs.Stay{
 		Kind: tariffs.StayKind(stay.CredentialKind), EnteredAt: stay.EnteredAt, Paid: stay.Status == StatusPaid,
 		LostTicket: stay.LostTicket, PaidCents: paid, PaidAt: paidAt, ExitDeadline: stay.ExitDeadlineAt,
 	}, now)
-	return due, bd, nil
+	return due, bd, v.Tariff, nil
 }
 
 // reactivateIfLapsed applies the lazy paid -> active transition (M2C-35): a

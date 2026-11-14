@@ -487,3 +487,54 @@ func TestScan_EmployeeCard(t *testing.T) {
 		map[string]any{"stay_id": card, "amount_cents": 100}))), "gate.nothing_due")
 	e.invariant()
 }
+
+// §10.2: marking an already-lost stay again only rotates the code, so a lost
+// stay paid inside its window stays paid with nothing due.
+func TestLostTicket_SecondMarkOnPaidLostStayOnlyRotates(t *testing.T) {
+	e := newPayEnv(t)
+	e.at(time.Hour)
+	first := e.lost(e.stayID)
+	if first.amount() != 50000 {
+		t.Fatalf("lost = %+v, want 50000", first)
+	}
+	if got := e.cash(50000); got.Result != "ack" {
+		t.Fatalf("cash = %+v, want ack", got)
+	}
+	e.at(time.Hour + 5*time.Minute)
+	second := e.lost(e.stayID)
+	if second.Result != "ack" || second.TicketCode == "" || second.TicketCode == first.TicketCode ||
+		second.amount() != 0 || second.kind() != "paid" {
+		t.Fatalf("second lost = %+v, want ack, a rotated code, 0 paid", second)
+	}
+	if s := e.payStay(); s.Status != "paid" || !s.LostTicket {
+		t.Errorf("stay = %+v, want still paid and lost", s)
+	}
+	wantRejected(t, e.scan(gate.KindTicket, first.TicketCode), "gate.credential_invalid")
+	if got := e.scan(gate.KindTicket, second.TicketCode); got.Status != "paid" || got.amount() != 0 {
+		t.Errorf("scan of the new code = %+v, want paid 0", got)
+	}
+	if n := e.payments(); n != 1 {
+		t.Errorf("payments = %d, want 1", n)
+	}
+	e.invariant()
+}
+
+// The due is recomputed at payment time: a scan's amount goes stale when
+// the next hour starts.
+func TestCash_AmountChangedSinceScan(t *testing.T) {
+	e := newPayEnv(t)
+	e.at(59*time.Minute + 59*time.Second)
+	if got := e.scan(gate.KindTicket, e.ticketCode); got.amount() != 5000 {
+		t.Fatalf("scan = %+v, want 5000", got)
+	}
+	e.at(time.Hour + time.Second)
+	got := e.cash(5000)
+	wantRejected(t, got, "gate.amount_mismatch")
+	if got.amount() != 7500 {
+		t.Errorf("mismatch amount = %d, want 7500", got.amount())
+	}
+	if n := e.payments(); n != 0 {
+		t.Errorf("payments = %d, want 0", n)
+	}
+	e.invariant()
+}

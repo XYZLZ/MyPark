@@ -133,8 +133,11 @@ where lot_id = @lot_id and id = @id and status = 'paid';
 
 -- name: MarkStayLost :execrows
 -- A lost ticket (design §10.2): the old code stops working and a paid stay
--- owes money again. paid_at and exit_deadline_at are kept (O13).
+-- owes money again. Marking an already-lost stay again only rotates the
+-- code, so a lost stay that paid keeps its status. paid_at and
+-- exit_deadline_at are kept (O13).
 update stays
-set lost_ticket = true, ticket_code_hash = @ticket_code_hash, status = 'active',
+set lost_ticket = true, ticket_code_hash = @ticket_code_hash,
+    status = case when lost_ticket then status else 'active' end,
     updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and credential_kind = 'ticket' and status in ('active', 'paid');

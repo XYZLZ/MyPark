@@ -31,7 +31,7 @@ func (s *Service) payScan(ctx context.Context, d authz.Device, ev Event) (Result
 	if err := s.reactivateIfLapsed(ctx, &stay, now); err != nil {
 		return Result{}, err
 	}
-	due, bd, err := s.amountDue(ctx, stay, now)
+	due, bd, _, err := s.amountDue(ctx, stay, now)
 	if err != nil {
 		return Result{}, err
 	}
@@ -60,15 +60,22 @@ func (s *Service) lostTicket(ctx context.Context, d authz.Device, ev Event) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	if stay.Status == StatusPaid && !CanTransition(StatusPaid, StatusActive) {
+	// A lapsed window reopens the stay first, exactly as a scan would.
+	if err := s.reactivateIfLapsed(ctx, &stay, now); err != nil {
+		return Result{}, err
+	}
+	if !stay.LostTicket && stay.Status == StatusPaid && !CanTransition(StatusPaid, StatusActive) {
 		return Result{}, fmt.Errorf("gate: stay %s cannot go from %s to %s", stay.PublicID, stay.Status, StatusActive)
 	}
 	if err := s.repo.MarkStayLost(ctx, d.LotID, stay.ID, HashTicketCode(code), now); err != nil {
 		return Result{}, err
 	}
-	// Price what was just written: a paid stay owes money again (L7).
-	stay.Status, stay.LostTicket = StatusActive, true
-	due, bd, err := s.amountDue(ctx, stay, now)
+	// Price what was just written. The first mark makes a paid stay owe
+	// money again (L7); a second one only rotates the code (§10.2).
+	if !stay.LostTicket {
+		stay.Status, stay.LostTicket = StatusActive, true
+	}
+	due, bd, _, err := s.amountDue(ctx, stay, now)
 	if err != nil {
 		return Result{}, err
 	}
@@ -94,7 +101,7 @@ func (s *Service) cashPaid(ctx context.Context, d authz.Device, ev Event) (Resul
 	if err := s.reactivateIfLapsed(ctx, &stay, now); err != nil {
 		return Result{}, err
 	}
-	due, _, err := s.amountDue(ctx, stay, now)
+	due, _, tariff, err := s.amountDue(ctx, stay, now)
 	switch {
 	case err != nil:
 		return Result{}, err
@@ -108,11 +115,7 @@ func (s *Service) cashPaid(ctx context.Context, d authz.Device, ev Event) (Resul
 		return Result{}, fmt.Errorf("gate: stay %s cannot go from %s to %s", stay.PublicID, stay.Status, StatusPaid)
 	}
 
-	v, err := s.tariffs.ByID(ctx, stay.TariffVersionID)
-	if err != nil {
-		return Result{}, fmt.Errorf("gate: tariff of stay: %w", err)
-	}
-	deadline := now.Add(v.Tariff.PostPaymentExit)
+	deadline := now.Add(tariff.PostPaymentExit)
 	paymentID, err := s.repo.InsertPayment(ctx, NewPayment{
 		StayID: stay.ID, Method: "cash", AmountCents: due, DeviceID: d.ID, SucceededAt: now,
 		IdempotencyKey: "cash:" + d.PublicID.String() + ":" + ev.ID.String(),

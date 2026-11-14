@@ -349,7 +349,8 @@ func (q *Queries) LockLotOccupancy(ctx context.Context, lotID int64) (LockLotOcc
 
 const markStayLost = `-- name: MarkStayLost :execrows
 update stays
-set lost_ticket = true, ticket_code_hash = $1, status = 'active',
+set lost_ticket = true, ticket_code_hash = $1,
+    status = case when lost_ticket then status else 'active' end,
     updated_at = $2::timestamptz
 where lot_id = $3 and id = $4 and credential_kind = 'ticket' and status in ('active', 'paid')
 `
@@ -362,7 +363,9 @@ type MarkStayLostParams struct {
 }
 
 // A lost ticket (design §10.2): the old code stops working and a paid stay
-// owes money again. paid_at and exit_deadline_at are kept (O13).
+// owes money again. Marking an already-lost stay again only rotates the
+// code, so a lost stay that paid keeps its status. paid_at and
+// exit_deadline_at are kept (O13).
 func (q *Queries) MarkStayLost(ctx context.Context, arg MarkStayLostParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markStayLost,
 		arg.TicketCodeHash,
