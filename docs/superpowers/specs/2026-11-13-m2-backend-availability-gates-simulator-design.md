@@ -1,10 +1,10 @@
 # M2 Track A — Backend Availability, Gates and Simulator: Design
 
-**Status:** draft — pending user approval · **Date:** 2026-11-13 · **Milestone:** M2 (Nov 23 – Nov 27) · **Track:** A (Go backend, simulator, API contract)
+**Status:** draft — pending user approval (overstay rule decided by the user on 2026-11-13) · **Date:** 2026-11-13 · **Milestone:** M2 (Nov 23 – Nov 27) · **Track:** A (Go backend, simulator, API contract)
 
 This document designs the Go side of M2: the device API with per-device HMAC keys, the gate flows (entry, pay station, exit), the occupancy counter, live availability over SSE, the per-space sensor map, the pay-station fee calculator, and the simulator with its control API. **The gate count and the money are the center of gravity.** Every other part is shaped so it cannot let the count drift or let a car leave without the right charge.
 
-> **How to read this.** §1–§3 explain *why* and what is fixed. §4–§13 are the design. §14 covers the M1 leftovers. §15–§18 cover testing, build order, risks and what is left to the builder. Decisions are numbered **M2C-n**. M2C-1 to M2C-12 were made by the user and the controller and are binding. The rest are **(our call)** and collected in §2.2 for review. Each decision lists its reason and what it costs if it turns out wrong.
+> **How to read this.** §1–§3 explain *why* and what is fixed. §4–§13 are the design. §14 covers the M1 leftovers. §15–§18 cover testing, build order, risks and what is left to the builder. Decisions are numbered **M2C-n**. M2C-1 to M2C-12 were made by the user and the controller, and M2C-35 (the overstay rule) by the user; all are binding and listed in §2.1. The rest are **(our call)** and collected in §2.2 for review. Each decision lists its reason and what it costs if it turns out wrong.
 >
 > **Sources:** `docs/spec.md` (§3.3, §3.6, §3.7, §4, §5.1, §5.2, §5.4, §8 M2, §10), `docs/architecture.md` (§4.4, §6, §7, §8, §9, §10, §11, §14, §16, §17), `docs/policies.md` (§1.3–§1.5, §1.8, §2.2–§2.10), the M1 backend design `docs/superpowers/specs/2026-11-07-m1-backend-auth-vehicles-design.md`, and the code under `apps/server` at `main`.
 
@@ -76,6 +76,7 @@ M2 is the first milestone where cars move. The demo promise is "watch the count 
 | M2C-10 | `effective_capacity = capacity − spaces out_of_service`. Admin toggling is M4. `lots.status` is read-only in M2 | §5.2 definition; no admin endpoints yet | None. The formula already reads the live space status | §9.2 |
 | M2C-11 | M1 leftovers in the contract slice: register `session.logout_unconfirmed` in the catalog with translations; mobile logout-all treats 401 as unconfirmed like web; update clients design §5.5 and spec #37. Strict zod **response** schemas become non-strict before the first store build (M5), not in M2 | Closes the drift between catalog, web and mobile found in the M1 demo run | Small. The non-strict switch is a known M5 item | §14 |
 | M2C-12 | **Contract first.** The first M2 PRs publish the `openapi.yaml` paths (lots, availability, SSE as `text/event-stream`, device API with an HMAC security scheme, simulator control), the error codes and the regenerated contracts, before implementation. Sensitive slices (migrations, device signatures) carry the security checklist and an automated risk review | Track B builds the availability screens and the console against types and MSW mocks while Track A implements | A post-handoff contract change needs both developers' approval (policies §2.2) | §16 |
+| M2C-35 | **Overstay bills only the time since payment** (FR-GATE-7, decided by the user on 2026-11-13). Evaluated lazily by the shared `amountDue` (`paystation.scan`, `paystation.cash_paid`, `exit.credential_presented`). A `paid` stay past its deadline moves `paid → active` in that transaction and keeps `exit_deadline_at`. Whenever `exit_deadline_at` is set and passed (whatever the status), amount due = `max(additional_hour, segmentFee(now − paid_at))`, where `paid_at` is the latest payment's time and the segment is priced with the stay's tariff rules: first hour, then additional hours, the daily cap per 24 h counted from `paid_at`, and **no** 10-min entry grace. Each payment resets `paid_at`, so a second overstay is billed from the second payment. A lost ticket whose penalty is not yet covered owes the larger of that and `lostFee(d) − paid` (§12.2). Example: paid at 1 h 30 m, scanned at 3 h 10 m → segment 1 h 40 m → `5000 + 1 × 2500` = RD$75. Replaces the earlier whole-stay re-pricing `max(additional, fee(entered_at → now) − paid)`. A stay can have several payments; no worker job, since nothing observes the overstay except the next scan | Spec FR-GATE-7 wording ("the extra time since payment is billed"); product owner's rule | Each segment restarts the first-hour price and the daily cap at `paid_at`, so a long or repeated overstay pays more than whole-stay pricing: O3 pays 40000 + 10000 = 50000 inside one 24 h block (whole-stay re-pricing gave 40000 + 2500). With the default tariff the additional-hour floor never binds (a segment past the 15-min window already costs a first hour, 5000); it stays as a guard. Going back to whole-stay pricing is one branch of `amountDue` plus rows O1–O13 | §10, §12.2, §12.4 |
 
 ### 2.2 Our calls (review these)
 
@@ -103,7 +104,7 @@ M2 is the first milestone where cars move. The demo promise is "watch the count 
 | M2C-32 | Exit authorization is stored (`stays.exit_authorized_at`) when `exit.credential_presented` opens, and the zero-due decision is made at that moment. On the exit pass, an `active` stay gets the RD$0 payment and moves `active → paid → exited` in one transaction | A car authorized at 9:58 must not be charged because it passed the barrier at 10:02 | One extra column. None otherwise | §10.5 |
 | M2C-33 | **Lost ticket (pay station path):** new event `paystation.lost_ticket {stay_id}`. The pay station identifies the stay (in Phase 1 the simulator knows it; at a real facility the attendant looks it up, M4). The server marks `lost_ticket = true`, **replaces the ticket code** (the old one stops working) and returns the replacement code and the amount due. The lost-ticket fee applies even inside the 10-min grace. The admin path is M4 | Keeps exit uniform (always a ticket code) and kills the old ticket; grace is a courtesy for short stays, not a waiver of the penalty | Adds an event type to architecture §8.2. If product wants grace to win, it is one branch in the calculator | §10.4, §12.2 |
 | M2C-34 | `paystation.cash_paid.amount_cents` must **equal** the amount the server recomputes in the payment transaction; otherwise `rejected gate.amount_mismatch` with the current amount. A paid stay inside its window answers `rejected gate.nothing_due`. Receipt number = `MP-` + zero-padded 8-digit payment id | The server owns money; the device only confirms | A legitimate change between scan and pay (crossing an hour) costs one rescan |  §10.3 |
-| M2C-35 | FR-GATE-7 **overstay is lazy**: evaluated at `paystation.scan` and `exit.credential_presented`. A `paid` stay past its deadline moves `paid → active` in that transaction and keeps `exit_deadline_at`. Whenever `exit_deadline_at` is set and passed (whatever the status), amount due = `max(additional_hour, fee(entered_at → now) − sum(succeeded parking_fee payments))`. A stay can have several payments | "Same tariff rules" means the whole stay is re-priced (cap and blocks included), and the spec floor is one additional-hour unit | A worker job is unnecessary: nothing observes the overstay except the next scan. If product wants "hours since payment" instead, the formula changes in one function (cases O1–O7 in §12.4) | §12.3 |
+| M2C-35 | Moved to §2.1: the overstay rule is a user decision | | | |
 | M2C-36 | Fee arithmetic in **whole seconds** (`floor` of the server duration) and integer centavos. Employee stays are always 0 | Deterministic, test-friendly, and rounds in the driver's favor | Sub-second differences are invisible to drivers | §12 |
 | M2C-37 | Public lot endpoints: `GET /v1/lots` (discovery, the lot `public_id` differs per database), `GET /v1/lots/{id}`, `/availability`, `/spaces`, `/tariff`, and `/availability/stream`. `map_url` is built server-side (coordinates when present, else the address). Status precedence `closed > full > open`. `opening_hours` supports only `{"always_open": true}` in M2 | Both clients need one discovery call and one consistent map link; the lot is 24/7 (FR-RES-14) | `GET /v1/lots` and `/spaces` are additions to architecture §4.4 | §11.1 |
 | M2C-38 | SSE semantics: on every connect the server sends the current **availability snapshot first** (and the full spaces snapshot when `include=spaces`). `id:` is the occupancy version and is set **only** on `availability` events; `spaces` events carry no `id:`. `Last-Event-ID` is parsed and logged but the snapshot is always sent. Clients drop any availability event whose version is ≤ the last one applied | Events are snapshots, not deltas, so "resume" is "send the current state"; one id sequence keeps `Last-Event-ID` meaningful | A client that relies on `Last-Event-ID` to skip the snapshot gets one redundant event. Harmless | §11.3 |
@@ -423,7 +424,7 @@ X-Signature: 3f9c…(64 lowercase hex)
 | `sensor.space_changed` | sensor_gateway | `{space_code: "E001".."E999", occupied: bool}` | `{result: "ack"}` or `{result: "rejected", reason: "lot.space_unknown"}` |
 | `heartbeat` | any | `{}` | `{result: "ack"}` |
 
-`breakdown` = `{kind: "time"|"grace"|"lost_ticket"|"employee"|"overstay"|"paid", duration_seconds, full_blocks, remainder_seconds, paid_cents, tariff_effective_from}`. Every `stay_id` is a stay `public_id` scoped to the device's lot; another lot's stay is `gate.stay_unknown`.
+`breakdown` = `{kind: "time"|"grace"|"lost_ticket"|"employee"|"overstay"|"paid", duration_seconds, full_blocks, remainder_seconds, billed_from, paid_cents, tariff_effective_from}`. For `kind: "overstay"`, `duration_seconds`, `full_blocks` and `remainder_seconds` describe the segment since the latest payment and `billed_from` is that payment's `paid_at` (M2C-35); for every other kind `billed_from` is null and the durations describe the whole stay. `paid_cents` is always the stay's total paid. When an uncovered lost penalty is the larger overstay amount, `kind` is `lost_ticket`. Every `stay_id` is a stay `public_id` scoped to the device's lot; another lot's stay is `gate.stay_unknown`.
 
 ### 7.3 Authentication (M2C-16, M2C-17, M2C-18, M2C-23)
 
@@ -615,8 +616,8 @@ Hash the UID → `employee_cards` in the device's lot with `status = 'active'`, 
 Resolve the credential in the device's lot: ticket → `ticket_code_hash`; employee card → the card's open stay; reservation QR → `rejected gate.credential_invalid`. Not found or not `active`/`paid` → `rejected gate.credential_invalid`.
 
 - `paid` and `$now ≤ exit_deadline_at` → `amount_cents 0`, `breakdown.kind "paid"`.
-- `paid` and `$now > exit_deadline_at` → `paid → active` (lazy, M2C-35), then price as overstay.
-- `active` → price with §12 (`entered_at → $now`, the stay's tariff version, `lost_ticket`, payments so far).
+- `paid` and `$now > exit_deadline_at` → `paid → active` (lazy, M2C-35), then price as overstay: the segment from the latest `paid_at` to `$now` (§12.2).
+- `active` → price with §12 (`entered_at → $now`, the stay's tariff version, `lost_ticket`, payments so far). An `active` stay whose `exit_deadline_at` has passed is still an overstay and is priced from `paid_at`.
 
 ### 10.2 Lost ticket (FR-GATE-8 pay-station path, M2C-33)
 
@@ -624,7 +625,7 @@ Resolve the credential in the device's lot: ticket → `ticket_code_hash`; emplo
 
 ### 10.3 Cash paid (M2C-34)
 
-Lock the stay; recompute the due amount with the same `amountDue` as `scan` at `$now` (§12.2). `due = 0` → `rejected gate.nothing_due`. `amount_cents ≠ due` → `rejected gate.amount_mismatch` with `amount_cents: due`. Otherwise insert `payments (parking_fee, cash, succeeded, idempotency_key cash:<device>:<event_id>, device_id)`, set `status 'paid'`, `paid_at = $now`, `exit_deadline_at = $now + post_payment_exit_min` (from the stay's tariff version). Response `{receipt_no, amount_cents, paid_at, exit_deadline}`.
+Lock the stay; recompute the due amount with the same `amountDue` as `scan` at `$now` (§12.2). `due = 0` → `rejected gate.nothing_due`. `amount_cents ≠ due` → `rejected gate.amount_mismatch` with `amount_cents: due`. Otherwise insert `payments (parking_fee, cash, succeeded, idempotency_key cash:<device>:<event_id>, device_id)`, set `status 'paid'`, `paid_at = $now`, `exit_deadline_at = $now + post_payment_exit_min` (from the stay's tariff version). Response `{receipt_no, amount_cents, paid_at, exit_deadline}`. Each payment moves `paid_at`, so a later overstay is billed from this payment (M2C-35).
 
 ### 10.4 Exit credential (FR-GATE-6)
 
@@ -634,7 +635,7 @@ Resolve the credential as in §10.1 (lazy `paid → active` included) and comput
 |---|---|
 | `paid`, inside the window | open; `exit_authorized_at = $now` |
 | `active`, amount due 0 (grace or employee) | open; `exit_authorized_at = $now` (the zero decision is taken now, M2C-32) |
-| `active`, amount due > 0 | `deny gate.payment_required`, `amount_cents` |
+| `active`, amount due > 0 (includes every overstay: its due is never 0, O8) | `deny gate.payment_required`, `amount_cents` |
 | reservation QR | `deny gate.credential_invalid` |
 
 ### 10.5 Exit pass
@@ -743,7 +744,7 @@ A per-IP counter (`map[ip]int` under a mutex) and a global atomic counter, check
 
 ### 12.1 Inputs
 
-`Tariff{FirstHour, AdditionalHour, DailyCap, LostTicket int64; ExitGrace, PostPaymentExit time.Duration}`, `Stay{Kind, EnteredAt, LostTicket, PaidCents int64, Status, ExitDeadline}`, `now`. All money in centavos, durations in whole seconds `d = floor(now − entered_at)` (M2C-36).
+`Tariff{FirstHour, AdditionalHour, DailyCap, LostTicket int64; ExitGrace, PostPaymentExit time.Duration}`, `Stay{Kind, EnteredAt, LostTicket, PaidCents int64, PaidAt, Status, ExitDeadline}`, `now`. All money in centavos, durations in whole seconds `d = floor(now − entered_at)` and, for an overstay, `s = floor(now − paid_at)` with `paid_at` the latest payment's time (M2C-36, M2C-35).
 
 ### 12.2 Algorithm
 
@@ -762,16 +763,24 @@ lostFee(d):                       // M2C-33: applies even inside the grace
 
 fee(d) = employee ? 0 : (lost ? lostFee(d) : timeFee(d))
 
+segmentFee(s):                    // M2C-35: overstay segment since paid_at, no grace
+  full = s / 86400 ; rem = s − full × 86400
+  return full × cap + blockFee(rem)
+
 amountDue(stay, now):
   employee                                               → 0
   status paid and now ≤ exit_deadline                     → 0
-  exit_deadline is set and now > exit_deadline            → max(additional, fee(d) − paid)   // overstay, M2C-35, any status
+  exit_deadline is set and now > exit_deadline            → overstayDue                      // M2C-35, any status
   otherwise (active, never paid or lost-on-paid in window) → max(0, fee(d) − paid)
+
+overstayDue = max(additional,                             // floor: one additional-hour unit
+                  segmentFee(s),                          // s = floor(now − paid_at), latest payment
+                  lost ? lostFee(d) − paid : 0)           // a lost penalty not yet covered (§10.2, O13)
 ```
 
-The overstay floor depends on the **deadline**, not on the status: the lazy `paid → active` transition leaves `exit_deadline_at` set, so every later evaluation still applies the floor. `paystation.scan`, `paystation.lost_ticket`, `paystation.cash_paid` and `exit.credential_presented` all call this one `amountDue`, so their amounts always agree.
+The overstay branch depends on the **deadline**, not on the status: the lazy `paid → active` transition leaves `exit_deadline_at` set, so every later evaluation still bills the segment and an overstayed driver never reaches a zero-due exit (O8). The 24 h cap blocks of a segment count from `paid_at`, not from `entered_at`. The lost term keeps the penalty owed when a ticket is marked lost after the deadline (O13); once the penalty is paid it is ≤ 0 and the segment decides (O6). `paystation.scan`, `paystation.lost_ticket`, `paystation.cash_paid` and `exit.credential_presented` all call this one `amountDue`, so their amounts always agree.
 
-`ceilDiv(a, b) = (a + b − 1) / b` on non-negative integers. Grace applies to the **total** duration only, never to a remainder block.
+`ceilDiv(a, b) = (a + b − 1) / b` on non-negative integers. Grace applies to the **total** duration of a stay only, never to a remainder block and never to an overstay segment.
 
 ### 12.3 Defaults used in the table
 
@@ -808,16 +817,21 @@ first 5000, additional 2500, cap 40000, lost 50000, grace 600 s, exit window 15 
 | L6 | lost | 50 h 00 m 00 s | 0 | 97500 | 50000 + 40000 + 7500 |
 | L7 | lost after an hourly payment, inside the window | 1 h 40 m, marked lost (stay back to `active`) | 7500 | 42500 | `fee_lost − paid` |
 | E1 | employee | 30 h | 0 | 0 | |
-| O1 | overstay | scan at 1 h 50 m, paid at 1 h 30 m | 7500 | 2500 | `fee = 7500`, `7500 − 7500 = 0` → minimum unit |
-| O2 | overstay | scan at 3 h 10 m, paid at 1 h 30 m | 7500 | 5000 | `12500 − 7500` |
-| O3 | overstay | scan at 23 h, paid at 20 h | 40000 | 2500 | at the cap, minimum unit still applies (spec FR-GATE-7) |
+| O1 | overstay | scan at 1 h 50 m, paid at 1 h 30 m | 7500 | 5000 | segment 20 m: `blockFee(1200) = 5000` (no grace) |
+| O2 | overstay | scan at 3 h 10 m, paid at 1 h 30 m | 7500 | 7500 | segment 1 h 40 m: `5000 + ceilDiv(2400, 3600) × 2500 = 7500` (RD$75, the M2C-35 example) |
+| O3 | overstay after paying the cap | scan at 23 h, paid at 20 h | 40000 | 10000 | segment 3 h: `5000 + 2 × 2500`; the stay's total (50000) passes the cap by design (M2C-35) |
 | O4 | inside the window | scan at 1 h 44 m, paid at 1 h 30 m | 7500 | 0 | |
 | O5 | window boundary | scan at exactly paid + 15 m 00 s | 7500 | 0 | deadline is inclusive (≤) |
-| O6 | lost + overstay | scan at 2 h 20 m, paid 50000 at 2 h | 50000 | 2500 | |
-| O7 | second overstay | scan at 2 h 20 m, payments 7500 + 2500, last paid at 1 h 50 m | 10000 | 2500 | `10000 − 10000 = 0` → minimum unit |
-| O8 | overstay flow agreement | after O1's scan (stay now `active`, deadline 1 h 45 m kept): `cash_paid 2500` at 1 h 50 m; separately, an exit credential at 1 h 50 m before paying | 7500 | cash → `ack`; exit → `deny gate.payment_required`, 2500 | the floor survives the lazy transition; scan, cash and exit share `amountDue` |
+| O6 | lost + overstay | scan at 2 h 20 m, paid 50000 at 2 h | 50000 | 5000 | segment 20 m = 5000; `lostFee − paid = 0` (penalty covered) |
+| O7 | second overstay | scan at 2 h 20 m, payments 7500 at 1 h 30 m + 5000 at 1 h 50 m | 12500 | 5000 | segment 30 m from the second payment |
+| O8 | overstay flow agreement | after O1's scan (stay now `active`, deadline 1 h 45 m kept): `cash_paid 5000` at 1 h 50 m; separately, an exit credential at 1 h 50 m before paying | 7500 | cash → `ack`; exit → `deny gate.payment_required`, 5000 | the overstay branch keys off `exit_deadline_at`, which the lazy transition keeps; scan, cash and exit share `amountDue` |
+| O9 | overstay just past the deadline (minimum charge) | scan at 1 h 45 m 01 s, paid at 1 h 30 m | 7500 | 5000 | segment 15 m 01 s pays one first-hour block; the additional-hour floor (2500) does not bind with this tariff |
+| O10 | segment crossing the stay's day boundary, capped | scan at 40 h, paid 40000 at 20 h | 40000 | 40000 | segment 20 h: `5000 + 19 × 2500 = 52500` → cap 40000; the 24 h blocks count from `paid_at` |
+| O11 | segment longer than 24 h | scan at 46 h, paid 40000 at 20 h | 40000 | 47500 | segment 26 h: `40000 + blockFee(2 h) = 40000 + 7500` |
+| O12 | second overstay resets the segment start | scan at 2 h 45 m, payments 7500 at 1 h 30 m + 5000 at 1 h 50 m | 12500 | 5000 | segment 55 m from the second payment; counted from the first (1 h 15 m) it would be 7500 |
+| O13 | lost marked after the deadline passed | paid 7500 at 1 h 30 m (deadline 1 h 45 m), marked lost at 2 h, scan at 2 h | 7500 | 42500 | `max(2500, segment 30 m = 5000, 50000 − 7500)`: the uncovered penalty wins |
 
-Plus property tests: the result is never negative; for ticket stays `timeFee` is non-decreasing in `d`; `timeFee(d) ≤ ceil(d / 24 h) × cap` for `d > grace`.
+Plus property tests: the result is never negative; an overstay due is never below `additional`; for ticket stays `timeFee` is non-decreasing in `d`; `timeFee(d) ≤ ceil(d / 24 h) × cap` for `d > grace`.
 
 ### 12.5 Worker jobs (M2C-9, M2C-30, M2C-43)
 
