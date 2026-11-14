@@ -29,3 +29,7 @@ where lot_id = @lot_id;
 insert into lot_occupancy (lot_id)
 values (@lot_id)
 on conflict do nothing;
+
+-- name: GetLotIDByPublicID :one
+select id from lots
+where public_id = @public_id;

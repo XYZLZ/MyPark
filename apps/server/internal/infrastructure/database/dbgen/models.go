@@ -99,6 +99,24 @@ type OutboxMessage struct {
 	SentAt      pgtype.Timestamptz
 }
 
+type PolicyVersion struct {
+	ID                   int64
+	LotID                int64
+	EffectiveFrom        pgtype.Timestamptz
+	MaxReservablePct     int32
+	BookingHorizonDays   int32
+	ArrivalGraceMin      int32
+	EarlyArrivalMin      int32
+	PaymentTimeoutMin    int32
+	MaxActivePerUser     int32
+	SlotMin              int32
+	NoshowBlockThreshold int32
+	NoshowWindowDays     int32
+	NoshowBlockDays      int32
+	CreatedBy            pgtype.Int8
+	CreatedAt            pgtype.Timestamptz
+}
+
 type RateLimitCounter struct {
 	Key         []byte
 	WindowStart pgtype.Timestamptz
@@ -122,6 +140,21 @@ type Space struct {
 	Kind            string
 	Status          string
 	SensorUpdatedAt pgtype.Timestamptz
+}
+
+type TariffVersion struct {
+	ID                  int64
+	LotID               int64
+	EffectiveFrom       pgtype.Timestamptz
+	FirstHourCents      int64
+	AdditionalHourCents int64
+	ExitGraceMin        int32
+	PostPaymentExitMin  int32
+	DailyCapCents       int64
+	LostTicketCents     int64
+	ReservationFeeCents int64
+	CreatedBy           pgtype.Int8
+	CreatedAt           pgtype.Timestamptz
 }
 
 type User struct {

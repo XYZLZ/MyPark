@@ -37,6 +37,10 @@ func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.Strin
 var matrix = map[string]matrixEntry{
 	"GET /v1/legal/current": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/legal/current", nil) }},
 
+	"GET /v1/lots/{id}/tariff": {build: func(*fixture) *http.Request {
+		return jsonReq("GET", "/v1/lots/"+uuid.NewString()+"/tariff", nil)
+	}},
+
 	"POST /v1/auth/register": {build: func(f *fixture) *http.Request {
 		return jsonReq("POST", "/v1/auth/register", map[string]any{
 			"email": f.email(), "password": "Zx9!kelp-orbit", "first_name": "Ana", "last_name": "Perez",
@@ -332,6 +336,7 @@ var specPolicy = map[string]struct {
 	legalExempt bool
 }{
 	"GET /v1/legal/current":            {access: "public"},
+	"GET /v1/lots/{id}/tariff":         {access: "public"},
 	"POST /v1/auth/register":           {access: "public"},
 	"POST /v1/auth/verify":             {access: "public"},
 	"POST /v1/auth/verify/resend":      {access: "public"},

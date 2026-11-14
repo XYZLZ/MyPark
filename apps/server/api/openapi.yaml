@@ -771,7 +771,6 @@ paths:
       summary: Get the current tariff of a lot
       tags: [lots]
       security: []
-      x-mypark-pending: S2.2
       responses:
         "200":
           description: The tariff version in force.

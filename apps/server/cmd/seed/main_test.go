@@ -48,6 +48,27 @@ func TestSeed_InsertsLegalDocumentsIdempotently(t *testing.T) {
 	}
 }
 
+func TestSeedCommand_SeedsTariff(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	env := map[string]string{"DATABASE_URL": db.AppURL}
+	for range 2 {
+		if err := run(t.Context(), func(k string) string { return env[k] }, io.Discard); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	for _, table := range []string{"tariff_versions", "policy_versions"} {
+		var n int
+		err := db.App.QueryRow(t.Context(),
+			"select count(*) from "+table+" v join lots l on l.id = v.lot_id where l.slug = 'zona-colonial'").Scan(&n)
+		if err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 1 {
+			t.Errorf("%s rows for the pilot lot = %d, want 1", table, n)
+		}
+	}
+}
+
 func adminSeedEnv(dbURL string) map[string]string {
 	return map[string]string{
 		"DATABASE_URL": dbURL, "SEED_ADMIN_EMAIL": "admin@mypark.local", "SEED_ADMIN_FIRST_NAME": "MyPark",

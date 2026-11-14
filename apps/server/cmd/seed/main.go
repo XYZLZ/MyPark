@@ -18,6 +18,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
@@ -76,6 +77,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 			return err
 		}
 		if err := legal.SeedDocuments(ctx, tx); err != nil {
+			return err
+		}
+		if err := tariffs.SeedDefaults(ctx, dbgen.New(tx), lotID); err != nil {
 			return err
 		}
 		if !withAdmin {

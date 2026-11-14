@@ -28,7 +28,10 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
+	lotspg "github.com/XYZLZ/MyPark/apps/server/internal/features/lots/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
+	tariffspg "github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/users"
 	userspg "github.com/XYZLZ/MyPark/apps/server/internal/features/users/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles"
@@ -174,6 +177,9 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		Legal:     gates.Legal,
 	})
 	legal.NewHandler(legalSvc, d.log).Register(r)
+
+	tariffSvc := tariffs.NewService(tariffspg.NewRepo(d.pool))
+	tariffs.NewHandler(tariffSvc, lotspg.NewRepo(d.pool), d.clock, d.log).Register(r)
 
 	tx := database.NewTxRunner(d.pool)
 	auditRec := auditpg.NewRecorder()

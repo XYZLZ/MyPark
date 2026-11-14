@@ -7,6 +7,8 @@ package dbgen
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const countSpacesByLot = `-- name: CountSpacesByLot :one
@@ -19,6 +21,18 @@ func (q *Queries) CountSpacesByLot(ctx context.Context, lotID int64) (int64, err
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const getLotIDByPublicID = `-- name: GetLotIDByPublicID :one
+select id from lots
+where public_id = $1
+`
+
+func (q *Queries) GetLotIDByPublicID(ctx context.Context, publicID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getLotIDByPublicID, publicID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const initLotOccupancy = `-- name: InitLotOccupancy :exec
