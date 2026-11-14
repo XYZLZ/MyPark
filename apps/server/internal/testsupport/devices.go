@@ -16,10 +16,15 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 )
 
-// TestSealer returns a secretbox keyring with one fixed test key.
+// TestSealerKey is the one key of TestSealer. Code that cannot call
+// TestSealer (no testing.TB) builds its sealer from it, so every test sealer
+// opens what another one sealed.
+var TestSealerKey = secretbox.Key{ID: "test", Secret: [32]byte(bytes.Repeat([]byte{0x5a}, 32))}
+
+// TestSealer returns a secretbox keyring holding only TestSealerKey.
 func TestSealer(t testing.TB) *secretbox.Sealer {
 	t.Helper()
-	s, err := secretbox.NewSealer(secretbox.Key{ID: "test", Secret: [32]byte(bytes.Repeat([]byte{0x5a}, 32))})
+	s, err := secretbox.NewSealer(TestSealerKey)
 	if err != nil {
 		t.Fatalf("testsupport: sealer: %v", err)
 	}

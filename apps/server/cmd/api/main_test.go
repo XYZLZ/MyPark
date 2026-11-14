@@ -371,7 +371,7 @@ func TestNewHandler_ProtectedRoutesRequireBearer(t *testing.T) {
 // testSealer is the device-secret sealer of testDeps, which has no *testing.T
 // to hand to testsupport.TestSealer.
 var testSealer = func() *secretbox.Sealer {
-	s, err := secretbox.NewSealer(secretbox.Key{ID: "test", Secret: [32]byte{1}})
+	s, err := secretbox.NewSealer(testsupport.TestSealerKey)
 	if err != nil {
 		panic(err)
 	}
