@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countSpacesByLot = `-- name: CountSpacesByLot :one
@@ -21,6 +22,47 @@ func (q *Queries) CountSpacesByLot(ctx context.Context, lotID int64) (int64, err
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const getLotByPublicID = `-- name: GetLotByPublicID :one
+select id, public_id, slug, name, address,
+       latitude, longitude,
+       timezone, capacity, status, opening_hours
+from lots
+where public_id = $1
+`
+
+type GetLotByPublicIDRow struct {
+	ID           int64
+	PublicID     uuid.UUID
+	Slug         string
+	Name         string
+	Address      string
+	Latitude     pgtype.Numeric
+	Longitude    pgtype.Numeric
+	Timezone     string
+	Capacity     int32
+	Status       string
+	OpeningHours []byte
+}
+
+func (q *Queries) GetLotByPublicID(ctx context.Context, publicID uuid.UUID) (GetLotByPublicIDRow, error) {
+	row := q.db.QueryRow(ctx, getLotByPublicID, publicID)
+	var i GetLotByPublicIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.Slug,
+		&i.Name,
+		&i.Address,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.Capacity,
+		&i.Status,
+		&i.OpeningHours,
+	)
+	return i, err
 }
 
 const getLotIDByPublicID = `-- name: GetLotIDByPublicID :one
@@ -60,6 +102,37 @@ type InsertSpaceParams struct {
 func (q *Queries) InsertSpace(ctx context.Context, arg InsertSpaceParams) error {
 	_, err := q.db.Exec(ctx, insertSpace, arg.LotID, arg.Code)
 	return err
+}
+
+const listLots = `-- name: ListLots :many
+select public_id, name, slug from lots
+order by id
+`
+
+type ListLotsRow struct {
+	PublicID uuid.UUID
+	Name     string
+	Slug     string
+}
+
+func (q *Queries) ListLots(ctx context.Context) ([]ListLotsRow, error) {
+	rows, err := q.db.Query(ctx, listLots)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLotsRow{}
+	for rows.Next() {
+		var i ListLotsRow
+		if err := rows.Scan(&i.PublicID, &i.Name, &i.Slug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertLotBySlug = `-- name: UpsertLotBySlug :one

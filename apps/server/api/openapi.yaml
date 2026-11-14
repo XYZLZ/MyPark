@@ -672,7 +672,6 @@ paths:
         database. M2 has one lot, so the page never has a next cursor.
       tags: [lots]
       security: []
-      x-mypark-pending: S10
       responses:
         "200":
           description: The lots.
@@ -702,7 +701,6 @@ paths:
       summary: Get one lot
       tags: [lots]
       security: []
-      x-mypark-pending: S10
       responses:
         "200":
           description: The lot.
@@ -725,7 +723,6 @@ paths:
       summary: Get the current availability of a lot
       tags: [lots]
       security: []
-      x-mypark-pending: S10
       responses:
         "200":
           description: The current availability snapshot.
@@ -748,7 +745,6 @@ paths:
       summary: Get the state of every space in a lot
       tags: [lots]
       security: []
-      x-mypark-pending: S10
       responses:
         "200":
           description: Every space, ordered by code.

@@ -33,3 +33,14 @@ on conflict do nothing;
 -- name: GetLotIDByPublicID :one
 select id from lots
 where public_id = @public_id;
+
+-- name: ListLots :many
+select public_id, name, slug from lots
+order by id;
+
+-- name: GetLotByPublicID :one
+select id, public_id, slug, name, address,
+       latitude, longitude,
+       timezone, capacity, status, opening_hours
+from lots
+where public_id = @public_id;

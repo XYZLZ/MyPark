@@ -42,6 +42,16 @@ func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.Strin
 var matrix = map[string]matrixEntry{
 	"GET /v1/legal/current": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/legal/current", nil) }},
 
+	"GET /v1/lots": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/lots", nil) }},
+	"GET /v1/lots/{id}": {build: func(*fixture) *http.Request {
+		return jsonReq("GET", "/v1/lots/"+uuid.NewString(), nil)
+	}},
+	"GET /v1/lots/{id}/availability": {build: func(*fixture) *http.Request {
+		return jsonReq("GET", "/v1/lots/"+uuid.NewString()+"/availability", nil)
+	}},
+	"GET /v1/lots/{id}/spaces": {build: func(*fixture) *http.Request {
+		return jsonReq("GET", "/v1/lots/"+uuid.NewString()+"/spaces", nil)
+	}},
 	"GET /v1/lots/{id}/tariff": {build: func(*fixture) *http.Request {
 		return jsonReq("GET", "/v1/lots/"+uuid.NewString()+"/tariff", nil)
 	}},
@@ -378,6 +388,10 @@ var specPolicy = map[string]struct {
 	deviceLimits []ratelimit.Rule
 }{
 	"GET /v1/legal/current":            {access: "public"},
+	"GET /v1/lots":                     {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}":                {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}/availability":   {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}/spaces":         {access: "public", limit: &ratelimit.PublicReadIP},
 	"GET /v1/lots/{id}/tariff":         {access: "public", limit: &ratelimit.PublicReadIP},
 	"POST /v1/auth/register":           {access: "public", limit: &ratelimit.RegisterIP},
 	"POST /v1/auth/verify":             {access: "public", limit: &ratelimit.CodeSubmitIP},

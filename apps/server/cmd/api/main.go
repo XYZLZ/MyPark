@@ -27,6 +27,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/availability"
+	availabilitypg "github.com/XYZLZ/MyPark/apps/server/internal/features/availability/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	devicespg "github.com/XYZLZ/MyPark/apps/server/internal/features/devices/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
@@ -34,6 +35,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	legalpg "github.com/XYZLZ/MyPark/apps/server/internal/features/legal/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	lotspg "github.com/XYZLZ/MyPark/apps/server/internal/features/lots/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
@@ -197,7 +199,13 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	legal.NewHandler(legalSvc, d.log).Register(r)
 
 	tariffSvc := tariffs.NewService(tariffspg.NewRepo(d.pool))
-	tariffs.NewHandler(tariffSvc, lotspg.NewRepo(d.pool), d.clock, d.log).Register(r)
+	lotRepo := lotspg.NewRepo(d.pool)
+	tariffs.NewHandler(tariffSvc, lotRepo, d.clock, d.log).Register(r)
+
+	// NoReservations until M3 (M2C-1).
+	availSvc := availability.NewService(availabilitypg.NewRepo(d.pool), availability.NoReservations{}, d.clock)
+	lots.NewHandler(lots.NewService(lotRepo), availSvc, d.log).Register(r)
+	availability.NewHandler(availSvc, lotRepo, d.log).Register(r)
 
 	tx := database.NewTxRunner(d.pool)
 	auditRec := auditpg.NewRecorder()
