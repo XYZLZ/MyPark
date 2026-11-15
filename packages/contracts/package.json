@@ -7,7 +7,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./fixtures": "./src/fixtures/m1.ts"
+    "./fixtures": "./src/fixtures/index.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

@@ -34,3 +34,8 @@ export * from './m1/normalize';
 export * from './m1/user';
 export * from './m1/validation';
 export * from './m1/vehicle';
+export * from './m2/availability';
+export * from './m2/lot';
+export * from './m2/simulator';
+export * from './m2/spaces';
+export * from './m2/tariff';
