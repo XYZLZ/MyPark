@@ -7,14 +7,14 @@ const BASE =
   'transition-[background-color,color,scale,box-shadow] duration-(--motion-duration) ease-(--motion-ease) ' +
   'outline-none active:scale-[.98] disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled-ink';
 
-// Focus (spec §9.3): 2 px surface gap + 3 px primary; on navy a 3 px surface ring only (CC-11).
-const RING = 'focus-visible:shadow-[0_0_0_2px_var(--color-surface),0_0_0_5px_var(--color-brand-primary)]';
+// Focus (spec §9.3): 2 px surface gap + 3 px navy; on navy a 3 px surface ring only (CC-11).
+const RING = 'focus-visible:shadow-[0_0_0_2px_var(--color-surface),0_0_0_5px_var(--color-brand-navy)]';
 const RING_ON_DARK = 'focus-visible:shadow-[0_0_0_3px_var(--color-surface)]';
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: `bg-brand-action text-brand-action-contrast hover:bg-brand-action-hover active:bg-brand-action-press ${RING}`,
-  // The primary fill placed directly on navy: its default ring's outer 3 px would be navy on navy.
-  primaryOnDark: `bg-brand-action text-brand-action-contrast hover:bg-brand-action-hover active:bg-brand-action-press ${RING_ON_DARK}`,
+  primary: `bg-brand-navy text-brand-primary-contrast hover:bg-brand-navy-deep active:bg-brand-navy-deep ${RING}`,
+  // A white fill for use directly on navy: the default ring's outer 3 px would be navy on navy.
+  primaryOnDark: `bg-surface text-brand-navy hover:bg-brand-sky-strong ${RING_ON_DARK}`,
   onDark: `border-2 border-current bg-transparent text-brand-primary-contrast hover:bg-white/10 ${RING_ON_DARK}`,
   quiet: `bg-transparent text-brand-primary hover:bg-brand-primary-tint ${RING}`,
   danger: `bg-danger text-white hover:brightness-110 ${RING}`,

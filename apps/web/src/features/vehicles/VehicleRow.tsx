@@ -9,7 +9,7 @@ import { Link } from '@/i18n/navigation';
 
 const ACTION =
   'rounded-full px-3 py-2 text-sm font-medium outline-none transition-colors ' +
-  'focus-visible:shadow-[0_0_0_2px_var(--color-surface),0_0_0_5px_var(--color-brand-primary)]';
+  'focus-visible:shadow-[0_0_0_2px_var(--color-surface),0_0_0_5px_var(--color-brand-navy)]';
 
 /** One vehicle. Delete asks for confirmation inside the row, so there is no dialog to trap focus (CC-22). */
 export function VehicleRow({

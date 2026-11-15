@@ -56,7 +56,7 @@ describe('Button', () => {
 
   // Each variant is identified by the class that carries its look, and must not carry another's.
   const SIGNATURE = {
-    primary: 'bg-brand-action',
+    primary: 'bg-brand-navy',
     onDark: 'border-current',
     quiet: 'hover:bg-brand-primary-tint',
     danger: 'bg-danger',
@@ -72,28 +72,31 @@ describe('Button', () => {
     }
   });
 
-  test('primaryOnDark keeps the primary fill but swaps the focus ring to a 3 px surface ring (CC-11)', () => {
-    render(
-      <>
-        <Button variant="primary">A</Button>
-        <Button variant="primaryOnDark">B</Button>
-      </>,
-    );
+  test('primary is navy with a navy focus ring', () => {
+    render(<Button variant="primary">A</Button>);
 
-    const primary = screen.getByRole('button', { name: 'A' }).className.split(/\s+/);
-    const onDark = screen.getByRole('button', { name: 'B' }).className.split(/\s+/);
-    expect(onDark).toContain('bg-brand-action');
-    expect(onDark).toContain('focus-visible:shadow-[0_0_0_3px_var(--color-surface)]');
-    expect(onDark.join(' ')).not.toContain('color-brand-primary');
-    // The default ring would leave only 2 px of white on navy, because its outer 3 px is navy.
-    expect(primary.join(' ')).toContain('color-brand-primary');
+    const classes = screen.getByRole('button', { name: 'A' }).className;
+    expect(classes).toContain('bg-brand-navy');
+    expect(classes).toContain('var(--color-brand-navy)');
+    expect(classes).not.toContain('bg-brand-action');
+  });
+
+  test('primaryOnDark is a white fill with navy text and the surface ring (CC-11)', () => {
+    render(<Button variant="primaryOnDark">B</Button>);
+
+    const classes = screen.getByRole('button', { name: 'B' }).className.split(/\s+/);
+    expect(classes).toContain('bg-surface');
+    expect(classes).toContain('text-brand-navy');
+    expect(classes).toContain('focus-visible:shadow-[0_0_0_3px_var(--color-surface)]');
+    // The default ring's outer 3 px would be navy on navy.
+    expect(classes.join(' ')).not.toContain('color-brand-navy)');
   });
 
   test('defaults to the primary variant and to type="button"', () => {
     render(<Button>Go</Button>);
 
     const button = screen.getByRole('button', { name: 'Go' });
-    expect(button.className).toContain('bg-brand-action');
+    expect(button.className).toContain('bg-brand-navy');
     expect(button).toHaveAttribute('type', 'button');
   });
 });

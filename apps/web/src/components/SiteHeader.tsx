@@ -17,7 +17,7 @@ export function SiteHeader({ appName, nav, languageSwitch }: SiteHeaderProps) {
     <>
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-full focus:bg-surface focus:px-4 focus:py-2 focus:font-semibold focus:text-brand-primary focus:shadow-[0_0_0_3px_var(--color-brand-primary)] focus:outline-none"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-full focus:bg-surface focus:px-4 focus:py-2 focus:font-semibold focus:text-brand-primary focus:shadow-[0_0_0_3px_var(--color-brand-navy)] focus:outline-none"
       >
         {t('skipToContent')}
       </a>
