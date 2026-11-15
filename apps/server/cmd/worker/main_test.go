@@ -216,3 +216,54 @@ func TestWorkerJobs_IncludeVoid(t *testing.T) {
 		t.Fatalf("voided at the job clock = %d, %v; want only the 61 s old entry", voided, err)
 	}
 }
+
+// TestWorkerJobs_IncludePurge checks device_events_purge runs daily and its
+// body deletes what is past retention in batches of 5000 (12 001 rows take
+// three calls) while it keeps the recent rows.
+func TestWorkerJobs_IncludePurge(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	if _, err := db.Super.Exec(t.Context(),
+		`insert into devices (public_id, lot_id, kind, name, status, secret_ciphertext, secret_key_id)
+		 values (gen_random_uuid(), $1, 'dispenser', 'purge test', 'active', '\x00', 'test')`, lotID); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	// 12 001 events 13 months old, and one from yesterday that must survive.
+	if _, err := db.Super.Exec(t.Context(),
+		`insert into device_events (lot_id, device_id, event_id, type, occurred_at, received_at, body_sha256, payload, response)
+		 select $1, d.id, gen_random_uuid(), 'heartbeat', $2::timestamptz, $2::timestamptz - (i || ' seconds')::interval,
+		        '\x0000000000000000000000000000000000000000000000000000000000000000', '{}', '{}'
+		 from generate_series(1, 12001) i, (select id from devices where name = 'purge test') d`,
+		lotID, clk.Now().AddDate(-1, -1, 0)); err != nil {
+		t.Fatalf("seed old events: %v", err)
+	}
+	if _, err := db.Super.Exec(t.Context(),
+		`insert into device_events (lot_id, device_id, event_id, type, occurred_at, received_at, body_sha256, payload, response)
+		 select $1, id, gen_random_uuid(), 'heartbeat', $2::timestamptz, $2::timestamptz - interval '1 day', '\x0000000000000000000000000000000000000000000000000000000000000000', '{}', '{}'
+		 from devices where name = 'purge test'`, lotID, clk.Now()); err != nil {
+		t.Fatalf("seed recent event: %v", err)
+	}
+
+	var logs testsupport.SyncBuffer
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(&logs, nil)))
+	for i := range list {
+		if list[i].Name == "device_events_purge" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != 24*time.Hour {
+		t.Fatalf("device_events_purge job = %+v, want one running every 24 h", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var left int
+	if err := db.Super.QueryRow(t.Context(), `select count(*) from device_events`).Scan(&left); err != nil || left != 1 {
+		t.Fatalf("device_events left = %d, %v; want only the recent one", left, err)
+	}
+	if !strings.Contains(logs.String(), "12001") {
+		t.Errorf("the job did not log the deleted count 12001: %s", logs.String())
+	}
+}

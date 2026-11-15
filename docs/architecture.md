@@ -367,6 +367,7 @@ type PaymentGateway interface {
 | Hold boundary notifications | 30 s | NOTIFY lots whose effective holds changed since the last tick |
 | Void unpassed entries | 15 s | `entry_pending` with `accepted_at` older than 60 s → `voided`, `voided_at = $now` (server clock), in batches of 200 claimed with `for update skip locked`, repeated while a batch is full. No occupancy change and no NOTIFY: a pending entry never counted. A car that passes later is a late entry pass (`voided → active`, counted, audited `gate.late_entry_pass`). Rows are never deleted |
 | Occupancy snapshot | 5 min, aligned to the wall clock | `insert ... on conflict (lot_id, captured_at) do nothing` (idempotent across replicas) |
+| Purge device events | 24 h | `purge_device_events(5000)` (SQL function, `security definer`, 12-month floor enforced inside it, so no caller can shorten retention) called by `devices.PurgeEvents` until a call deletes fewer than 5000 rows; logs the total. `device_events` is otherwise append-only, so the function is the only delete path |
 | Outbox dispatch (email) | 2 s | `for update skip locked`, retry with backoff, max attempts → `dead` |
 | Refund processing | 10 s | same claim pattern on `refunds where status='pending' and next_attempt_at <= now()` |
 | No-show block | on each `expired_no_show` | count no-shows in `noshow_window_days`; if ≥ threshold set `users.reservation_blocked_until` |
@@ -375,7 +376,7 @@ type PaymentGateway interface {
 
 Running several worker replicas is safe because every job claims rows with `SKIP LOCKED` or is idempotent by unique key.
 
-**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). **Since M2:** void unpassed entries (15 s). The rest arrive with their milestones.
+**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). **Since M2:** void unpassed entries (15 s) and device events purge (24 h). The rest arrive with their milestones.
 
 ---
 

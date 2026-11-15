@@ -107,6 +107,16 @@ jobs:
           TEST_MAILPIT_API: http://localhost:8025
         run: go test -race ./...
 
+      # The M2 scenarios (weekday invariants, fill_to_full, determinism) and the
+      # log-leak checks run in "Test" above too; this step names them so a
+      # rename or a skip cannot drop them silently. They use the step clock, so
+      # they take seconds.
+      - name: M2 scenario and log-leak tests
+        env:
+          CI: "true"
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -race -count=1 ./cmd/api -run 'TestScenario_|TestNoSecretsInLogs' -v
+
       # Domain statement coverage (OC-35 stands in for the 90% branch rule).
       - name: Domain coverage gate
         env:
@@ -115,5 +125,5 @@ jobs:
           TEST_SMTP_ADDR: localhost:1025
           TEST_MAILPIT_API: http://localhost:8025
         run: |
-          go test -coverprofile=domain.cover ./internal/features/auth/ ./internal/features/vehicles/ ./internal/infrastructure/hashing/
+          go test -coverprofile=domain.cover ./internal/features/auth/ ./internal/features/vehicles/ ./internal/infrastructure/hashing/ ./internal/features/tariffs/ ./internal/features/availability/ ./internal/features/gate/
           sh scripts/covergate.sh domain.cover 90

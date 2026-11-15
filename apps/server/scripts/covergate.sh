@@ -7,6 +7,9 @@
 #   internal/features/auth/{email,password,code,refresh,session}.go
 #   internal/features/vehicles/{plate,limit}.go
 #   internal/infrastructure/hashing/*.go   (test files excluded)
+#   internal/features/tariffs/calc.go
+#   internal/features/availability/{domain,coalescer}.go
+#   internal/features/gate/{state,codes}.go
 set -eu
 
 if [ "$#" -ne 2 ]; then
@@ -25,7 +28,10 @@ exec awk -v min="$min" '
 function domain(f) {
 	return f ~ /\/internal\/features\/auth\/(email|password|code|refresh|session)\.go$/ ||
 	       f ~ /\/internal\/features\/vehicles\/(plate|limit)\.go$/ ||
-	       f ~ /\/internal\/infrastructure\/hashing\/[^\/]+\.go$/
+	       f ~ /\/internal\/infrastructure\/hashing\/[^\/]+\.go$/ ||
+	       f ~ /\/internal\/features\/tariffs\/calc\.go$/ ||
+	       f ~ /\/internal\/features\/availability\/(domain|coalescer)\.go$/ ||
+	       f ~ /\/internal\/features\/gate\/(state|codes)\.go$/
 }
 NR == 1 && /^mode:/ { next }
 {

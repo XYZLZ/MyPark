@@ -1,9 +1,9 @@
 // Command worker is the MyPark background job runner. It delivers the email
 // outbox over SMTP every 2 s, voids entries not passed within 60 s (every
 // 15 s) and purges expired rate-limit counters (every minute), expired auth
-// data (hourly) and old outbox rows (daily). It also serves the health probes
-// on WORKER_HEALTH_ADDR (default :8091), /healthz for liveness and /readyz
-// for the database and migrations.
+// data (hourly), old outbox rows and device events past retention (daily). It
+// also serves the health probes on WORKER_HEALTH_ADDR (default :8091), /healthz
+// for liveness and /readyz for the database and migrations.
 //
 // With -healthcheck it does not serve: it probes GET /readyz on the local
 // WORKER_HEALTH_ADDR port and exits 0 only on a 2xx answer.
@@ -28,6 +28,7 @@ import (
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
@@ -59,6 +60,10 @@ const (
 	authPurgeEvery      = time.Hour
 	outboxPurgeEvery    = 24 * time.Hour
 	voidEvery           = 15 * time.Second
+	deviceEventsEvery   = 24 * time.Hour
+	// purgeBatch is the rows one purge call deletes, so a backlog never holds
+	// one long transaction.
+	purgeBatch = 5000
 )
 
 func main() {
@@ -148,6 +153,19 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 				log.InfoContext(ctx, "voided unpassed entries", "count", n)
 			}
 			return err
+		}},
+		{Name: "device_events_purge", Every: deviceEventsEvery, Run: func(ctx context.Context) error {
+			var total int64
+			for {
+				n, err := devices.PurgeEvents(ctx, pool, purgeBatch)
+				total += n
+				if err != nil || n < purgeBatch {
+					if total > 0 {
+						log.InfoContext(ctx, "purged device events", "count", total)
+					}
+					return err
+				}
+			}
 		}},
 		{Name: "outbox-purge", Every: outboxPurgeEvery, Run: func(ctx context.Context) error {
 			_, err := notifications.PurgeOutbox(ctx, pool, clk)
