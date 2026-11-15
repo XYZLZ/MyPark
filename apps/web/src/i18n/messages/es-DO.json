@@ -21,7 +21,6 @@
     }
   },
   "home": {
-    "title": "Parqueo en la Zona Colonial",
     "subtitle": "Crea tu cuenta y registra tus vehículos para reservar un espacio.",
     "signedInSubtitle": "Administra los vehículos de tu cuenta.",
     "logIn": "Iniciar sesión",
@@ -326,7 +325,7 @@
       "photoAlt": "Fachada del parqueo Banreservas en la Zona Colonial"
     },
     "error": {
-      "title": "No pudimos cargar la información del parqueo",
+      "title": "La disponibilidad no está cargando ahora",
       "retry": "Reintentar"
     },
     "unavailable": {

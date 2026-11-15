@@ -1,14 +1,17 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import { LotErrorPanel } from '@/features/lot/components/LotErrorPanel';
 import { renderWithProviders } from '@/testing/render';
 import { PublicHome } from './PublicHome';
+
+const noLot = <p>lot slot</p>;
 
 describe('PublicHome', () => {
   test.each([
     ['es-DO', 'Iniciar sesión', 'Crear cuenta'],
     ['en', 'Log in', 'Sign up'],
   ] as const)('signed out shows Log in and Sign up, in %s', (locale, logIn, signUp) => {
-    renderWithProviders(<PublicHome signedIn={false} />, { locale });
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale });
 
     expect(screen.getByRole('link', { name: logIn })).toHaveAttribute('href', `/${locale}/login`);
     expect(screen.getByRole('link', { name: signUp })).toHaveAttribute('href', `/${locale}/register`);
@@ -16,22 +19,49 @@ describe('PublicHome', () => {
   });
 
   test.each([
+    ['es-DO', 'Consulta la disponibilidad del parqueo en tiempo real', 'Mira cuántos espacios hay libres antes de llegar.'],
+    ['en', 'Check parking availability in real time', 'See how many spaces are free before you arrive.'],
+  ] as const)('the hero has the title and subtitle, in %s', (locale, title, subtitle) => {
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale });
+
+    expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument();
+    expect(screen.getByText(subtitle)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /parqueo|parking lot/i })).toBeInTheDocument();
+  });
+
+  test('the API down still renders the hero, Log in and Sign up', () => {
+    renderWithProviders(<PublicHome signedIn={false} lot={<LotErrorPanel />} />, { locale: 'es-DO' });
+
+    expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Iniciar sesión' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Crear cuenta' })).toBeInTheDocument();
+    expect(screen.getByText('La disponibilidad no está cargando ahora')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
+  });
+
+  test('the lot slot renders after the hero', () => {
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale: 'en' });
+
+    expect(screen.getByText('lot slot')).toBeInTheDocument();
+  });
+
+  test.each([
     ['es-DO', 'No pudimos confirmar que tus otras sesiones se cerraron. Si te preocupa, cambia tu contraseña.'],
     ['en', 'We could not confirm that your other sessions were closed. If you are worried, change your password.'],
   ] as const)('an unconfirmed logout on all devices shows a notice, in %s', (locale, text) => {
-    renderWithProviders(<PublicHome signedIn={false} notice="logout_all_failed" />, { locale });
+    renderWithProviders(<PublicHome signedIn={false} notice="logout_all_failed" lot={noLot} />, { locale });
 
     expect(screen.getByRole('status')).toHaveTextContent(text);
   });
 
   test('no notice, no banner', () => {
-    renderWithProviders(<PublicHome signedIn={false} />, { locale: 'en' });
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale: 'en' });
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  test('signed in shows a Vehicles link instead', () => {
-    renderWithProviders(<PublicHome signedIn />, { locale: 'en' });
+  test('signed in shows the Vehicles link instead', () => {
+    renderWithProviders(<PublicHome signedIn lot={noLot} />, { locale: 'en' });
 
     expect(screen.getByRole('link', { name: 'Vehicles' })).toHaveAttribute('href', '/en/vehicles');
     expect(screen.queryByRole('link', { name: 'Log in' })).not.toBeInTheDocument();

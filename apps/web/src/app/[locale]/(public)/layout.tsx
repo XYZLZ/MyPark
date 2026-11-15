@@ -6,13 +6,15 @@ import { SIDEBAR_ITEM_CLASS } from '@/components/shell/sidebar-item';
 import { LanguageSwitch } from '@/components/ui/LanguageSwitch';
 import { LogoutButtons } from '@/features/profile/LogoutButtons';
 import { Link } from '@/i18n/navigation';
+import { hasSessionHint } from '@/lib/session/hint';
 
 // Public pages: home, login, register, verify, reset. The auth panel is full-bleed (mockup), so
 // `main` carries no width constraint. Only the presence of a session cookie picks the sidebar
-// (CC-24): a hint, not a check. The guards on protected pages verify the session.
+// (CC-24): a hint, not a check. The guards on protected pages verify the session. Known limit:
+// an admin session uses the same cookies, so an admin on a public page sees the driver items.
 export default async function PublicLayout({ children }: { children: ReactNode }) {
   const [store, t] = await Promise.all([cookies(), getTranslations('home')]);
-  const signedIn = store.has('mp_access') || store.has('mp_refresh');
+  const signedIn = hasSessionHint(store);
 
   return (
     <AppShell

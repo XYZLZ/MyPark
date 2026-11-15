@@ -21,7 +21,6 @@
     }
   },
   "home": {
-    "title": "Parking in the Zona Colonial",
     "subtitle": "Create your account and register your vehicles to reserve a space.",
     "signedInSubtitle": "Manage the vehicles on your account.",
     "logIn": "Log in",
@@ -326,7 +325,7 @@
       "photoAlt": "Front of the Banreservas parking lot in the Colonial Zone"
     },
     "error": {
-      "title": "We could not load the parking information",
+      "title": "Availability is not loading right now",
       "retry": "Try again"
     },
     "unavailable": {
