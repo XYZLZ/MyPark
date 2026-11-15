@@ -1,6 +1,6 @@
 # M2 Track B — Web and Mobile Clients: Live Availability, Lot Info, Simulator Console: Design
 
-**Status:** draft — pending user approval · **Date:** 2026-11-15 · **Milestone:** M2 · **Track:** B (`apps/web`, `apps/mobile`, `packages/contracts`) · **Visual reference:** the approved M1 mockup [`2026-11-08-m1-clients-mockup.html`](./2026-11-08-m1-clients-mockup.html) (v3). There is no M2 mockup; the screens below are designed inside that system.
+**Status:** approved by the user on 2026-11-15 (visual direction approved the same day; reference mockup [`2026-11-15-m2-clients-mockup.html`](./2026-11-15-m2-clients-mockup.html)) · **Date:** 2026-11-15 · **Milestone:** M2 · **Track:** B (`apps/web`, `apps/mobile`, `packages/contracts`) · **Visual reference:** the approved M2 mockup [`2026-11-15-m2-clients-mockup.html`](./2026-11-15-m2-clients-mockup.html) (Banreservas reference style, M2B-46). It supersedes the M1 mockup [`2026-11-08-m1-clients-mockup.html`](./2026-11-08-m1-clients-mockup.html) for look and layout; M1 flows and copy are unchanged unless an M2B decision says otherwise.
 
 This document designs the client side of M2: the live availability count and the per-space sensor map, the lot information block (address, hours, rates), and a basic Simulator console for admins on the web. The backend for all of it is done and frozen (M2 backend design §11, §13.3, §20).
 
@@ -75,6 +75,20 @@ Columns: **By** is `user` for decisions made by the user on 2026-11-15, `ctrl` f
 | M2B-5 | ctrl | **Stale and offline (FR-AVAIL-5).** 45 s without any frame, or any connection error, means stale: keep the last values, show "Stale — last updated hh:mm" and a reconnecting state. Backoff 1 s → 30 s with jitter. Honor 429 `Retry-After` where the transport exposes it (mobile); on web, where `EventSource` cannot see the status, fall back to a REST snapshot plus a 10 s floor. Snapshot first; drop versions ≤ last seen | FR-AVAIL-5 and spec §10.2 #29 | Medium. The rules live in one pure module (M2B-10), so tuning numbers is a one-line change; the shape is hard to change once both clients depend on it | §5.4–§5.6 |
 | M2B-6 | ctrl | **Console scope (admin web only).** Scenario start and stop (speed, seed, start time, drain), inject a car (ticket or employee card, held option, dwell), leave a car (lost-ticket option), sensor fault toggle, live event and denial log polled from `/control/events?after=`, status panel. Strings in both locales; errors translated through the shared catalog, including the new validation rules | FR-SIM-5, FR-SIM-6, FR-GATE-10 (met by the simulator log, M2C-54), the M2 demo | Low. Each control is an independent form | §4.4, §7 |
 
+### 2.1b Visual direction decisions (user, 2026-11-15, binding)
+
+These record the user's answers after seeing the M2 mockup. Each supersedes any earlier decision it conflicts with, as stated.
+
+| # | By | Decision | Why | Cost if wrong | Supersedes | § |
+|---|---|---|---|---|---|---|
+| M2B-46 | user | **Visual direction: the Banreservas reference style, as in the approved mockup.** Web: navy sidebar layout (Inicio, Mi Vehículo, Perfil, Cerrar sesión; Simulador for admins only), top bar with the location and an orange underline, hero with a photo placeholder (`TODO(brand)`), stat tiles (280 total; Disponibles the largest; Ocupados; Fuera de servicio), an illustrated top-down lot map with a distinct shape per state (free = green outline, occupied = car shape on orange, out of service = hatched ×), a legend and one screen-reader summary, and zoom +/- on web. Mobile: wavy navy header, hero, count card, map card, bottom tab bar with icons and an active underline. Reservations, Mis Reservas, notifications and "Reservados" stay out (M3) | The user chose this look from two reference images (a mobile and a web screen). The mockup is the single visual source | High for the shell (every screen sits in it), Low for the content. A revert means redoing the shell slices V2 and W3 | M1 look and layout; M2B-23 (cell shapes and grid); M2B-38 (nav pill); the "navy hero" and "soft white panel" parts of §4.1 and §4.2 and §9 intro as first drafted. M2B-1 (mobile placement) is kept in substance: lot first before login, lot tab after | §4, §9 |
+| M2B-47 | user | **Buttons become navy (`brand-navy`)** instead of M1's `brand-action` light blue. **M1 impact:** every M1 screen restyles because the shared `Button` (web `components/ui` and mobile `components/ui`) and the focus ring read the new token: web login, register, verify, forgot and reset password, vehicles list and form, profile; mobile Welcome, login, register, verify, reset, Vehicles, vehicle form, Profile. `brand-action` stays defined (still used by the M1 focus ring until V1 repoints it) but no longer styles buttons. M1 tests that assert button classes or snapshots are updated in V1; no M1 behavior changes | One brand color across the reference style; white on navy is 11.19:1 (AA, AAA) | Medium. A wider revert touches the shared buttons only, but every M1 screenshot and snapshot changes twice | M1 decision on `brand-action` as the one action color. Slices that touch M1 screens: **V1** (Button, tokens, tests), **V2** (shell: sidebar, top bar, tab bar around the M1 pages), **M3** (tab order, landing) | §9.1 |
+| M2B-48 | user | **Mobile tab order is Inicio · Vehículos · Perfil, and drivers land on the lot screen (Inicio) after login.** The lot tab is therefore the first tab and the landing | The reference has the availability home as the first thing a driver sees | Low. A one-line redirect and tab order | M2B-37 (tab order "Vehicles, Lot, Profile", landing Vehicles) and M1 #7 (post-login landing = Vehicles) | §4.2 |
+| M2B-49 | user | **The mobile main screen shows a 40-space map preview plus "Ver mapa completo"**, which opens a full-map screen with all 280 spaces. The full map is no longer inline. The preview shows the first 40 spaces by code (`E001`–`E040`) with the text "40 de 280 espacios"; the same legend and screen-reader summary apply (the summary always covers all 280). Web keeps the full map inline with zoom +/- | A 280-cell map does not fit a phone card legibly; a preview keeps the home short | Low. The preview is the same component with a smaller list | M2B-23 mobile clause ("10 columns on mobile", full grid inline) and §4.2 layout | §4.2, §9.3 |
+| M2B-50 | user | **New design tokens from the mockup, all `TODO(brand)`:** `brand-navy` #0b3a75, `brand-navy-deep` #072a57, `brand-orange` #f39a1e (decorative only: swoosh and underline, never text or a state cell), `brand-sky` #eef4fb, `brand-sky-strong` #dce9f8, `nav-active` #1769c9, `on-navy-muted` #c6d4ea, `space-occupied` #c4610a with tint `space-occupied-tint` #fdeedd, `lot-concrete` #e3e8ef, `lot-lawn` #d3e9c8, `lot-tree` #5c9f62. Values and contrast notes in §9.1 and §9.2 were checked against the mockup's `:root`. M1 token parity rule applies: same names and values in web `tokens.css`, mobile `global.css` and `tokens.ts`; every pair in `npm run check:tokens` | FR-BRAND-4 needs checked pairs; parity stops web and mobile drifting | Low. Values are tokens | Extends M2B-40 (status tokens stay); `status-closed` is no longer the occupied-cell fill, `space-occupied` is | §9 |
+| M2B-51 | user | **Keep "Último cambio hh:mm" / "Last change hh:mm"** (M2B-14) over the reference's "Actualizado" | "Actualizado" would suggest freshness, but the time is the last count change; the stale label keeps its own wording | Low. Copy change | Reaffirms M2B-14; rejects the reference wording | §4.3 |
+| M2B-52 | user | **Mobile layout must work on real devices.** One screen gutter of **16 dp**, symmetric left and right, used by every card, button and the tab bar's content; **no horizontal overflow or scroll on any screen at 360 dp width**; cards and buttons never clipped at the screen edge; safe-area insets respected (top notch via the header, bottom home indicator via the tab bar and last scroll item). Guarded by tests and a device check (§11, §12.1, §14) | The HTML mockup does not fix real-device margins; the user requires them as an implementation rule | Medium. Skipping it shows up only on devices, late | — | §4.2, §12.1 |
+
 ### 2.2 Our calls (review these)
 
 | # | Decision | Why | Cost if wrong | § |
@@ -95,7 +109,7 @@ Columns: **By** is `user` for decisions made by the user on 2026-11-15, `ctrl` f
 | M2B-20 | **One connection per lot per app instance.** A module-level manager keyed by `(origin, lotId)` is reference-counted by subscribers and closes 2 s after the last one leaves. React StrictMode double mounts, fast refresh and screen changes reuse the open connection | The SSE caps (30 connects per minute per IP, 20 open per IP) are shared by every tab and device behind one IP; churn would hit them (R1) | Low | §5.4 |
 | M2B-21 | **Mobile transport:** `services/sse.ts` calls `expo/fetch` directly (not the M1 `httpClient`, whose 3 s timeout would kill the stream) with `Accept: text/event-stream` and an `AbortController`. A 200 with `text/event-stream` is read with `getReader()` and `TextDecoder` (`{stream: true}`) into the shared parser. Any other status is read as a JSON envelope: 429 waits `max(Retry-After, backoff)`, 404 re-discovers the lot. The app going to the background aborts the stream; returning to the foreground reconnects (fresh snapshot) | Architecture §13 already chose `expo/fetch` streaming. Unlike `EventSource`, `fetch` exposes the status and `Retry-After`. Background streams waste battery and are killed by the OS anyway | Medium. If `expo/fetch` streaming misbehaves on Hermes, fallback is REST polling every 5 s (§14) | §5.2 |
 | M2B-22 | **Announcements are separate from the visual count.** The big number is plain text, not a live region. One polite announcer (web `role="status"` element, mobile `announceForAccessibility`) says status changes (open, full, closed; live, stale) at once, and count changes at most every 30 s, only if the number changed. The 280-cell grid is hidden from assistive tech and replaced by one summary element | Pushes arrive up to 4 per second; announcing each would make the page unusable with a screen reader. Throttling only the announcer keeps the visual update instant (G2) | Low | §11 |
-| M2B-23 | **Map layout.** 280 cells, in code order, in a CSS grid (web) or a wrapped `View` grid (mobile): 20 columns on wide web screens, 10 on narrow web and on mobile. No row or zone labels (the codes carry no zones: `E001`…`E280`). Free: white cell with a 2 px green outline. Occupied: solid slate fill. Out of service: hatched fill with a "×". Cells are not interactive. A legend under the grid repeats each shape with its text | The seed has no zones, so any grouping would be invented. Three different shapes keep meaning without color (1.4.1) | Low | §9.3 |
+| M2B-23 | **Map layout** (shapes and grid superseded by M2B-46 and M2B-49; the "no zones" and not-interactive rules stand). 280 cells, in code order, in a CSS grid (web) or a wrapped `View` grid (mobile): 20 columns on wide web screens, 10 on narrow web and on mobile. No row or zone labels (the codes carry no zones: `E001`…`E280`). Free: white cell with a 2 px green outline. Occupied: solid slate fill. Out of service: hatched fill with a "×". Cells are not interactive. A legend under the grid repeats each shape with its text | The seed has no zones, so any grouping would be invented. Three different shapes keep meaning without color (1.4.1) | Low | §9.3 |
 | M2B-24 | **Count card content.** The big number is `available`; the line under it is "of {effective_capacity} spaces". When `effective_capacity < capacity`, an extra line says "{n} out of service". When `status` is `closed`, the number is replaced by "Closed". `effective_holds` is not shown (always 0 until M3). No on-screen text about the 60 s pending-entry lag | `effective_capacity` is what the driver can actually get; holds are an M3 concept. The lag is internal and already within the demo's tolerance | Low | §4.3 |
 | M2B-25 | **Lot info and rates.** Name, address, "Open in Maps" (`map_url`, new tab with `rel="noopener noreferrer"` and visible "opens in a new tab" text on web; `Linking.openURL` on mobile). Hours: `always_open: true` → "Open 24 hours"; `false` → "Hours vary — check at the lot". Rates: first hour, each additional hour, daily maximum, free exit within {grace} min, {post_payment} min to exit after paying, lost ticket. `reservation_fee_cents` hidden until M3. `latitude`/`longitude` unused | FR-AVAIL-1 asks for address, map link, hours and rates. The contract has no richer hours object; the seed is 24 h | Low | §4.3 |
 | M2B-26 | **Money formatting.** One `formatMoney(cents, locale)` per app: `Intl.NumberFormat(locale, {style: 'currency', currency: 'DOP'})` on `cents / 100`, falling back to a locale key `money.dop` ("RD${amount}") if the runtime prints `DOP` instead of `RD$` (§14) | FR-I18N: RD$ with es-DO number formatting. ICU output differs between Node, browsers and Hermes | Low | §10 |
@@ -109,17 +123,17 @@ Columns: **By** is `user` for decisions made by the user on 2026-11-15, `ctrl` f
 | M2B-34 | **Unavailable scenarios are hidden.** The scenario picker lists `idle`, `weekday`, `weekend_peak`, `fill_to_full`, `sensor_drift`. `reservation_arrivals` and `no_show` (422 `simulator.scenario_unavailable` in M2) are not offered | M1 rule: no coming-soon placeholders. M3 adds them back | Low | §7.4 |
 | M2B-35 | **Event log text.** `at` shows in virtual time, `America/Santo_Domingo`. `reason` uses `errors.<reason>` when the catalog has it, otherwise the raw code in monospace. `device`, `type` and `result` are shown as sent | The log is an admin diagnostic view, and `type`/`result` are free strings in the contract; translating them would need a contract change | Low | §7.3 |
 | M2B-36 | **The console page also shows the compact live block** (count, status and map) beside the controls, reusing the web live component | The demo watches the count and the map move while driving the simulator; one window is easier to present | Low | §4.4 |
-| M2B-37 | **Mobile routes.** `(auth)/welcome.tsx` (already the anchor) becomes the pre-login lot screen: header with the parking sign and language switch, the shared `LotLive` component, then Log in and Sign up. After login, a third tab `(tabs)/lot/index.tsx` with its own Stack renders the same `LotLive`. Tab order: Vehicles, Lot, Profile. The post-login landing stays Vehicles (M1 #7) | Reuses the existing guards with no new group. Keeping Vehicles as the landing respects a standing user decision | Low. Reordering tabs is one line | §4.2 |
-| M2B-38 | **Web nav.** `DriverNav` gains a "Lot" pill linking to the home. The admin landing gets one link: "Simulator console" | Signed-in drivers otherwise have no route back to the live view. The console is M2, so the M1 "no links to M4 features" rule doesn't apply | Low | §4.1 |
+| M2B-37 | **Mobile routes** (tab order and landing superseded by M2B-48; the route files stay, plus the full-map screen of M2B-49). `(auth)/welcome.tsx` (already the anchor) becomes the pre-login lot screen: header with the parking sign and language switch, the shared `LotLive` component, then Log in and Sign up. After login, a third tab `(tabs)/lot/index.tsx` with its own Stack renders the same `LotLive`. Tab order: Vehicles, Lot, Profile. The post-login landing stays Vehicles (M1 #7) | Reuses the existing guards with no new group. Keeping Vehicles as the landing respects a standing user decision | Low. Reordering tabs is one line | §4.2 |
+| M2B-38 | **Web nav** (the pill is superseded by the sidebar of M2B-46; the admin link becomes the sidebar's Simulador item). `DriverNav` gains a "Lot" pill linking to the home. The admin landing gets one link: "Simulator console" | Signed-in drivers otherwise have no route back to the live view. The console is M2, so the M1 "no links to M4 features" rule doesn't apply | Low | §4.1 |
 | M2B-39 | **CORS and CSP.** Compose `CORS_ALLOWED_ORIGINS` default becomes `http://localhost:${WEB_PORT:-3000},http://127.0.0.1:${WEB_PORT:-3000}` (mirroring `WEB_ALLOWED_ORIGINS`); `web` gets `API_PUBLIC_URL`. No `connect-src` in M2: the CSP is built at build time in `next.config.ts`, while the API origin is a runtime value. M5's per-request CSP (in `proxy.ts`) adds `connect-src 'self' <API_PUBLIC_URL origin>` | An origin missing from CORS makes `EventSource` fail silently. The CORS line is in the `api` service block, so the PR notes it for Track A | Low | §5.3 |
-| M2B-40 | **Tokens.** New status tokens (§9.1) in all three token files, every pair added to `check:tokens`. On navy, status colors appear only as text on their tint backgrounds, never directly on navy | AA (FR-BRAND-4). Green on navy measures 2.13:1 | Low | §9 |
+| M2B-40 | **Tokens.** New status tokens (§9.1; brand tokens added by M2B-50) in all three token files, every pair added to `check:tokens`. On navy, status colors appear only as text on their tint backgrounds, never directly on navy | AA (FR-BRAND-4). Green on navy measures 2.13:1 | Low | §9 |
 | M2B-41 | **Tests stay at the fetch and transport boundary, no MSW** (CC-14 continues). Web: a `FakeEventSource` test double. Mobile: a stubbed `fetchImpl` returning a controllable `ReadableStream`. Jitter takes an injected `random` | Same reasons as CC-14; the stream needs a hand-driven double anyway | Low | §12 |
 | M2B-42 | **"< 2 s" on the client is evidenced by a frame-to-screen test on each client** (push one frame, assert the new number in the same `act`, no timers advanced) plus a demo step. The server half is already measured by `TestAvailability_PassToSSELatency` | The client adds only parse and render time; a test that needs no timer proves it adds no deliberate delay. Real end-to-end timing waits for Playwright in M5 | Low | §12.2 |
-| M2B-43 | **Slices:** contracts first, then web, then mobile, then the console, on `feat/m2-clients`, each ≤ 400 changed lines (§13) | User order; mobile before console keeps the client pattern work together | Low. The console only depends on contracts and W1 | §13 |
+| M2B-43 | **Slices:** contracts first, then the visual foundation, web, mobile, then the console, on `feat/m2-clients`, each ≤ 400 changed lines (§13; revised by the visual-direction decisions) | User order; mobile before console keeps the client pattern work together | Low. The console only depends on contracts and W1 | §13 |
 | M2B-44 | **Console follows the simulator's implicit idle session.** Inject while nothing runs is allowed: it starts an implicit idle session (speed 1, real clock), so status then reports `running: true`, scenario `idle`. A later scenario Start takes that session over and keeps its cars (held cars stay held); a Start after an idle run the admin explicitly started gets 409 `simulator.already_running`. Status cannot tell implicit from explicit idle, so the console derives no rules it cannot know: Start is enabled unless a non-idle scenario is running, Inject is always enabled (except while draining), Stop, Leave and Fault follow `running`, and any 409/422 from the API is shown as a translated banner. No contract change | Matches the approved runner behavior (`Runner.Inject`, `activeOrImplicit`, `takeover`). Cost if wrong: an admin sees an occasional 409 banner | Low | §7.2 |
 | M2B-45 | **Draining is client memory.** Status has no drain field. The console sets a `draining` flag when "Stop after cars leave" returns 202 and clears it when status reports not running. On reload the flag is lost and the panel shows "running" until the drain finishes. While the flag is set, Start, Inject, Fault and "Stop after cars leave" are disabled and a plain "Stop now" stays enabled (it escalates the drain into a hard stop). No contract change | The simulator returns 202 at once and drains in the background (`StopAsync`); a second drain stop gets 409 `simulator.not_running`, only a hard stop escalates. A lost flag on reload is acceptable for a basic M2 console. Cost if wrong: an admin sees a 409 banner | Low | §7.2 |
 
-**Decision count:** 43 (M2B-1 to M2B-43; 6 user or controller, 37 ours).
+**Decision count:** 52 (M2B-1 to M2B-52; 13 user or controller, 39 ours). The rows marked as superseded keep their text for history; the superseding decision wins.
 
 ---
 
@@ -148,6 +162,9 @@ Columns: **By** is `user` for decisions made by the user on 2026-11-15, `ctrl` f
 | Y5 | **M2C-12 says Track B uses MSW mocks**, CC-14 says no MSW | CC-14 wins (M2B-41) |
 | Y6 | **Spec FR-AVAIL-6 is in M2 scope** | Hidden until M3 (M2B-4), consistent with backend §19 |
 | Y7 | **`seed` is int64**, JavaScript numbers are not | M2B-33 |
+| Y9 | **M2B-37 and M1 #7 say the driver lands on Vehicles; the user now wants Inicio (lot)** | M2B-48 |
+| Y10 | **M1 buttons are `brand-action` light blue; the new direction is navy** | M2B-47; M1 screens restyle in V1 and V2 |
+| Y11 | **The reference says "Actualizado"; M2B-14 says "Último cambio"** | M2B-51 keeps ours |
 | Y8 | **CORS default lists only `http://localhost:3000`**, but the web is also reached at `127.0.0.1:3000` | M2B-39 |
 
 ---
@@ -165,17 +182,30 @@ States legend: **L** loading, **E** empty, **Err** error, **S** stale, **U** liv
 | Admin landing | `(admin)/admin/page.tsx` | `requireAdmin()` | Adds a "Simulator console" link |
 | Simulator console | `(admin)/admin/simulator/page.tsx` → `features/simulator/SimulatorConsole` | `/api/admin/simulator/*` (M2B-27); RSC passes `API_PUBLIC_URL` and the lot snapshot for the compact live block | Not configured, unreachable, idle, running, draining (§4.4) |
 
-Home layout (top to bottom): navy hero with the parking sign, wordmark "MyPark · Banreservas Zona Colonial" and, on its right on wide screens, the **count card** (soft white panel on navy, as the M1 auth panel); then Log in and Sign up (signed out) or a Vehicles link (signed in, CC-24); then on the light surface: **lot map**, **lot info**, **rates**. On narrow screens the count card stacks under the title and the hero keeps the faint bay lines from the M1 `.lot` panel.
+Shell (M2B-46): navy sidebar (`brand-navy` to `brand-navy-deep`) with the placeholder mark and items Inicio, Mi Vehículo, Perfil, Cerrar sesión, plus Simulador for admins only (the "admin" tag from the mockup); `nav-active` marks the current item. Top bar with the location and an orange underline (`brand-orange`, decorative). Signed-out visitors see the same shell with Log in and Sign up in place of the account items. On narrow screens the sidebar collapses to a menu button.
+
+Home (top to bottom, on `brand-sky`): hero with a photo placeholder (`TODO(brand)`: replace with a real photo); **stat tiles** (280 total; **Disponibles** the largest; Ocupados; Fuera de servicio) with the status pill and the "Último cambio hh:mm" line (M2B-51); Log in and Sign up (signed out) or a Vehicles link (signed in, CC-24); then the **illustrated lot map** with legend, summary and zoom +/- (§9.3), **lot info** and **rates**. Exact layout, spacing and illustration: the mockup.
 
 ### 4.2 Mobile (`apps/mobile/src/app/…`)
 
 | Screen | Route file | Data source | States |
 |---|---|---|---|
 | Welcome (pre-login lot) | `(auth)/welcome.tsx` (rewrite) | `['lots']`, lot, tariff, availability, spaces queries; stream | Header and actions always render; lot section **L** skeleton, **Err** retry panel, **S**, **U** |
-| Lot tab | `(tabs)/lot/_layout.tsx` (Stack), `(tabs)/lot/index.tsx` | Same `LotLive` | Same |
-| Tabs | `(tabs)/_layout.tsx` | — | Three tabs: Vehicles, Lot, Profile; landing stays Vehicles (M2B-37) |
+| Inicio (lot tab) | `(tabs)/index.tsx` (first tab and post-login landing, M2B-48), own Stack | Same `LotLive` | Same |
+| Full map | `LotMapScreen` mounted at `(tabs)/map.tsx` and `(auth)/map.tsx`, opened by "Ver mapa completo" (M2B-49) | `['lot', id, 'spaces']` (all 280) | **L**, **Err**, **S**; back returns to the lot screen |
+| Tabs | `(tabs)/_layout.tsx` | — | Three tabs: Inicio · Vehículos · Perfil, icons plus an active underline (M2B-46, M2B-48) |
 
-Welcome layout: `brand-primary-strong` header band with parking sign, wordmark and the language switch; the count card overlapping the band's bottom edge; Log in and Sign up buttons right under the count card (so they are reachable without scrolling on a small phone); then map, lot info and rates in a `ScreenScroll`. The Lot tab uses the same component without the actions. Pull-to-refresh is not offered: the stream is the refresh.
+Welcome and Inicio layout (M2B-46, M2B-49): wavy navy header (`brand-navy`, with the language switch on Welcome), hero with a photo placeholder (`TODO(brand)`), the count card overlapping the header's lower edge, Log in and Sign up right under it on Welcome (reachable without scrolling on a small phone), then the **map card with the 40-space preview** and "Ver mapa completo", then lot info and rates in a `ScreenScroll`. Inicio is the same component without the actions. Pull-to-refresh is not offered: the stream is the refresh.
+
+**Real-device layout rules (M2B-52, binding):**
+
+| Rule | Value |
+|---|---|
+| Screen gutter | **16 dp**, left and right, defined once as `SCREEN_GUTTER` and used by `ScreenScroll`, every card, every button row and the tab bar's content. Full-bleed parts (wavy header, tab bar background) bleed, but their content sits inside the 16 dp gutter |
+| Widths | No fixed widths wider than `window − 2 × 16`; cards and buttons are `width: 100%` of the gutter box. No horizontal `ScrollView` anywhere; nothing overflows horizontally at **360 dp** |
+| Clipping | Cards, buttons and shadows are never cut at the screen edge; text wraps and truncates inside its box, including at font scale 1.3 |
+| Safe areas | Top inset: the header adds the top inset to its padding (notch, status bar). Bottom inset: the tab bar adds the bottom inset to its padding and the last scroll item adds it to the content padding (home indicator). Left and right insets (landscape or foldables) are added to the gutter, never replace it |
+| Map cells | Preview and full map size cells from `useWindowDimensions().width − 2 × 16 − card padding`, so the grid fits at 360 dp |
 
 ### 4.3 The live block (both clients)
 
@@ -367,7 +397,7 @@ react-hook-form with the contracts request schemas (M1 #19); the start form uses
 
 ## 9. Design system
 
-Same rules as M1 §9 (impeccable product register, soft UI, one action color, no side-stripes, motion only for state). The count is the one large number on the page: Barlow 700, about 4.5 rem on web and 64 sp on mobile, tabular figures, no count-up animation.
+Same rules as M1 §9 (impeccable product register, soft UI, no side-stripes, motion only for state), except that the one action color is now `brand-navy` (M2B-47) and the look follows the mockup (M2B-46). The count is the one large number on the page: Barlow 700, about 4.5 rem on web and 64 sp on mobile, tabular figures, no count-up animation.
 
 ### 9.1 New tokens (all `TODO(brand)`, three files, parity by `check:tokens`)
 
@@ -382,6 +412,25 @@ Same rules as M1 §9 (impeccable product register, soft UI, one action color, no
 | `status-stale` | `#8a5300` | Stale text and icon |
 | `status-stale-tint` | `#fdf1dc` | Stale line background |
 
+### 9.1b Brand and map tokens (M2B-50, all `TODO(brand)`)
+
+Values checked against the mockup's `:root`. Parity rule: identical names and values in web `tokens.css`, mobile `global.css` and `tokens.ts`; `npm run check:tokens` guards it.
+
+| Token | Value | Use | Contrast note |
+|---|---|---|---|
+| `brand-navy` | `#0b3a75` | Sidebar, headings, primary buttons, wavy header | White on it 11.19; on `brand-sky` 10.11 |
+| `brand-navy-deep` | `#072a57` | Gradient end, hero shade | White 14.21; `on-navy-muted` 9.48 |
+| `brand-orange` | `#f39a1e` | **Decorative only:** swoosh and underline. Never text, never a state cell | 2.22 on white (fails text); 5.04 on navy, decorative |
+| `brand-sky` | `#eef4fb` | Page background | Navy text 10.11 |
+| `brand-sky-strong` | `#dce9f8` | Stat tile, icon discs | Navy text 9.09 |
+| `nav-active` | `#1769c9` | Active sidebar item | White text 5.38 |
+| `on-navy-muted` | `#c6d4ea` | Secondary text on navy | 7.46 on `brand-navy` |
+| `space-occupied` | `#c4610a` | Occupied car shape fill | 3.37 on `lot-concrete` (graphic, 3:1 needed, passes); 4.15 on white |
+| `space-occupied-tint` | `#fdeedd` | Occupied legend and stat tint | `space-occupied` on it 3.65, graphic only; its label text uses `ink` |
+| `lot-concrete` | `#e3e8ef` | Lot surface (kept light so cells stay at 3:1) | Free outline `status-open` on it 4.34 |
+| `lot-lawn` | `#d3e9c8` | Decorative | — |
+| `lot-tree` | `#5c9f62` | Decorative | 2.47 on `lot-lawn`, never carries meaning |
+
 ### 9.2 Contrast (computed for this design)
 
 | Pair | Ratio | Rule |
@@ -391,7 +440,8 @@ Same rules as M1 §9 (impeccable product register, soft UI, one action color, no
 | `status-closed` on `status-closed-tint` / surface / sunken | 5.77 / 6.65 / 6.03 | Pass |
 | `status-stale` on `status-stale-tint` / surface / sunken | 5.66 / 6.33 / 5.74 | Pass |
 | White on `status-open` / `status-closed` | 5.35 / 6.65 | Pass (cell glyphs) |
-| `status-open` directly on `brand-primary-strong` | 2.13 | **Never** — use the tint pill (M2B-40) |
+| `status-open` directly on `brand-primary-strong` | 2.13 | **Never** — use the tint pill (M2B-40). Same for `brand-navy` |
+| Navy buttons: white on `brand-navy` | 11.19 | Pass (M2B-47); disabled buttons keep `disabled-bg` / `disabled-ink` |
 
 All cell outlines and fills are ≥ 3:1 against `surface` (1.4.11).
 
@@ -399,11 +449,11 @@ All cell outlines and fills are ≥ 3:1 against `surface` (1.4.11).
 
 | State | Shape | Fill | Mark |
 |---|---|---|---|
-| Free | Rounded square, 2 px outline | `surface`, outline `status-open` | none |
-| Occupied | Rounded square | Solid `status-closed` | none |
-| Out of service | Rounded square, 1 px outline `ink-muted` | Diagonal hatch | "×" |
+| Free | Empty parking bay, 2 px outline | `surface`, outline `status-open` (green) | none |
+| Occupied | Bay with a top-down car shape | Car in `space-occupied` on the bay | car silhouette |
+| Out of service | Bay with a 1 px `ink-muted` outline | Diagonal hatch | "×" |
 
-Web cells are 24–28 px with a 4 px gap; mobile cells fill `(width − gutters) / 10`. The grid never scrolls horizontally at 320 px (WCAG 1.4.10). A one-line legend repeats each shape with text. When `spacesReady` is false after a reconnect, the grid stays visible at 60 % opacity with "Updating map…".
+The map is drawn as an illustrated top-down lot (concrete, lawn and trees from the §9.1b tokens) as in the mockup, with 280 bays in code order and no invented zones (M2B-23). Web shows all 280 inline with zoom +/- (buttons with text labels, keyboard operable, 44 px targets). Mobile shows the first 40 bays in the card preview and all 280 on the full-map screen (M2B-49); cells fill `(width − 2 × 16 dp − card padding) / columns`. The grid never scrolls horizontally at 320 px web or 360 dp mobile (WCAG 1.4.10, M2B-52). A one-line legend repeats each shape with text. When `spacesReady` is false after a reconnect, the grid stays visible at 60 % opacity with "Updating map…".
 
 ---
 
@@ -416,9 +466,10 @@ Web cells are 24–28 px with a 4 px gap; mobile cells fill `(width − gutters)
 | `spaces` | both | `legend.free`, `legend.occupied`, `legend.outOfService`, `summary`, `note`, `updating`, `listFree` |
 | `tariff` | both | `title`, `firstHour`, `additionalHour`, `dailyCap`, `grace`, `postPayment`, `lostTicket` |
 | `money` | both | `dop` (fallback, M2B-26) |
-| `nav` | web | `lot` |
+| `nav` | web | `home` (Inicio), `vehicle` (Mi Vehículo), `profile`, `logout`, `simulator` (Simulador, admin only) |
 | `simulator` | web | `title`, `status.*`, `scenario.idle`, `scenario.weekday`, `scenario.weekend_peak`, `scenario.fill_to_full`, `scenario.sensor_drift`, `start.*`, `stop.*`, `inject.*`, `held.*`, `fault.*`, `fault.kind.*`, `log.*`, `notConfigured`, `unreachable` |
-| `tabs` | mobile | `lot` |
+| `tabs` | mobile | `home` (Inicio), `vehicles`, `profile` |
+| `spaces` (additions) | both | `viewFull` (Ver mapa completo), `previewCount` ("40 de 280 espacios"), `zoomIn`, `zoomOut`; stat tile labels reuse `availability.*` and `spaces.legend.*` |
 
 `errors.simulator.*`, `errors.lot.*` and `errors.gate.*` already exist in both apps. Copy examples:
 
@@ -443,7 +494,8 @@ Times use `America/Santo_Domingo` (FR-I18N-4); numbers use the active locale.
 | Color alone | Pill icon + text; cell shapes and marks (§9.3); denials labelled in the log | Same |
 | Freshness | Stale is text + icon, not a color change | Same |
 | Keyboard | All console controls operable; log table has headers and a caption | Hardware keyboard focus order |
-| Targets | Controls ≥ 44 px; cells are not interactive, so they are exempt | ≥ 48 dp |
+| Targets | Controls ≥ 44 px, including zoom +/- and sidebar items; cells are not interactive, so they are exempt | ≥ 48 dp, including the tab bar items and "Ver mapa completo" |
+| Layout on devices | 200 % zoom reflow (above) | 16 dp gutters, no horizontal scroll at 360 dp, safe-area insets (M2B-52); checks in §12.1 and §14 |
 | External link | Visible "opens in a new tab" text | `accessibilityRole="link"`, hint "Opens Maps" |
 | Motion | No count animation; the stale fade honors `prefers-reduced-motion` | Reduce motion honored |
 | Zoom and type | 200 % zoom, rem sizes; grid reflows to 10 columns | Font scale respected; count capped at 1.5× so it fits |
@@ -463,8 +515,12 @@ Times use `America/Santo_Domingo` (FR-I18N-4); numbers use the active locale.
 | Web, BFF | vitest on handlers | Public lot GETs allowed; console: unknown path 404; bad `carId`/`code` 404; extra query dropped; driver 403; no session 401; POST without CSRF 403; token header set upstream and absent from the response; 204 passthrough; upstream down 502; missing config 404 |
 | Web, console | Testing Library | Start form validation and 409; held car added and left; fault 204 status text; inject enabled while idle (implicit session); draining flag disables the controls and keeps Stop now; log cursor kept across `started_at` changes and reset after a failed poll recovers; gap row; a seed above 2^53 round-trips exactly (display and start body) |
 | Mobile, stream | jest-expo, injected `fetchImpl` with a controllable `ReadableStream` | Chunked frames parsed; 429 waits `Retry-After`; 404 re-discovers; background aborts and foreground reconnects; 45 s stale |
-| Mobile, screens | RN Testing Library | Welcome renders actions with the API down; Lot tab; map hidden from accessibility, summary present; stale label |
-| Scripts | `node --test` | `check:tokens` new pairs; `check:i18n` new keys |
+| Mobile, screens | RN Testing Library | Welcome renders actions with the API down; Inicio is the post-login landing and first tab; 40-space preview and "Ver mapa completo" open the full map; map hidden from accessibility, summary present; stale label |
+| M1 restyle | Existing M1 tests | Button class and snapshot assertions updated for navy (M2B-47); no behavior assertion changes |
+| Mobile, layout (M2B-52) | jest-expo + RN Testing Library with `SafeAreaProvider initialMetrics` | Each screen (Welcome, Inicio, full map, Vehículos, Perfil, auth screens) renders at **360 × 640** and at a large phone (**430 × 932**) with top and bottom insets: the scroll container's horizontal padding equals `SCREEN_GUTTER` (16) plus side insets; the tab bar's bottom padding includes the bottom inset; no `ScrollView horizontal`; the map cell size is computed from the window width and never exceeds the card's inner width |
+| Mobile, layout guard | `node --test` script `check:layout` over `apps/mobile/src` | Fails on `horizontal` scroll views and on fixed widths above `360 − 32` dp outside an allow-list; keeps new screens from bypassing `ScreenScroll` |
+| Mobile, device check | Documented manual pass (TalkBack and layout) | At 360 × 640 and on a large phone (and font scale 1.3): no horizontal scroll, equal gutters, nothing clipped at the edges, notch and home indicator clear, tab bar fully visible. Recorded in the M2 slice PR |
+| Scripts | `node --test` | `check:tokens` new pairs and parity for the §9.1b tokens; `check:i18n` new keys |
 
 ### 12.2 Frame-to-screen ("< 2 s") evidence (M2B-42)
 
@@ -500,13 +556,17 @@ Branch `feat/m2-clients`. Each slice is ≤ 400 changed lines (excluding generat
 |---|---|---|---|---|
 | C1 | Contracts: schemas | `m2/` schemas, fixtures, type tests | 350 | — |
 | C2 | Contracts: live rules | `sse/` parser and URL, `m2/live.ts`, tests | 300 | C1 |
-| W1 | Web foundations | Status tokens in three files + `check:tokens` pairs; `lot`/`availability`/`spaces`/`tariff`/`money` keys (both apps' files for shared namespaces); `formatMoney`; `API_PUBLIC_URL` reader; compose (`API_PUBLIC_URL`, CORS default); BFF public GET entries | 380 | C1 |
+| V1 | Visual foundation (restyles M1) | Status tokens and the §9.1b brand and map tokens in three files + `check:tokens` pairs and parity; shared `Button` navy on web and mobile, focus ring repointed; M1 test and snapshot updates (M2B-47) | 380 | — |
+| V2 | App shells (restyles M1 screens' frame) | Web navy sidebar, top bar and orange underline around the driver and admin pages (Simulador item for admins); mobile wavy header component, tab bar with icons and active underline, `SCREEN_GUTTER` and safe-area helpers in `ScreenScroll`, `check:layout` script | 400 | V1 |
+| W1 | Web foundations | `lot`/`availability`/`spaces`/`tariff`/`money` keys (both apps' files for shared namespaces); `formatMoney`; `API_PUBLIC_URL` reader; compose (`API_PUBLIC_URL`, CORS default); BFF public GET entries | 300 | C1 |
 | W2 | Web stream | Connection manager, `useLiveLot`, connection store, Query wiring, fallback, tests | 400 | C2, W1 |
-| W3 | Web screens | Home rewrite, `LotLive` and presentational parts, announcer, `DriverNav` link, frame-to-screen tests | 400 | W2 |
+| W3 | Web screens | Home rewrite: hero with photo placeholder, stat tiles, `LotLive`, lot info and rates, announcer, frame-to-screen tests | 400 | W2, V2 |
+| W4 | Web lot map | Illustrated lot map, per-state shapes, legend, summary, "List free spaces", zoom +/-, tests | 350 | W3 |
 | M1 | Mobile stream | `services/sse.ts`, manager, `features/lot/api.ts`, `useLotId`, `useLiveLot`, AppState handling, tests | 400 | C2, W1 |
-| M2 | Mobile screens | Welcome rewrite, Lot tab, `LotLive` parts, tab label, frame-to-screen tests | 400 | M1 |
+| M2 | Mobile screens | Welcome rewrite and Inicio: wavy header, hero, count card, `LotLive` parts, frame-to-screen tests | 400 | M1, V2 |
+| M3 | Mobile map and tabs | 40-space preview card, "Ver mapa completo" and the full-map screen, tab order Inicio · Vehículos · Perfil, post-login landing on Inicio, layout tests at 360 × 640 and 430 × 932 (M2B-52) | 400 | M2 |
 | S1 | Console BFF | Route, `lib/simulator/*`, role check, matcher, compose check, tests | 380 | C1 |
-| S2 | Console UI 1 | Page, admin landing link, status panel, start and stop forms, `simulator` keys, store | 400 | S1, W3 |
+| S2 | Console UI 1 | Page, sidebar Simulador link target, status panel, start and stop forms, `simulator` keys, store | 400 | S1, W4 |
 | S3 | Console UI 2 | Inject, held cars, leave, fault, event log, cursor rules, tests | 400 | S2 |
 | D1 | Docs + demo | Items below; `docs/m2-demo-script.md`; spec §8 exit boxes after the demo runs | 200 | all |
 
@@ -515,10 +575,11 @@ Branch `feat/m2-clients`. Each slice is ≤ 400 changed lines (excluding generat
 | Document | Change | Slice |
 |---|---|---|
 | `architecture.md` §5, §12 | The SSE exception to "browser never calls Go"; `API_PUBLIC_URL`; console route; connection manager | W2, S1 |
-| `architecture.md` §13 | Mobile tabs in M2: Vehicles, Lot, Profile; Welcome shows the lot | M2 |
+| `architecture.md` §13 | Mobile tabs in M2: Inicio, Vehículos, Perfil; Inicio is the landing; Welcome shows the lot; full-map screen | M3 |
+| M1 clients design / `apps/*` UI docs | Note that buttons are navy and the shells changed (M2B-46, M2B-47) | V1, V2 |
 | `deploy/compose/docker-compose.yml` | `web.API_PUBLIC_URL`; `api.CORS_ALLOWED_ORIGINS` default (note for Track A) | W1 |
 | `spec.md` §8 M2 | Tick the Track B parts after the demo | D1 |
-| `spec.md` §10.2 | Add "M2 client calls M2B-7…M2B-43 accepted" | D1 |
+| `spec.md` §10.2 | Add "M2 client calls M2B-7…M2B-52 accepted" | D1 |
 | `docs/m2-demo-script.md` | New | D1 |
 
 ---
@@ -533,6 +594,8 @@ Branch `feat/m2-clients`. Each slice is ≤ 400 changed lines (excluding generat
 | `Intl.NumberFormat('en', {currency: 'DOP'})` output | Locale key `money.dop` (M2B-26) |
 | Which client IP the API logs for browser and phone SSE locally (Y2) | Document the shared bucket in the demo script; open fewer tabs |
 | `pagehide`/`pageshow` handling with Next's client router | Close on `visibilitychange` hidden after 60 s instead |
+| Safe-area values on a real notched phone and a gesture-bar phone (`react-native-safe-area-context` via expo-router; confirm it is a direct dependency, no new package) | Use `useSafeAreaInsets`; if absent at runtime, fall back to a fixed 24 dp top and 16 dp bottom and record it |
+| Mobile layout on a 360 × 640 device and a large phone at font scale 1.3 (M2B-52) | Fix the offending screen before merging M3; the device check is part of the slice PR |
 | Exact component props, file splits, wording beyond the examples, skeleton shapes | Within the conventions above |
 
 ---
@@ -545,8 +608,9 @@ Branch `feat/m2-clients`. Each slice is ≤ 400 changed lines (excluding generat
 | FR-AVAIL-5 | "stale — last updated hh:mm" | The time is the last frame received, not `updated_at` (M2B-14) | Clarification |
 | M1 decision 2.1 #4 | Public home without availability | Home shows availability (M2B-1) | Superseded by user decision |
 | Architecture §12 | Browser never calls Go directly | Except the public SSE stream (M2B-2, Y3) | Doc fix in W2 |
-| Architecture §13 | Five tabs | Three in M2 (M2B-37) | Doc fix in M2 |
+| Architecture §13 | Five tabs | Three in M2: Inicio, Vehículos, Perfil (M2B-48) | Doc fix in M3 |
 | M2C-12 | MSW mocks | Fetch and transport doubles (M2B-41) | As CC-14 |
+| M1 look, buttons, landing | M1 mockup; `brand-action` buttons; landing Vehicles | Banreservas style, navy buttons, landing Inicio (M2B-46, M2B-47, M2B-48) | Superseded by user decision; M1 screens restyle in V1, V2, M3 |
 | FR-SIM-5 "present reservation QR" | Console control | Absent in M2 (backend M2C-1) | Already recorded |
 
 ---
@@ -562,3 +626,6 @@ Branch `feat/m2-clients`. Each slice is ≤ 400 changed lines (excluding generat
 | R5 | Role check per console request adds load | Two polls every 2 s → about 60 `GET /v1/me` per minute per open console (that route has no rate-limit policy) | Acceptable for one admin; a short role cache keyed by a hash of the access cookie is the later option |
 | R6 | Mobile slices land before the console | The full demo is not runnable until S3 | Console depends only on C1 and W3; can be pulled ahead if the schedule needs it |
 | R7 | The CORS default change edits the `api` service | Cross-track surprise | Called out in the W1 PR; Track A acknowledges |
+| R8 | The navy restyle touches every M1 screen | M1 tests and screenshots change; visual regressions in screens M2 did not otherwise touch | Isolate it in V1 and V2 with no behavior change; update M1 tests in the same slice; fresh-context review |
+| R9 | Real-device margins differ from the HTML mockup (notch, gesture bar, 360 dp) | Clipped cards, horizontal scroll, buttons under the home indicator | One `SCREEN_GUTTER` of 16 dp and safe-area helpers in `ScreenScroll`; layout tests at 360 × 640 and 430 × 932; `check:layout`; device check (M2B-52) |
+| R10 | The illustrated map and 11 new tokens drift between web and mobile, or the placeholder photo and brand mark ship by mistake | Brand and contrast regressions | `check:tokens` parity; every new token and the hero photo stay `TODO(brand)`; the mark and photo are placeholders, not official assets |
