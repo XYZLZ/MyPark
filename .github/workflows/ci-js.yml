@@ -105,6 +105,9 @@ jobs:
       - name: Single React copy
         run: npm run check:react
 
+      - name: Mobile layout guard
+        run: npm run check:layout
+
       - name: Lint
         run: npm run lint -w apps/mobile
 
