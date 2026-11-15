@@ -8,11 +8,22 @@ test('the gutter constants agree', () => {
 });
 
 test('screenPadding adds side insets to the gutter, never replaces it', () => {
-  expect(screenPadding({ ...insets, left: 8 }, 'screen')).toEqual({ paddingLeft: 24, paddingRight: 16, paddingBottom: 58 });
+  expect(screenPadding({ ...insets, left: 8 }, 'screen')).toMatchObject({ paddingLeft: 24, paddingRight: 16, paddingBottom: 58 });
 });
 
 test('a tab screen leaves the bottom inset to the tab bar', () => {
   expect(screenPadding(insets, 'tabBar').paddingBottom).toBe(24);
+});
+
+test('a headerless screen clears the notch: top inset plus the gutter, never below 24', () => {
+  expect(screenPadding({ ...insets, top: 48 }, 'screen', 'none').paddingTop).toBe(64);
+  expect(screenPadding({ ...insets, top: 24 }, 'screen', 'none').paddingTop).toBe(40);
+  expect(screenPadding({ ...insets, top: 0 }, 'screen', 'none').paddingTop).toBe(24);
+  expect(screenPadding({ ...insets, top: 4 }, 'screen', 'none').paddingTop).toBe(24);
+});
+
+test('a screen under a stack header keeps 24: the header already clears the top', () => {
+  expect(screenPadding({ ...insets, top: 48 }, 'tabBar', 'stack').paddingTop).toBe(24);
 });
 
 test('tabBarStyle pads the home indicator', () => {

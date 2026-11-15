@@ -14,16 +14,25 @@ const SCREEN_BOTTOM = 24;
 const TAB_BAR_HEIGHT = 64;
 
 export type ScreenEdge = 'screen' | 'tabBar';
+/** 'stack': a navigation header sits above and already clears the top inset. 'none': the screen is headerless and clears it itself. */
+export type ScreenHeader = 'none' | 'stack';
+
+/** Content padding at the top of a scroll view. */
+const SCREEN_TOP = 24;
 
 /**
  * Horizontal padding is the gutter plus the side insets (landscape, foldables), never a replacement for it.
  * A screen above the tab bar leaves the bottom inset to the bar; any other screen adds it to its last item.
+ * A headerless screen (auth, gate, restore-failed) starts below the notch: `max(24, top inset + 16)`.
+ * A screen under a stack header keeps 24.
  */
 export function screenPadding(
   insets: EdgeInsets,
   edge: ScreenEdge,
-): { paddingLeft: number; paddingRight: number; paddingBottom: number } {
+  header: ScreenHeader = 'none',
+): { paddingTop: number; paddingLeft: number; paddingRight: number; paddingBottom: number } {
   return {
+    paddingTop: header === 'none' ? Math.max(SCREEN_TOP, insets.top + SCREEN_GUTTER) : SCREEN_TOP,
     paddingLeft: SCREEN_GUTTER + insets.left,
     paddingRight: SCREEN_GUTTER + insets.right,
     paddingBottom: SCREEN_BOTTOM + (edge === 'screen' ? insets.bottom : 0),

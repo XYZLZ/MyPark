@@ -11,7 +11,7 @@ export function TabLabel({ label, focused }: Props) {
       <AppText weight={focused ? 'bold' : 'medium'} className={focused ? 'text-brand-navy' : 'text-ink-muted'}>
         {label}
       </AppText>
-      <View className={`mt-1 h-[3px] w-11 rounded-sm ${focused ? 'bg-brand-navy' : 'bg-transparent'}`} />
+      <View testID="tab-underline" className={`mt-1 h-[3px] w-11 rounded-sm ${focused ? 'bg-brand-navy' : 'bg-transparent'}`} />
     </View>
   );
 }

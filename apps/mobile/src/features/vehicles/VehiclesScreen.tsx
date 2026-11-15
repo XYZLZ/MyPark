@@ -37,7 +37,7 @@ export function VehiclesScreen() {
 
   if (list.isPending) {
     return (
-      <ScreenScroll edge="tabBar">
+      <ScreenScroll edge="tabBar" header="stack">
         <View accessible accessibilityRole="progressbar" accessibilityLabel={t('vehicles.loading')} className="gap-3">
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-28 w-full" />
@@ -48,7 +48,7 @@ export function VehiclesScreen() {
 
   if (list.isError) {
     return (
-      <ScreenScroll edge="tabBar">
+      <ScreenScroll edge="tabBar" header="stack">
         <Banner tone="error">{t('vehicles.loadError.title')}</Banner>
         <Button variant="primary" label={t('common.retry')} loading={list.isFetching} onPress={() => void list.refetch()} />
       </ScreenScroll>
@@ -61,7 +61,7 @@ export function VehiclesScreen() {
 
   if (items.length === 0) {
     return (
-      <ScreenScroll edge="tabBar">
+      <ScreenScroll edge="tabBar" header="stack">
         <EmptyState
           title={t('vehicles.empty.title')}
           body={t('vehicles.empty.body')}
@@ -72,7 +72,7 @@ export function VehiclesScreen() {
   }
 
   return (
-    <ScreenScroll edge="tabBar">
+    <ScreenScroll edge="tabBar" header="stack">
       <AppText variant="caption">{t('vehicles.count', { used: items.length, limit: page.limit })}</AppText>
       {items.map((vehicle) => (
         <VehicleRow key={vehicle.id} vehicle={vehicle} onPress={() => router.push(`/vehicles/${vehicle.id}`)} />

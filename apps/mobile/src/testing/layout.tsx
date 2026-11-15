@@ -2,7 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { screen } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import type { ReactTestRendererNode } from 'react-test-renderer';
-import { Dimensions, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { SafeAreaProvider, type EdgeInsets } from 'react-native-safe-area-context';
 
 import type { AppLanguage } from '@/lib/i18n';
@@ -18,14 +18,17 @@ export const LAYOUT_SIZES = {
 /** A phone with a notch and a home indicator. */
 export const DEVICE_INSETS: EdgeInsets = { top: 24, bottom: 34, left: 0, right: 0 };
 
-/** Renders a screen in a window of the given size, inside a SafeAreaProvider with fixed insets. */
+/**
+ * Renders a screen in a SafeAreaProvider whose frame has the given size and whose insets are fixed. Only the safe-area
+ * frame carries the size: layout here is measured through padding, not pixels, so the two sizes prove the padding does not
+ * depend on the window. The real overflow check is the device pass.
+ */
 export async function renderAtSize(
   ui: ReactElement,
   size: keyof typeof LAYOUT_SIZES,
   opts: { language?: AppLanguage; queryClient?: QueryClient; insets?: EdgeInsets } = {},
 ): Promise<void> {
   const { width, height } = LAYOUT_SIZES[size];
-  Dimensions.set({ window: { width, height, scale: 1, fontScale: 1 }, screen: { width, height, scale: 1, fontScale: 1 } });
   const frame = { x: 0, y: 0, width, height };
   await renderScreen(
     <SafeAreaProvider initialMetrics={{ frame, insets: opts.insets ?? DEVICE_INSETS }}>{ui}</SafeAreaProvider>,
@@ -34,9 +37,9 @@ export async function renderAtSize(
 }
 
 /** The scroll container's resolved padding, read from `screen-scroll`. */
-export function scrollPadding(): { left: number; right: number; bottom: number } {
+export function scrollPadding(): { top: number; left: number; right: number; bottom: number } {
   const style = StyleSheet.flatten(screen.getByTestId('screen-scroll').props.contentContainerStyle) ?? {};
-  return { left: style.paddingLeft ?? 0, right: style.paddingRight ?? 0, bottom: style.paddingBottom ?? 0 };
+  return { top: style.paddingTop ?? 0, left: style.paddingLeft ?? 0, right: style.paddingRight ?? 0, bottom: style.paddingBottom ?? 0 };
 }
 
 /** Counts rendered nodes that scroll sideways; every screen must have none. */
