@@ -115,7 +115,7 @@ func (p *pacer) WaitUntil(ctx context.Context, at time.Time) error {
 	if err := p.StepClock.WaitUntil(ctx, at); err != nil {
 		return err
 	}
-	p.e.clk.Set(p.StepClock.Now())
+	p.e.clk.Set(p.Now())
 	p.steps++
 	p.checkInvariants(ctx)
 	p.moved.fire()
@@ -141,10 +141,10 @@ func (p *pacer) checkInvariants(ctx context.Context) {
 		return
 	}
 	if occupied != inside {
-		p.e.t.Errorf("step %d at %s: occupancy counter %d, active or paid stays %d", p.steps, p.StepClock.Now(), occupied, inside)
+		p.e.t.Errorf("step %d at %s: occupancy counter %d, active or paid stays %d", p.steps, p.Now(), occupied, inside)
 	}
 	if occupied > capacity {
-		p.e.t.Errorf("step %d at %s: occupied %d over effective capacity %d", p.steps, p.StepClock.Now(), occupied, capacity)
+		p.e.t.Errorf("step %d at %s: occupied %d over effective capacity %d", p.steps, p.Now(), occupied, capacity)
 	}
 }
 
@@ -168,7 +168,7 @@ func (p *pacer) runTo(t *testing.T, to time.Time) {
 		select {
 		case <-ch:
 		case <-timeout:
-			t.Fatalf("the engine did not reach %s (virtual now %s)", to, p.StepClock.Now())
+			t.Fatalf("the engine did not reach %s (virtual now %s)", to, p.Now())
 		case <-t.Context().Done():
 			t.Fatal("test ended before the engine parked")
 		}

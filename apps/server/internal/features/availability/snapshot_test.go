@@ -69,10 +69,10 @@ func TestCompute_AgreesWithCanAdmitDriveUp(t *testing.T) {
 							LotClosed: closed, Capacity: capacity, OutOfService: oos, Occupied: occ, Holds: holds,
 						})
 						want := availability.StatusOpen
-						switch {
-						case code == errcodes.GateLotClosed:
+						switch code {
+						case errcodes.GateLotClosed:
 							want = availability.StatusClosed
-						case code == errcodes.GateLotFull:
+						case errcodes.GateLotFull:
 							want = availability.StatusFull
 						}
 						if snap.Status != want || ok != (snap.Status == availability.StatusOpen) {

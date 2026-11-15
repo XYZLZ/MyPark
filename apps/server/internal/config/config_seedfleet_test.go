@@ -100,7 +100,7 @@ func TestSeedFleet_RedactsEverywhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, out := range []string{fmt.Sprintf("%v", f), fmt.Sprintf("%+v", f), fmt.Sprintf("%#v", f), fmt.Sprintf("%s", f)} {
+	for _, out := range []string{fmt.Sprintf("%v", f), fmt.Sprintf("%+v", f), fmt.Sprintf("%#v", f), f.String()} {
 		if strings.Contains(out, config.DevSimulatorFleetSecret) || strings.Contains(out, "k1") {
 			t.Errorf("formatted SeedFleet leaks: %q", out)
 		}

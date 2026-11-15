@@ -30,7 +30,7 @@ func (c serverSyncedClock) WaitUntil(ctx context.Context, t time.Time) error {
 	if err := c.StepClock.WaitUntil(ctx, t); err != nil {
 		return err
 	}
-	c.server.Set(c.StepClock.Now())
+	c.server.Set(c.Now())
 	return nil
 }
 
