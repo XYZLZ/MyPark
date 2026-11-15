@@ -14,6 +14,7 @@ type handlerTransport struct{ h http.Handler }
 
 func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	in := httptest.NewRequestWithContext(r.Context(), r.Method, r.URL.RequestURI(), r.Body)
+	in.ContentLength = r.ContentLength
 	in.Header = r.Header.Clone()
 	in.Host = r.URL.Host
 	rec := httptest.NewRecorder()
