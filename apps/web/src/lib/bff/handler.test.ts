@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { errorBody, successBody, vehicleFixture } from '@mypark/contracts/fixtures';
-import type { NextResponse } from 'next/server';
+import { NextRequest, type NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { bffRequest } from '@/testing/bff-request';
 import { BFF_ENTRIES } from './allowlist';
@@ -97,6 +97,16 @@ describe('proxying', () => {
     await handleBff(bffRequest('/api/v1/legal/current', { cookies: SESSION }), ['legal', 'current']);
     expect(upstreamCall(1).url).toBe('http://api.test/v1/legal/current');
     expect(upstreamCall(1).headers.has('authorization')).toBe(false);
+  });
+
+  test('an anonymous lot GET (no cookies, no Origin) reaches the API', async () => {
+    fetchMock.mockImplementation(async () => upstreamOk());
+    for (const [n, leaf] of ['availability', 'spaces'].entries()) {
+      const res = await handleBff(new NextRequest(`http://localhost:3000/api/v1/lots/${LOT}/${leaf}`), ['lots', LOT, leaf]);
+      expect(res.status).toBe(200);
+      expect(upstreamCall(n).url).toBe(`http://api.test/v1/lots/${LOT}/${leaf}`);
+      expect(upstreamCall(n).headers.has('authorization')).toBe(false);
+    }
   });
 
   test('a public lot GET forwards no Authorization even with a session', async () => {

@@ -49,4 +49,9 @@ describe('formatClock', () => {
     expect(normalize(formatClock('2026-11-15T14:47:00Z', 'en'))).toBe('10:47 AM');
     expect(normalize(formatClock(Date.parse('2026-11-15T14:47:00Z'), 'en'))).toBe('10:47 AM');
   });
+
+  test('formatClock gives an empty string for an invalid time instead of throwing', () => {
+    expect(formatClock('not a time', 'es-DO')).toBe('');
+    expect(formatClock(Number.NaN, 'en')).toBe('');
+  });
 });
