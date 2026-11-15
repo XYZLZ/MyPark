@@ -22,7 +22,7 @@ describe('LegalGate', () => {
     expect(screen.getByRole('button', { name: en.profile.danger.submit })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: en.legalGate.terms })).toHaveAttribute('href', '/en/legal/terms');
     expect(screen.getByRole('link', { name: en.legalGate.privacy })).toHaveAttribute('href', '/en/legal/privacy');
-    expect(screen.queryByRole('link', { name: en.common.nav.vehicles })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: en.common.nav.vehicle })).not.toBeInTheDocument();
   });
 
   test('accept sends the current versions and refreshes', async () => {

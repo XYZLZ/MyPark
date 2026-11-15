@@ -7,10 +7,17 @@
       "es-DO": "Español",
       "en": "English"
     },
+    "location": "Parqueo Banreservas · Zona Colonial, Santo Domingo",
+    "greeting": "Hello, {name}",
     "nav": {
       "label": "Main navigation",
-      "vehicles": "Vehicles",
-      "profile": "Profile"
+      "home": "Home",
+      "vehicle": "My Vehicle",
+      "profile": "Profile",
+      "admin": "Administration",
+      "simulator": "Simulator",
+      "logout": "Log out",
+      "menu": "Menu"
     }
   },
   "home": {

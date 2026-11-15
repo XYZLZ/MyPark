@@ -25,7 +25,7 @@ describe('DriverLayout', () => {
 
     expect(screen.getByRole('heading', { name: en.legalGate.title })).toBeInTheDocument();
     expect(screen.queryByText('vehicle list')).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: en.common.nav.vehicles })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: en.common.nav.vehicle })).not.toBeInTheDocument();
   });
 
   test('suspended state renders AccountBlocked with Log out instead of children', async () => {
@@ -45,12 +45,22 @@ describe('DriverLayout', () => {
     expect(screen.queryByText('vehicle list')).not.toBeInTheDocument();
   });
 
-  test('ready state renders children with the Vehicles and Profile nav', async () => {
+  test('ready state renders children inside the shell with the driver items, greeting and log out', async () => {
     await renderLayout({ state: 'ready', user: userFixture });
 
-    expect(screen.getByText('vehicle list')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: en.common.nav.vehicles })).toHaveAttribute('href', '/en/vehicles');
+    expect(screen.getByRole('main')).toHaveTextContent('vehicle list');
+    expect(screen.getByRole('link', { name: en.common.nav.vehicle })).toHaveAttribute('href', '/en/vehicles');
     expect(screen.getByRole('link', { name: en.common.nav.profile })).toHaveAttribute('href', '/en/profile');
+    expect(screen.getByText(`Hello, ${userFixture.first_name}`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.common.nav.logout })).toBeInTheDocument();
+  });
+
+  test('gated states keep the guest items only', async () => {
+    await renderLayout({ state: 'legal', user: userFixture, legal: legalCurrentFixture });
+
+    expect(screen.getByRole('link', { name: en.common.nav.home })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: en.common.nav.profile })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Hello,/)).not.toBeInTheDocument();
   });
 
   test('language switch behind the gate does not call PATCH, but a ready session does', async () => {

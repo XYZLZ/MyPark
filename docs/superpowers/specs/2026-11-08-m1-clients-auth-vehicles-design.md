@@ -2,6 +2,8 @@
 
 > **Update (M2, M2B-47):** buttons are navy (`brand-navy`) from M2, not `brand-action`; the focus ring on buttons and links follows. See the M2 design §9.1.
 
+> **Update (M2, M2B-46):** the web header and `DriverNav` are replaced by the navy sidebar shell (`AppShell`: sidebar, top bar, menu below `lg`) around the public, driver and admin pages. `SiteHeader` stays only for `not-found`, `forbidden` and `error`.
+
 **Status:** approved by the user on 2026-11-08, after the builder check · **Date:** 2026-11-08 · **Milestone:** M1 (Nov 16 – Nov 20) · **Track:** B (`apps/web`, `apps/mobile`, `packages/contracts`) · **Approved mockup:** [`2026-11-08-m1-clients-mockup.html`](./2026-11-08-m1-clients-mockup.html) (v3)
 
 This document designs the two clients for the M1 backend: register, verify, log in, manage vehicles, edit a profile, delete an account, and reach the admin area. Web comes first, then mobile, on one branch.

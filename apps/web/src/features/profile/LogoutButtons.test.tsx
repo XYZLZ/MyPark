@@ -26,6 +26,16 @@ describe('LogoutButtons', () => {
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: 'POST' });
   });
 
+  test('the sidebar appearance renders the nav logout item and signs out the same way', async () => {
+    const fetchMock = stubFetch(jsonResponse(204));
+    renderWithProviders(<LogoutButtons scope="this" appearance="sidebar" />, { locale: 'en' });
+
+    fireEvent.click(screen.getByRole('button', { name: en.common.nav.logout }));
+
+    await waitFor(() => expect(hardNavigate).toHaveBeenCalledWith('/en'));
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/v1/auth/logout');
+  });
+
   test.each([401, 403, 500])('any response status (%s) counts as done', async (status) => {
     stubFetch(jsonResponse(status, errorBody(status === 403 ? 'auth.account_suspended' : 'internal.unexpected')));
     renderWithProviders(<LogoutButtons scope="this" />, { locale: 'en' });
