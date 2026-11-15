@@ -11,7 +11,7 @@ export function LotErrorPanel({ onRetry }: { onRetry?: () => void }) {
   const router = useRouter();
 
   return (
-    <section className="flex flex-col items-start gap-4 rounded-panel bg-surface p-5.5 shadow-sm lg:col-start-2 lg:row-start-1">
+    <section className="flex flex-col items-start gap-4 rounded-panel bg-surface p-5.5 shadow-sm">
       <h2 className="flex items-center gap-2.5 text-xl font-bold text-brand-navy">
         <Icon name="info" />
         {t('title')}

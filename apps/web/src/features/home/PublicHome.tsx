@@ -23,29 +23,30 @@ export function PublicHome({ signedIn, notice, lot }: { signedIn: boolean; notic
           <Banner tone="status">{tSession('logoutAllFailed')}</Banner>
         </div>
       ) : null}
-      <div className="flex flex-col gap-4 lg:col-start-1 lg:row-start-1">
+      <div className="lg:col-start-1 lg:row-start-1">
         <HomeHero />
-        <div className="rounded-panel bg-surface p-5 shadow-sm">
-          <p className="mb-4 max-w-prose text-balance">{signedIn ? t('signedInSubtitle') : t('subtitle')}</p>
-          <div className="flex flex-col gap-3 sm:flex-row">
-            {signedIn ? (
-              <Link href="/vehicles" className={buttonClass('primary')}>
-                {t('vehicles')}
+      </div>
+      {/* DOM order is the reading order: hero, then the counter, then the actions (design §4.1). */}
+      <div className="flex flex-col gap-5.5 lg:col-start-2 lg:row-span-2 lg:row-start-1">{lot}</div>
+      <div className="rounded-panel bg-surface p-5 shadow-sm lg:col-start-1 lg:row-start-2 lg:self-start">
+        <p className="mb-4 max-w-prose text-balance">{signedIn ? t('signedInSubtitle') : t('subtitle')}</p>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          {signedIn ? (
+            <Link href="/vehicles" className={buttonClass('primary')}>
+              {t('vehicles')}
+            </Link>
+          ) : (
+            <>
+              <Link href="/login" className={buttonClass('primary')}>
+                {t('logIn')}
               </Link>
-            ) : (
-              <>
-                <Link href="/login" className={buttonClass('primary')}>
-                  {t('logIn')}
-                </Link>
-                <Link href="/register" className={buttonClass('quiet')}>
-                  {t('signUp')}
-                </Link>
-              </>
-            )}
-          </div>
+              <Link href="/register" className={buttonClass('outline')}>
+                {t('signUp')}
+              </Link>
+            </>
+          )}
         </div>
       </div>
-      {lot}
     </div>
   );
 }

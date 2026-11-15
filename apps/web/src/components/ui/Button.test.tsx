@@ -1,13 +1,19 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { SubmitEvent } from 'react';
 import { describe, expect, test, vi } from 'vitest';
-import { Button } from './Button';
+import { Button, buttonClass } from './Button';
 
 function submitSpy() {
   return vi.fn((event: SubmitEvent) => event.preventDefault());
 }
 
 describe('Button', () => {
+  test('outline is a navy outline on the surface, not a fill', () => {
+    expect(buttonClass('outline')).toContain('bg-surface');
+    expect(buttonClass('outline')).toContain('text-brand-navy');
+    expect(buttonClass('outline')).not.toContain('bg-brand-navy ');
+  });
+
   test('loading sets aria-busy, shows the verb and stays focusable', () => {
     render(
       <Button loading loadingLabel="Saving">

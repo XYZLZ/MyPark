@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import { buttonClass } from '@/components/ui/Button';
 import { LotErrorPanel } from '@/features/lot/components/LotErrorPanel';
 import { renderWithProviders } from '@/testing/render';
 import { PublicHome } from './PublicHome';
@@ -26,7 +27,6 @@ describe('PublicHome', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument();
     expect(screen.getByText(subtitle)).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /parqueo|parking lot/i })).toBeInTheDocument();
   });
 
   test('the API down still renders the hero, Log in and Sign up', () => {
@@ -66,5 +66,22 @@ describe('PublicHome', () => {
     expect(screen.getByRole('link', { name: 'Vehicles' })).toHaveAttribute('href', '/en/vehicles');
     expect(screen.queryByRole('link', { name: 'Log in' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Sign up' })).not.toBeInTheDocument();
+  });
+
+  test('DOM order is hero, then the lot counter, then the actions (design §4.1)', () => {
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale: 'en' });
+
+    const hero = screen.getByRole('heading', { level: 1 });
+    const lot = screen.getByText('lot slot');
+    const logIn = screen.getByRole('link', { name: 'Log in' });
+    expect(hero.compareDocumentPosition(lot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(lot.compareDocumentPosition(logIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('Sign up is the outline button of the mockup', () => {
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale: 'en' });
+
+    expect(screen.getByRole('link', { name: 'Sign up' })).toHaveAttribute('class', buttonClass('outline'));
+    expect(screen.getByRole('link', { name: 'Log in' })).toHaveAttribute('class', buttonClass('primary'));
   });
 });

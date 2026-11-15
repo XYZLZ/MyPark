@@ -52,6 +52,14 @@ function renderHome(availability = availabilityReducedFixture, apiOrigin: string
   );
 }
 
+const newer = (available: number, version: number, afterMs: number): LotSnapshot => ({
+  ...snapshot({ ...availabilityReducedFixture, available, version }),
+  fetchedAt: NOW + afterMs,
+});
+const homeProps = (apiOrigin: string | null, snap: LotSnapshot) => (
+  <LotLive variant="home" lotId={lotFixture.id} apiOrigin={apiOrigin} snapshot={snap} />
+);
+
 /** The value in a stat tile, found through its label. */
 const tile = (label: string) => within(screen.getByText(label).closest('div')!);
 
@@ -67,10 +75,10 @@ describe('LotLive home', () => {
       FakeEventSource.latest().emit('availability', { ...availabilityReducedFixture, version: 121, available: 210 }, 121);
     });
 
-    // No timer was advanced. The one new timer is the announcer's re-check at its due time.
+    // No timer was advanced. The one new timer is the Announcer's re-check at its `dueAt` (the count changed inside its 30 s window).
     expect(tile('Disponibles').getByText('210')).toBeInTheDocument();
     expect(screen.getByText(/En tiempo real/)).toBeInTheDocument();
-    expect(vi.getTimerCount()).toBeLessThanOrEqual(timers + 1);
+    expect(vi.getTimerCount()).toBe(timers + 1);
   });
 
   test('stale keeps the last values and shows the frame time', () => {
@@ -152,5 +160,38 @@ describe('LotLive home', () => {
     renderHome();
     expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByRole('heading', { level: 2, name: 'Disponibilidad' })).toBeInTheDocument();
+  });
+
+  describe('a newer server snapshot (client-side navigation or router.refresh)', () => {
+    test('replaces the cached figures and the time label with the new snapshot', () => {
+      const { rerender } = renderWithProviders(homeProps(null, snapshot()), { locale: 'es-DO' });
+      expect(tile('Disponibles').getByText('211')).toBeInTheDocument();
+
+      rerender(homeProps(null, newer(150, 130, 120_000)));
+
+      expect(tile('Disponibles').getByText('150')).toBeInTheDocument();
+      expect(screen.getByText('Actualizaciones en vivo no disponibles · datos de las 10:52 a. m.')).toBeInTheDocument();
+    });
+
+    test('ignores an older snapshot', () => {
+      const { rerender } = renderWithProviders(homeProps(null, newer(150, 130, 120_000)), { locale: 'es-DO' });
+
+      rerender(homeProps(null, snapshot()));
+
+      expect(tile('Disponibles').getByText('150')).toBeInTheDocument();
+    });
+
+    test('keeps the stream version guard: a snapshot with an older version never replaces a newer frame', () => {
+      const { rerender } = renderWithProviders(homeProps(ORIGIN, snapshot()), { locale: 'es-DO' });
+      act(() => {
+        FakeEventSource.latest().open();
+        FakeEventSource.latest().emit('availability', { ...availabilityReducedFixture, version: 140, available: 90 }, 140);
+      });
+      expect(tile('Disponibles').getByText('90')).toBeInTheDocument();
+
+      rerender(homeProps(ORIGIN, newer(150, 130, 120_000)));
+
+      expect(tile('Disponibles').getByText('90')).toBeInTheDocument();
+    });
   });
 });

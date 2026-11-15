@@ -1,6 +1,6 @@
 import type { ComponentProps, MouseEvent } from 'react';
 
-export type ButtonVariant = 'primary' | 'primaryOnDark' | 'onDark' | 'quiet' | 'danger';
+export type ButtonVariant = 'primary' | 'outline' | 'primaryOnDark' | 'onDark' | 'quiet' | 'danger';
 
 const BASE =
   'inline-flex h-12 items-center justify-center gap-2 rounded-full px-6 font-semibold ' +
@@ -13,6 +13,7 @@ const RING_ON_DARK = 'focus-visible:shadow-[0_0_0_3px_var(--color-surface)]';
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary: `bg-brand-navy text-brand-primary-contrast hover:bg-brand-navy-deep active:bg-brand-navy-deep ${RING}`,
+  outline: `bg-surface text-brand-navy shadow-[inset_0_0_0_1.5px_var(--color-brand-navy)] hover:bg-brand-sky ${RING}`,
   // A white fill for use directly on navy: the default ring's outer 3 px would be navy on navy.
   primaryOnDark: `bg-surface text-brand-navy hover:bg-brand-sky-strong ${RING_ON_DARK}`,
   onDark: `border-2 border-current bg-transparent text-brand-primary-contrast hover:bg-white/10 ${RING_ON_DARK}`,

@@ -6,7 +6,9 @@ import { renderWithProviders } from '@/testing/render';
 import { Announcer } from './Announcer';
 import { CountCard } from './CountCard';
 import { FreshnessLine } from './FreshnessLine';
+import { HomeHero } from './HomeHero';
 import { LotErrorPanel } from './LotErrorPanel';
+import { LotSkeleton } from './LotSkeleton';
 import { LotInfo } from './LotInfo';
 import { RatesList } from './RatesList';
 import { StatusPill } from './StatusPill';
@@ -150,6 +152,22 @@ describe('FreshnessLine', () => {
     unmount();
     renderLine({ connection: 'unavailable' });
     expect(text()).toBe('Actualizaciones en vivo no disponibles · datos de las 10:50 a. m.');
+  });
+});
+
+describe('placement and the hero placeholder', () => {
+  test('the error panel and the skeleton leave grid placement to PublicHome', () => {
+    const panel = renderWithProviders(<LotErrorPanel />, { locale: 'en' });
+    expect(panel.container.innerHTML).not.toMatch(/lg:(col|row)-start/);
+    panel.unmount();
+    const skeleton = renderWithProviders(<LotSkeleton />, { locale: 'en' });
+    expect(skeleton.container.innerHTML).not.toMatch(/lg:(col|row)-start/);
+  });
+
+  test('the hero photo placeholder is hidden from assistive technology', () => {
+    const { container } = renderWithProviders(<HomeHero />, { locale: 'es-DO' });
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(container.querySelector('[aria-hidden="true"][data-photo-placeholder]')).not.toBeNull();
   });
 });
 
