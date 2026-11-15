@@ -4,7 +4,9 @@ import {
   availabilityReducedFixture,
   heartbeatFixture,
   lotFixture,
+  spacesDeltaFixture,
   spacesFixture,
+  spacesFullEventFixture,
   tariffFixture,
 } from '@mypark/contracts/fixtures';
 import { act, cleanup, screen, within } from '@testing-library/react';
@@ -60,10 +62,28 @@ const homeProps = (apiOrigin: string | null, snap: LotSnapshot) => (
   <LotLive variant="home" lotId={lotFixture.id} apiOrigin={apiOrigin} snapshot={snap} />
 );
 
-/** The value in a stat tile, found through its label. */
-const tile = (label: string) => within(screen.getByText(label).closest('div')!);
+/** The value in a stat tile, found through its label (the legend repeats some labels). */
+const tile = (label: string) => within(screen.getAllByText(label).find((el) => el.tagName === 'DT')!.closest('div')!);
 
 describe('LotLive home', () => {
+  test('frame to screen: a spaces delta changes the cell state without a timer (M2B-42)', () => {
+    const { container } = renderHome();
+    act(() => {
+      FakeEventSource.latest().open();
+      FakeEventSource.latest().emit('spaces', spacesFullEventFixture);
+    });
+    const timers = vi.getTimerCount();
+    expect(container.querySelector<HTMLElement>('[data-code="E100"]')!.dataset.state).not.toBe('occupied');
+
+    act(() => {
+      FakeEventSource.latest().emit('spaces', spacesDeltaFixture);
+    });
+
+    expect(container.querySelector<HTMLElement>('[data-code="E100"]')!.dataset.state).toBe('occupied');
+    expect(vi.getTimerCount()).toBe(timers);
+    expect(screen.getByText('Sensores — libres: 210, ocupados: 67, fuera de servicio: 3.')).toBeInTheDocument();
+  });
+
   test('frame to screen: a pushed availability frame updates the count without a timer (M2B-42)', () => {
     renderHome();
     expect(tile('Disponibles').getByText('211')).toBeInTheDocument();

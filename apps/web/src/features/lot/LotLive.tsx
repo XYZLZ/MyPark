@@ -2,15 +2,21 @@
 
 import { availabilityFigures, lotQueryKeys, type Availability, type Lot, type SpaceState, type Tariff } from '@mypark/contracts';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLiveLot } from './live/useLiveLot';
 import { Announcer } from './components/Announcer';
 import { CountCard } from './components/CountCard';
 import { FreshnessLine } from './components/FreshnessLine';
+import { FreeSpacesList } from './components/FreeSpacesList';
+import { Icon } from './components/icons';
 import { LotInfo } from './components/LotInfo';
+import { MapLegend } from './components/MapLegend';
 import { RatesList } from './components/RatesList';
+import { SpaceMap, type ZoomLevel } from './components/SpaceMap';
+import { SpacesSummary } from './components/SpacesSummary';
 import { StatTiles } from './components/StatTiles';
+import { ZoomControls } from './components/ZoomControls';
 import type { LotSnapshot } from './server';
 
 /** Lot and tariff have no browser route (the BFF allowlist has availability and spaces only): the RSC refreshes them. */
@@ -44,6 +50,8 @@ type LotLiveProps = { variant: 'home' | 'compact'; lotId: string; apiOrigin: str
  */
 export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
   const t = useTranslations('availability');
+  const tSpaces = useTranslations('spaces');
+  const [zoom, setZoom] = useState<ZoomLevel>(1);
   const queryClient = useQueryClient();
   const connection = useLiveLot(lotId, apiOrigin);
   // Before paint, so a stale cached figure never shows next to a newer time label.
@@ -57,8 +65,8 @@ export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
-  // The map reads the spaces key (Task 9); seeding it here keeps the stream's first write a replace.
-  useQuery<SpaceState[]>({
+  // The stream writes the sensor map into this key; seeding it keeps the first write a replace.
+  const { data: spaces } = useQuery<SpaceState[]>({
     ...seeded,
     queryKey: lotQueryKeys.spaces(lotId),
     initialData: snapshot.spaces,
@@ -77,6 +85,17 @@ export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
     initialData: snapshot.tariff,
     staleTime: SERVER_ONLY_STALE_MS,
   });
+
+  // The map is not authoritative between a (re)connect and its first full frame (design §9.3). Before
+  // the first connection and with no stream at all, the server snapshot is all there is, so it is not dimmed.
+  const mapReady = connection.spacesReady || connection.status === 'connecting' || connection.status === 'unavailable';
+  const mapDetails = (
+    <>
+      <MapLegend />
+      <SpacesSummary spaces={spaces} />
+      <FreeSpacesList spaces={spaces} />
+    </>
+  );
 
   const figures = availabilityFigures(availability);
   const freshness = (
@@ -102,11 +121,15 @@ export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
         <CountCard figures={figures} status={availability.status} />
         <div className="mt-3">{freshness}</div>
         {announcer}
+        <div className="mt-4">
+          <SpaceMap spaces={spaces} ready={mapReady} zoom={1} />
+          {mapDetails}
+        </div>
       </section>
     );
   }
 
-  // PublicHome places these: it wraps the slot in one column. The map joins in Task 9.
+  // PublicHome places these: it wraps the slot in one column.
   return (
     <>
       <section className="overflow-hidden rounded-panel bg-brand-sky-strong shadow-sm">
@@ -114,6 +137,22 @@ export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
         <StatTiles figures={figures} status={availability.status} />
         <div className="border-t border-hairline bg-surface px-4 py-2.5">{freshness}</div>
         {announcer}
+      </section>
+      <section className="rounded-panel bg-surface px-5.5 py-5 shadow-sm">
+        <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h2 className="flex items-center gap-2.5 text-xl font-bold text-brand-navy">
+            <Icon name="pin" />
+            {tSpaces('title')}
+          </h2>
+          <span className="ml-auto text-sm text-ink-muted">{tSpaces('sensorsLive')}</span>
+        </div>
+        <div className="relative">
+          <SpaceMap spaces={spaces} ready={mapReady} zoom={zoom} />
+          <div className="absolute right-3 bottom-3">
+            <ZoomControls zoom={zoom} onZoom={setZoom} />
+          </div>
+        </div>
+        {mapDetails}
       </section>
       <div className="grid content-start gap-5.5">
         <LotInfo lot={lot} />
