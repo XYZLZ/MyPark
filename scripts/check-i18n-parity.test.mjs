@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { checkCatalog, checkParity, diffKeys, readConstArray } from './check-i18n-parity.mjs';
+import { checkCatalog, checkParity, checkSharedNamespaces, diffKeys, readConstArray } from './check-i18n-parity.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'i18n-parity-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -175,3 +175,33 @@ test('checkCatalog reports a web string that uses mobile brace style', () => {
   );
   assert.ok(problems.some((p) => /web\/.*validation\.required.*wrong placeholder style/.test(p)), problems.join('\n'));
 });
+
+// --- shared namespace checks ----------------------------------------------
+
+function sharedDirs(name, web, mobile) {
+  return [
+    { dir: writeLocales(`${name}-web`, { 'es-DO.json': web, 'en.json': web }), optional: false },
+    { dir: writeLocales(`${name}-mobile`, { 'es-DO.json': mobile, 'en.json': mobile }), optional: true },
+  ];
+}
+
+test('checkSharedNamespaces reports a key missing on mobile', () => {
+  const problems = checkSharedNamespaces(
+    sharedDirs('shared-missing', { spaces: { zoomIn: 'a', zoomOut: 'b' } }, { spaces: { zoomOut: 'b' } }),
+  );
+  assert.equal(problems.length, 2);
+  assert.ok(problems.every((p) => /spaces\.zoomIn/.test(p) && /only on web/.test(p)), problems.join('\n'));
+});
+
+test('checkSharedNamespaces reports a key missing on web', () => {
+  const problems = checkSharedNamespaces(sharedDirs('shared-missing-web', { lot: { title: 'a' } }, { lot: { title: 'a', info: 'b' } }));
+  assert.ok(problems.some((p) => /lot\.info/.test(p) && /only on mobile/.test(p)), problems.join('\n'));
+});
+
+test('checkSharedNamespaces ignores app-only namespaces', () =>
+  assert.deepEqual(
+    checkSharedNamespaces(sharedDirs('shared-app-only', { common: { nav: { simulator: 'x' } }, lot: { title: 'a' } }, { lot: { title: 'a' }, tabs: { home: 'h' } })),
+    [],
+  ));
+
+test('checkSharedNamespaces passes on the real repo', () => assert.deepEqual(checkSharedNamespaces(), []));
