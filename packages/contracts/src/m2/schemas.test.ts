@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   availabilityReducedFixture,
   lotFixture,
+  simulatorStatusIdleFixture,
   spacesFixture,
   sseText,
 } from '../fixtures';
@@ -10,6 +11,9 @@ import { lotSchema } from './lot';
 import {
   CAR_ID_PATTERN,
   injectCarSchema,
+  leaveCarSchema,
+  sensorFaultSchema,
+  stopScenarioSchema,
   simulatorStatusSchema,
   startScenarioSchema,
 } from './simulator';
@@ -38,7 +42,7 @@ describe('response schemas', () => {
       scenario: '',
       running: false,
       seed: 0,
-      speed: 0,
+      speed: 30,
       virtual_now: '2026-11-15T14:47:00Z',
       cars_inside: 0,
       reached_full: false,
@@ -64,14 +68,14 @@ describe('request schemas', () => {
   });
 
   test('injectCarSchema drops the card for a ticket', () => {
-    const result = injectCarSchema.safeParse({ credential: 'ticket', card: 'abc' });
+    const result = injectCarSchema.safeParse({ credential: 'ticket', card: 'EMP-001' });
     expect(result.success).toBe(true);
     expect(result.data).not.toHaveProperty('card');
     expect(result.data?.hold).toBe(false);
   });
 
   test('injectCarSchema trims the card', () => {
-    expect(injectCarSchema.parse({ credential: 'employee_card', card: '  EMP-1 ' }).card).toBe('EMP-1');
+    expect(injectCarSchema.parse({ credential: 'employee_card', card: '  EMP-001 ' }).card).toBe('EMP-001');
   });
 
   test('injectCarSchema bounds dwell minutes', () => {
@@ -99,4 +103,44 @@ test('spacesFixture is E001..E280 in order with 211 free, 66 occupied, 3 out of 
 test('sseText writes event, id and data and ends with a blank line', () => {
   expect(sseText('heartbeat', { as_of: 'x' })).toBe('event: heartbeat\ndata: {"as_of":"x"}\n\n');
   expect(sseText('availability', { a: 1 }, 7)).toBe('event: availability\nid: 7\ndata: {"a":1}\n\n');
+});
+
+describe('fix round 1', () => {
+  test('injectCarSchema requires the EMP-### card pattern', () => {
+    expect(injectCarSchema.parse({ credential: 'employee_card', card: 'EMP-001' }).card).toBe('EMP-001');
+    const bad = injectCarSchema.safeParse({ credential: 'employee_card', card: 'abc' });
+    expect(bad.error?.issues.map((i) => [i.path, i.message])).toEqual([[['card'], 'pattern']]);
+  });
+
+  test('start_at accepts an offset or Z and rejects the rest', () => {
+    const ok = (start_at: string) => startScenarioSchema.safeParse({ scenario: 'idle', start_at }).success;
+    expect(ok('2026-02-10T07:00:00-04:00')).toBe(true);
+    expect(ok('2026-02-10T07:00:00Z')).toBe(true);
+    expect(messages(startScenarioSchema.safeParse({ scenario: 'idle', start_at: '2026-02-10T07:00:00' }))).toEqual([['start_at', 'pattern']]);
+    expect(messages(startScenarioSchema.safeParse({ scenario: 'idle', start_at: 'garbage' }))).toEqual([['start_at', 'pattern']]);
+    expect(messages(startScenarioSchema.safeParse({ scenario: 'idle', start_at: '2026-02-30T07:00:00-04:00' }))).toEqual([['start_at', 'pattern']]);
+  });
+
+  test('startScenarioSchema defaults speed to 30 and validates seed', () => {
+    expect(startScenarioSchema.parse({ scenario: 'idle' }).speed).toBe(30);
+    expect(startScenarioSchema.parse({ scenario: 'idle', seed: 0 }).seed).toBe(0);
+    expect(messages(startScenarioSchema.safeParse({ scenario: 'idle', seed: -1 }))).toEqual([['seed', 'min:0']]);
+    expect(messages(startScenarioSchema.safeParse({ scenario: 'idle', seed: 1.5 }))).toEqual([['seed', 'integer']]);
+  });
+
+  test('stop, leave and sensor fault schemas', () => {
+    expect(stopScenarioSchema.parse({})).toEqual({ drain: false });
+    expect(stopScenarioSchema.parse({ drain: true })).toEqual({ drain: true });
+    expect(stopScenarioSchema.safeParse({ drain: true, x: 1 }).success).toBe(false);
+    expect(leaveCarSchema.parse({})).toEqual({ lose_ticket: false });
+    expect(leaveCarSchema.parse({ lose_ticket: true })).toEqual({ lose_ticket: true });
+    expect(leaveCarSchema.safeParse({ x: 1 }).success).toBe(false);
+    expect(sensorFaultSchema.parse({ fault: 'silent' })).toEqual({ fault: 'silent' });
+    expect(messages(sensorFaultSchema.safeParse({ fault: 'bad' }))).toEqual([['fault', 'oneof']]);
+    expect(sensorFaultSchema.safeParse({ fault: 'none', x: 1 }).success).toBe(false);
+  });
+
+  test('idle status fixture respects the speed minimum', () => {
+    expect(simulatorStatusIdleFixture.speed).toBe(30);
+  });
 });

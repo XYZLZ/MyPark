@@ -99,7 +99,7 @@ export const simulatorStatusIdleFixture = simulatorStatusSchema.parse({
   scenario: '',
   running: false,
   seed: 0,
-  speed: 0,
+  speed: 30,
   virtual_now: '2026-11-15T14:47:00Z',
   cars_inside: 0,
   reached_full: false,

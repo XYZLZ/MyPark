@@ -33,8 +33,6 @@ export const injectCarResultSchema = z.strictObject({ car_id: z.string() });
 export const emptyDataSchema = z.strictObject({});
 
 // Request schemas: issue messages are `rule` or `rule:param`.
-const RFC3339_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
-
 export const startScenarioSchema = z.strictObject({
   scenario: z.enum(CONSOLE_SCENARIOS, { error: 'oneof' }),
   speed: z
@@ -44,11 +42,7 @@ export const startScenarioSchema = z.strictObject({
     .max(120, { error: 'max:120' })
     .default(30),
   seed: z.number().int({ error: 'integer' }).min(0, { error: 'min:0' }).optional(),
-  start_at: z
-    .string()
-    .regex(RFC3339_OFFSET, { error: 'pattern' })
-    .refine((v) => !Number.isNaN(Date.parse(v)), { error: 'pattern' })
-    .optional(),
+  start_at: z.iso.datetime({ offset: true, error: 'pattern' }).optional(),
 });
 
 export const stopScenarioSchema = z.strictObject({ drain: z.boolean().default(false) });
@@ -56,7 +50,7 @@ export const stopScenarioSchema = z.strictObject({ drain: z.boolean().default(fa
 export const injectCarSchema = z
   .strictObject({
     credential: z.enum(['ticket', 'employee_card'], { error: 'oneof' }),
-    card: z.string().trim().max(32, { error: 'max:32' }).optional(),
+    card: z.string().trim().max(32, { error: 'max:32' }).regex(/^EMP-\d{3}$/, { error: 'pattern' }).optional(),
     hold: z.boolean().default(false),
     dwell_minutes: z.number().int({ error: 'integer' }).min(1, { error: 'min:1' }).max(600, { error: 'max:600' }).optional(),
   })
