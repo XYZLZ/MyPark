@@ -47,14 +47,14 @@ function EditVehicle({ vehicleId }: { vehicleId: string }) {
   if (detail.data) return <VehicleFields key={detail.data.id} vehicle={detail.data} />;
   if (detail.isError && !missing) {
     return (
-      <ScreenScroll>
+      <ScreenScroll edge="tabBar">
         <Banner tone="error">{t('vehicles.loadError.title')}</Banner>
         <Button variant="primary" label={t('common.retry')} loading={detail.isFetching} onPress={() => void detail.refetch()} />
       </ScreenScroll>
     );
   }
   return (
-    <ScreenScroll>
+    <ScreenScroll edge="tabBar">
       <View accessible accessibilityRole="progressbar" accessibilityLabel={t('common.loading')} className="gap-4">
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-12 w-full" />
@@ -133,7 +133,7 @@ function VehicleFields({ vehicle }: { vehicle: Vehicle | undefined }) {
   }
 
   return (
-    <ScreenScroll>
+    <ScreenScroll edge="tabBar">
       {serverError ? <Banner tone="error">{serverError}</Banner> : null}
       <FormField
         control={control}

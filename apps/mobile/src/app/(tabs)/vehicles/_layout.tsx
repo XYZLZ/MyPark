@@ -9,7 +9,7 @@ export default function VehiclesLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: tokens.brandPrimary },
+        headerStyle: { backgroundColor: tokens.brandNavy },
         headerTintColor: tokens.brandPrimaryContrast,
         headerBackButtonDisplayMode: 'minimal',
       }}
