@@ -317,3 +317,22 @@ func TestHandlerTransport_ServesRequestInProcess(t *testing.T) {
 		t.Errorf("reply = %+v", rep)
 	}
 }
+
+func TestClient_StampsAZeroOccurredAt(t *testing.T) {
+	rt := &scripted{replies: []func() (*http.Response, error){reply(200, nil, okBody)}}
+	c, _, _ := newTestClient(rt, "http://api.test")
+	ev := heartbeat()
+	ev.OccurredAt = time.Time{}
+	if _, err := c.Send(context.Background(), podium(), ev); err != nil {
+		t.Fatal(err)
+	}
+	var sent struct {
+		OccurredAt string `json:"occurred_at"`
+	}
+	if err := json.Unmarshal(rt.got[0].body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.OccurredAt != "2026-11-24T14:03:11Z" {
+		t.Errorf("occurred_at = %q, want the signing clock's now", sent.OccurredAt)
+	}
+}

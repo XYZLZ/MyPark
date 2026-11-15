@@ -90,19 +90,24 @@ func TestSimulator_CarLifecycleAgainstAPI(t *testing.T) {
 	sim := simulator.NewFleetSim(eng, client, simFleet, log)
 
 	held := &simulator.Car{Cred: simulator.CredTicket, Hold: true}
+	grace := &simulator.Car{Cred: simulator.CredTicket, Dwell: 5 * time.Minute}
+	late := &simulator.Car{Cred: simulator.CredTicket, Dwell: 40 * time.Minute, PayLate: true}
 	cars := []*simulator.Car{
-		{Cred: simulator.CredTicket, Dwell: 5 * time.Minute},
+		grace,
 		{Cred: simulator.CredTicket, Dwell: 50 * time.Minute},
 		{Cred: simulator.CredTicket, Dwell: 95 * time.Minute},
 		{Cred: simulator.CredTicket, Dwell: 40 * time.Minute, LoseTicket: true},
-		{Cred: simulator.CredTicket, Dwell: 40 * time.Minute, PayLate: true},
+		late,
 		{Cred: simulator.CredEmployeeCard, Card: "EMP-001", Dwell: 3 * time.Hour},
 		{Cred: simulator.CredEmployeeCard, Card: "EMP-002", Dwell: 3 * time.Hour},
 		held,
 	}
-	for _, c := range cars {
-		eng.At(clk.Now().Add(time.Duration(eng.Rand().IntN(600))*time.Second), func(context.Context) { sim.Arrive(c) })
-	}
+	// The arrival offsets are drawn on the engine goroutine, in a seed step.
+	eng.At(clk.Now(), func(context.Context) {
+		for _, c := range cars {
+			eng.At(eng.Now().Add(time.Duration(eng.Rand().IntN(600))*time.Second), func(context.Context) { sim.Arrive(c) })
+		}
+	})
 	eng.At(clk.Now().Add(4*time.Hour), func(context.Context) {
 		if err := sim.Leave(held.ID, false); err != nil {
 			t.Errorf("leave: %v", err)
@@ -112,17 +117,26 @@ func TestSimulator_CarLifecycleAgainstAPI(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	overstays := 0
+	denied, cashed := map[string]int{}, map[string]int{}
 	for _, entry := range log.After(0) {
 		if entry.Reason == "gate.payment_required" {
-			overstays++
+			denied[entry.CarID]++
+		}
+		if entry.Type == "paystation.cash_paid" {
+			cashed[entry.CarID]++
 		}
 		if entry.Result == "error" || entry.Result == "rejected" || entry.Result == "deny" && entry.Reason != "gate.payment_required" {
 			t.Errorf("unexpected answer: %+v", entry)
 		}
 	}
-	if overstays != 2 {
-		t.Errorf("payment_required denials = %d, want 2: the late payer, and the grace-period car that walked past its grace", overstays)
+	// The late payer must have been refused at the exit and paid again.
+	if denied[late.ID] == 0 {
+		t.Errorf("late payer was never denied for payment: %v", denied)
+	}
+	// The grace car owed nothing at the scan, so it paid cash only when the exit
+	// asked, which depends on how long it walked.
+	if cashed[grace.ID] != denied[grace.ID] {
+		t.Errorf("grace car: %d cash payments, %d payment_required denials; want one cash payment per denial and none at the scan", cashed[grace.ID], denied[grace.ID])
 	}
 	e.invariant()
 	var inside int

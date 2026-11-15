@@ -90,7 +90,8 @@ func NewDeviceClient(c ClientConfig) *DeviceClient {
 	}}
 }
 
-// Outgoing is one device event.
+// Outgoing is one device event. A zero OccurredAt is stamped by Send with the
+// signing clock.
 type Outgoing struct {
 	EventID    uuid.UUID
 	Type       string
@@ -145,6 +146,9 @@ func (c *DeviceClient) Send(ctx context.Context, dev devicefleet.Device, ev Outg
 	target, err := c.target()
 	if err != nil {
 		return Reply{}, err
+	}
+	if ev.OccurredAt.IsZero() {
+		ev.OccurredAt = c.cfg.SignClock.Now()
 	}
 	body, err := json.Marshal(wireEvent{
 		EventID: ev.EventID, Type: ev.Type,

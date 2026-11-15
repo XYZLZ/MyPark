@@ -72,7 +72,8 @@ type carRun struct {
 	leaveReq bool // Leave came before the car parked
 	leaving  bool // the pay-station sequence has started
 	lateDone bool
-	deadline time.Time // exit deadline of the latest payment, if any
+	window   time.Duration // exit window of the latest payment (deadline - paid_at); 0 when unknown
+	stuck    bool          // halted inside the lot; Leave starts it again
 	repays   int
 }
 
@@ -162,7 +163,11 @@ func (f *FleetSim) Arrive(car *Car) {
 }
 
 // Leave sends a parked car to the pay station (or tells a car still on its way
-// to go as soon as it parks). loseTicket makes it report the ticket lost.
+// to go as soon as it parks). loseTicket makes it report the ticket lost. A
+// car the server halted inside the lot starts its departure again.
+//
+// A car that is already leaving ignores the call, loseTicket included: the
+// pay-station sequence is under way and cannot be redone mid-flight.
 func (f *FleetSim) Leave(carID string, loseTicket bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -170,11 +175,16 @@ func (f *FleetSim) Leave(carID string, loseTicket bool) error {
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrCarNotFound, carID)
 	}
-	if r.leaving {
+	if r.leaving && !r.stuck {
 		return nil
 	}
 	if loseTicket && r.car.Cred == CredTicket {
 		r.car.LoseTicket = true
+	}
+	if r.stuck {
+		r.stuck, r.leaving, r.repays = false, false, 0
+		f.after(0, func(ctx context.Context) { f.depart(ctx, r) })
+		return nil
 	}
 	if r.inPlace {
 		f.after(0, func(ctx context.Context) { f.depart(ctx, r) })
@@ -197,7 +207,7 @@ func (f *FleetSim) between(lo, hi time.Duration) time.Duration {
 // A transport failure or a non-2xx answer is logged as result "error".
 func (f *FleetSim) send(ctx context.Context, r *carRun, dev devicefleet.Device, typ string, payload any) (Reply, bool) {
 	rep, err := f.c.Send(ctx, dev, Outgoing{
-		EventID: uuid.New(), Type: typ, OccurredAt: f.c.cfg.SignClock.Now(), Payload: payload,
+		EventID: uuid.New(), Type: typ, Payload: payload,
 	})
 	entry := LogEntry{At: f.e.Now(), Device: dev.Name, Type: typ, CarID: r.car.ID}
 	if err != nil {
@@ -213,9 +223,21 @@ func (f *FleetSim) send(ctx context.Context, r *carRun, dev devicefleet.Device, 
 	return rep, true
 }
 
-// stop ends the car's trip where it stands: a car the server never let out
-// stays counted inside.
-func (f *FleetSim) stop(r *carRun) {
+// halt ends the car's trip where it stands. A car that never entered is gone.
+// A car that entered keeps its space, stays counted inside (as the server
+// counts it) and stays reachable: Leave starts it again.
+func (f *FleetSim) halt(r *carRun) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r.car.Inside {
+		r.stuck = true
+		return
+	}
+	delete(f.cars, r.car.ID)
+}
+
+// finish removes a car that left the lot.
+func (f *FleetSim) finish(r *carRun) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.cars, r.car.ID)
@@ -223,7 +245,7 @@ func (f *FleetSim) stop(r *carRun) {
 
 func (f *FleetSim) detect(ctx context.Context, r *carRun) {
 	if _, ok := f.send(ctx, r, f.podium, "podium.vehicle_detected", struct{}{}); !ok {
-		f.stop(r)
+		f.halt(r)
 		return
 	}
 	f.after(credentialDelay, func(ctx context.Context) { f.present(ctx, r) })
@@ -236,7 +258,7 @@ func (f *FleetSim) present(ctx context.Context, r *carRun) {
 	}
 	rep, ok := f.send(ctx, r, dev, "entry.credential_presented", payload)
 	if !ok || rep.Result != "open" || rep.StayID == "" {
-		f.stop(r) // a deny at the entry sends the car away
+		f.halt(r) // a deny at the entry sends the car away
 		return
 	}
 	f.mu.Lock()
@@ -248,7 +270,7 @@ func (f *FleetSim) present(ctx context.Context, r *carRun) {
 func (f *FleetSim) enter(ctx context.Context, r *carRun) {
 	rep, ok := f.send(ctx, r, f.entry, "barrier.passed", map[string]any{"direction": "entry", "stay_id": r.car.StayID})
 	if !ok || rep.Result != "ack" {
-		f.stop(r)
+		f.halt(r)
 		return
 	}
 	f.mu.Lock()
@@ -300,7 +322,7 @@ func (f *FleetSim) depart(ctx context.Context, r *carRun) {
 	f.mu.Unlock()
 
 	if r.car.Cred == CredTicket && !f.settle(ctx, r, lost) {
-		f.stop(r)
+		f.halt(r)
 		return
 	}
 	f.scheduleExit(r)
@@ -329,7 +351,9 @@ func (f *FleetSim) settle(ctx context.Context, r *carRun, lost bool) bool {
 	return f.payCash(ctx, r, rep.AmountCents)
 }
 
-// payCash pays amount in cash and remembers the exit deadline.
+// payCash pays amount in cash and remembers the exit window. It keeps the
+// window, not the deadline: the server's timestamps are wall time and the
+// engine's are virtual.
 func (f *FleetSim) payCash(ctx context.Context, r *carRun, amount int64) bool {
 	rep, ok := f.send(ctx, r, f.pay, "paystation.cash_paid",
 		map[string]any{"stay_id": r.car.StayID, "amount_cents": amount})
@@ -337,21 +361,24 @@ func (f *FleetSim) payCash(ctx context.Context, r *carRun, amount int64) bool {
 		return false
 	}
 	f.mu.Lock()
-	r.deadline = rep.ExitDeadline
+	r.window = 0
+	if !rep.PaidAt.IsZero() && rep.ExitDeadline.After(rep.PaidAt) {
+		r.window = rep.ExitDeadline.Sub(rep.PaidAt)
+	}
 	f.mu.Unlock()
 	return true
 }
 
 // scheduleExit draws the 1–10 minute walk, always, so draws never depend on
-// the server's answers. A PayLate car waits past its exit deadline instead,
-// once.
+// the server's answers. A PayLate car waits out its exit window plus a margin
+// instead, once, counted from the engine's now.
 func (f *FleetSim) scheduleExit(r *carRun) {
 	walk := f.between(time.Minute, 10*time.Minute)
 	f.mu.Lock()
 	at := f.e.Now().Add(walk)
-	if r.car.PayLate && !r.lateDone && !r.deadline.IsZero() {
+	if r.car.PayLate && !r.lateDone && r.window > 0 {
 		r.lateDone = true
-		at = r.deadline.Add(lateMargin)
+		at = f.e.Now().Add(r.window + lateMargin)
 	}
 	f.mu.Unlock()
 	f.e.At(at, func(ctx context.Context) { f.leaveLot(ctx, r) })
@@ -366,25 +393,25 @@ func (f *FleetSim) leaveLot(ctx context.Context, r *carRun) {
 		map[string]any{"credential": map[string]any{"kind": string(r.car.Cred), "value": value}})
 	switch {
 	case !ok:
-		f.stop(r)
+		f.halt(r)
 	case rep.Result == "open":
 		f.after(f.between(3*time.Second, 8*time.Second), func(ctx context.Context) { f.exitPass(ctx, r) })
 	case rep.Reason == "gate.payment_required" && rep.AmountCents > 0 && r.repays < maxRepays:
 		r.repays++
 		if !f.payCash(ctx, r, rep.AmountCents) {
-			f.stop(r)
+			f.halt(r)
 			return
 		}
 		f.scheduleExit(r)
 	default:
-		f.stop(r) // denied: the car stays inside, as the server counts it
+		f.halt(r) // denied: the car stays inside, as the server counts it
 	}
 }
 
 func (f *FleetSim) exitPass(ctx context.Context, r *carRun) {
 	rep, ok := f.send(ctx, r, f.exit, "barrier.passed", map[string]any{"direction": "exit", "stay_id": r.car.StayID})
 	if !ok || rep.Result != "ack" {
-		f.stop(r)
+		f.halt(r)
 		return
 	}
 	f.mu.Lock()
@@ -400,5 +427,5 @@ func (f *FleetSim) exitPass(ctx context.Context, r *carRun) {
 	if report {
 		f.send(ctx, r, f.sensors, "sensor.space_changed", map[string]any{"space_code": space, "occupied": false})
 	}
-	f.stop(r)
+	f.finish(r)
 }

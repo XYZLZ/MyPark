@@ -20,13 +20,18 @@ import (
 )
 
 const (
-	fakeStay       = "019a6d00-0000-7000-8000-0000000000f1"
-	fakeTicket     = "TICKET0000000001"
-	fakeReplaced   = "REPLACE000000001"
+	// scriptStay is the stay id inside scripted replies; no car reads it.
+	scriptStay     = "019a6d00-0000-7000-8000-0000000000f1"
 	denyFull       = `{"result":"deny","reason":"gate.lot_full"}`
-	denyPayment    = `{"result":"deny","reason":"gate.payment_required","stay_id":"` + fakeStay + `","amount_cents":7777}`
-	denyNotAllowed = `{"result":"deny","reason":"gate.exit_not_authorized","stay_id":"` + fakeStay + `"}`
+	denyPayment    = `{"result":"deny","reason":"gate.payment_required","stay_id":"` + scriptStay + `","amount_cents":7777}`
+	denyNotAllowed = `{"result":"deny","reason":"gate.exit_not_authorized","stay_id":"` + scriptStay + `"}`
 )
+
+// Per-stay ids and codes: the n-th entry gets stay n, so a car that presents
+// another car's stay or ticket is refused.
+func stayID(n int) string     { return fmt.Sprintf("019a6d00-0000-7000-8000-%012x", n) }
+func ticketOf(n int) string   { return fmt.Sprintf("TICKET%010d", n) }
+func replacedOf(n int) string { return fmt.Sprintf("REPLACE%09d", n) }
 
 type apiCall struct {
 	Kind    authz.DeviceKind
@@ -34,15 +39,19 @@ type apiCall struct {
 	Payload map[string]any
 }
 
-// fakeAPI answers device events by type. script holds replies (the "data"
-// object) consumed in order per type; the last one repeats. Without a script
-// the happy-path default answers.
+// fakeAPI answers device events by type and checks that every stay id and
+// credential belongs to a stay it issued. script holds replies (the "data"
+// object) consumed in order per type; the last one repeats and bypasses the
+// checks. skew shifts paid_at and exit_deadline off the engine's clock.
 type fakeAPI struct {
 	mu     sync.Mutex
 	now    func() time.Time
+	skew   time.Duration
 	calls  []apiCall
 	script map[string][]string
 	used   map[string]int
+	stays  int            // stays issued
+	creds  map[string]int // credential value -> stay number
 }
 
 func (a *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -64,36 +73,67 @@ func (a *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Lock()
 	a.calls = append(a.calls, apiCall{kind, ev.Type, ev.Payload})
-	data := a.reply(kind, ev.Type)
+	data := a.reply(kind, ev.Type, ev.Payload)
 	a.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, `{"data":`+data+`}`)
 }
 
-func (a *fakeAPI) reply(kind authz.DeviceKind, typ string) string {
+// stayOfPayload is the stay number a payload names, by stay_id or credential.
+func (a *fakeAPI) stayOfPayload(p map[string]any) (int, bool) {
+	if cred, ok := p["credential"].(map[string]any); ok {
+		n, found := a.creds[fmt.Sprint(cred["value"])]
+		return n, found
+	}
+	for n := 1; n <= a.stays; n++ {
+		if p["stay_id"] == stayID(n) {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func (a *fakeAPI) reply(kind authz.DeviceKind, typ string, p map[string]any) string {
 	if s := a.script[typ]; len(s) > 0 {
 		i := min(a.used[typ], len(s)-1)
 		a.used[typ]++
 		return s[i]
 	}
-	now := a.now()
-	switch typ {
-	case "entry.credential_presented":
+	now := a.now().Add(a.skew)
+	if typ == "entry.credential_presented" {
+		a.stays++
 		if kind == authz.DeviceDispenser {
-			return `{"result":"open","stay_id":"` + fakeStay + `","ticket_code":"` + fakeTicket + `"}`
+			a.creds[ticketOf(a.stays)] = a.stays
+			return `{"result":"open","stay_id":"` + stayID(a.stays) + `","ticket_code":"` + ticketOf(a.stays) + `"}`
 		}
-		return `{"result":"open","stay_id":"` + fakeStay + `"}`
+		a.creds[fmt.Sprint(p["value"])] = a.stays
+		return `{"result":"open","stay_id":"` + stayID(a.stays) + `"}`
+	}
+	n, known := a.stayOfPayload(p)
+	switch typ {
+	case "podium.vehicle_detected", "sensor.space_changed", "heartbeat":
+		return `{"result":"ack"}`
+	case "exit.credential_presented":
+		if !known {
+			return `{"result":"deny","reason":"gate.credential_invalid"}`
+		}
+		return `{"result":"open","stay_id":"` + stayID(n) + `"}`
+	}
+	if !known {
+		return `{"result":"rejected","reason":"gate.credential_invalid"}`
+	}
+	switch typ {
 	case "paystation.scan":
-		return `{"result":"ack","stay_id":"` + fakeStay + `","status":"active","amount_cents":5000}`
+		return `{"result":"ack","stay_id":"` + stayID(n) + `","status":"active","amount_cents":5000}`
 	case "paystation.lost_ticket":
-		return `{"result":"ack","stay_id":"` + fakeStay + `","ticket_code":"` + fakeReplaced + `","amount_cents":50000}`
+		delete(a.creds, ticketOf(n)) // the old ticket is void
+		a.creds[replacedOf(n)] = n
+		return `{"result":"ack","stay_id":"` + stayID(n) + `","ticket_code":"` + replacedOf(n) + `","amount_cents":50000}`
 	case "paystation.cash_paid":
 		return fmt.Sprintf(`{"result":"ack","receipt_no":"MP-1","amount_cents":5000,"paid_at":%q,"exit_deadline":%q}`,
 			now.Format(time.RFC3339), now.Add(15*time.Minute).Format(time.RFC3339))
-	case "exit.credential_presented":
-		return `{"result":"open","stay_id":"` + fakeStay + `"}`
 	}
-	return `{"result":"ack"}`
+	return `{"result":"ack"}` // barrier.passed
 }
 
 func (a *fakeAPI) snapshot() []apiCall {
@@ -140,7 +180,7 @@ type rig struct {
 func newRig(t *testing.T, seed uint64, script map[string][]string) *rig {
 	t.Helper()
 	clk := NewStepClock(t0)
-	api := &fakeAPI{now: clk.Now, script: script, used: map[string]int{}}
+	api := &fakeAPI{now: clk.Now, script: script, used: map[string]int{}, creds: map[string]int{}}
 	client := NewDeviceClient(ClientConfig{
 		BaseURL: "http://api.test", Transport: HandlerTransport(api),
 		SignClock: fakeclock.New(t0), FleetSecret: fleetSecret,
@@ -189,13 +229,13 @@ func TestCar_TicketLifecycleSequence(t *testing.T) {
 	if r.sim.Inside() != 0 {
 		t.Errorf("Inside = %d, want 0", r.sim.Inside())
 	}
-	if p := r.api.payloads("paystation.scan")[0]["credential"].(map[string]any); p["kind"] != "ticket" || p["value"] != fakeTicket {
+	if p := r.api.payloads("paystation.scan")[0]["credential"].(map[string]any); p["kind"] != "ticket" || p["value"] != ticketOf(1) {
 		t.Errorf("scan credential = %v", p)
 	}
-	if p := r.api.payloads("paystation.cash_paid")[0]; p["amount_cents"] != float64(5000) || p["stay_id"] != fakeStay {
+	if p := r.api.payloads("paystation.cash_paid")[0]; p["amount_cents"] != float64(5000) || p["stay_id"] != stayID(1) {
 		t.Errorf("cash payload = %v", p)
 	}
-	if p := r.api.payloads("exit.credential_presented")[0]["credential"].(map[string]any); p["value"] != fakeTicket {
+	if p := r.api.payloads("exit.credential_presented")[0]["credential"].(map[string]any); p["value"] != ticketOf(1) {
 		t.Errorf("exit credential = %v", p)
 	}
 	sensors := r.api.payloads("sensor.space_changed")
@@ -228,7 +268,7 @@ func TestCar_TicketLifecycleSequence(t *testing.T) {
 	between("walk", at["paystation.cash_paid/paystation-1"], at["exit.credential_presented/barrier-exit-1"], time.Minute, 10*time.Minute)
 
 	raw, _ := json.Marshal(r.log.After(0))
-	if strings.Contains(string(raw), fakeTicket) {
+	if strings.Contains(string(raw), ticketOf(1)) {
 		t.Error("the event log carries a ticket code")
 	}
 }
@@ -278,7 +318,7 @@ func TestCar_EntryDenyLeaves(t *testing.T) {
 }
 
 func TestCar_ExitPaymentRequiredRepays(t *testing.T) {
-	r := newRig(t, 4, map[string][]string{"exit.credential_presented": {denyPayment, `{"result":"open","stay_id":"` + fakeStay + `"}`}})
+	r := newRig(t, 4, map[string][]string{"exit.credential_presented": {denyPayment, `{"result":"open","stay_id":"` + scriptStay + `"}`}})
 	r.sim.Arrive(&Car{Cred: CredTicket, Dwell: time.Minute})
 	r.run(t)
 
@@ -325,7 +365,7 @@ func TestCar_ExitNotAuthorizedStaysInside(t *testing.T) {
 }
 
 func TestCar_PayLateWaitsPastDeadline(t *testing.T) {
-	r := newRig(t, 7, map[string][]string{"exit.credential_presented": {denyPayment, `{"result":"open","stay_id":"` + fakeStay + `"}`}})
+	r := newRig(t, 7, map[string][]string{"exit.credential_presented": {denyPayment, `{"result":"open","stay_id":"` + scriptStay + `"}`}})
 	r.sim.Arrive(&Car{Cred: CredTicket, Dwell: time.Minute, PayLate: true})
 	r.run(t)
 
@@ -352,7 +392,7 @@ func TestCar_PayLateWaitsPastDeadline(t *testing.T) {
 // PF6: the server rejects a RD$0 cash payment (422), so a scan that owes
 // nothing goes straight to the exit.
 func TestCar_ZeroAmountSkipsCash(t *testing.T) {
-	r := newRig(t, 8, map[string][]string{"paystation.scan": {`{"result":"ack","stay_id":"` + fakeStay + `","status":"active","amount_cents":0}`}})
+	r := newRig(t, 8, map[string][]string{"paystation.scan": {`{"result":"ack","stay_id":"` + scriptStay + `","status":"active","amount_cents":0}`}})
 	r.sim.Arrive(&Car{Cred: CredTicket, Dwell: time.Minute})
 	r.run(t)
 
@@ -410,11 +450,11 @@ func TestCar_LostTicket(t *testing.T) {
 	want = append(want, "pay_station:paystation.lost_ticket")
 	want = append(want, fullTicketTrace[4:]...)
 	wantTrace(t, r.api.trace(), want)
-	if p := r.api.payloads("paystation.lost_ticket")[0]; p["stay_id"] != fakeStay {
+	if p := r.api.payloads("paystation.lost_ticket")[0]; p["stay_id"] != stayID(1) {
 		t.Errorf("lost_ticket payload = %v", p)
 	}
 	for _, typ := range []string{"paystation.scan", "exit.credential_presented"} {
-		if c := r.api.payloads(typ)[0]["credential"].(map[string]any); c["value"] != fakeReplaced {
+		if c := r.api.payloads(typ)[0]["credential"].(map[string]any); c["value"] != replacedOf(1) {
 			t.Errorf("%s credential = %v, want the replacement code", typ, c)
 		}
 	}
@@ -495,5 +535,75 @@ func TestFleetSim_SameSeedSameTrace(t *testing.T) {
 	}
 	if logC, _ := run(43); fmt.Sprint(logA) == fmt.Sprint(logC) {
 		t.Error("seeds 42 and 43 gave the same log")
+	}
+}
+
+// The server's paid_at and exit_deadline are wall time; the engine runs on
+// virtual time. A late payer waits the window (deadline - paid_at) plus a
+// minute from the engine's now, whatever clock the server reads.
+func TestCar_PayLateUsesTheWindowNotTheServerDeadline(t *testing.T) {
+	for _, skew := range []time.Duration{0, 9 * time.Hour, -9 * time.Hour} {
+		t.Run(skew.String(), func(t *testing.T) {
+			r := newRig(t, 14, nil)
+			r.api.skew = skew
+			r.sim.Arrive(&Car{Cred: CredTicket, Dwell: time.Minute, PayLate: true})
+			r.run(t)
+
+			var paid, exit time.Time
+			for _, e := range r.log.After(0) {
+				switch {
+				case e.Type == "paystation.cash_paid" && paid.IsZero():
+					paid = e.At
+				case e.Type == "exit.credential_presented" && exit.IsZero():
+					exit = e.At
+				}
+			}
+			if d := exit.Sub(paid); d != 16*time.Minute {
+				t.Errorf("exit credential %v after paying, want window 15m + margin 1m", d)
+			}
+		})
+	}
+}
+
+// A car the server would not let out stays in the lot: it keeps its space and
+// counts as inside, and a later Leave sends it through the pay station again.
+func TestCar_StuckCarKeepsItsSpaceAndCanLeaveLater(t *testing.T) {
+	r := newRig(t, 15, map[string][]string{"exit.credential_presented": {denyNotAllowed, `{"result":"open","stay_id":"` + scriptStay + `"}`}})
+	r.sim.SetSpaces([]string{"E001"})
+	stuck := &Car{Cred: CredTicket, Dwell: time.Minute}
+	r.sim.Arrive(stuck)
+	r.run(t)
+	if r.sim.Inside() != 1 {
+		t.Fatalf("Inside = %d, want 1", r.sim.Inside())
+	}
+
+	// Its space is still taken: another car finds none to report.
+	other := &Car{Cred: CredTicket, Hold: true}
+	r.sim.Arrive(other)
+	r.run(t)
+	if ev := r.api.payloads("sensor.space_changed"); len(ev) != 1 {
+		t.Fatalf("sensor events = %v, want only the stuck car's: a second car took its space", ev)
+	}
+
+	if err := r.sim.Leave(stuck.ID, false); err != nil {
+		t.Fatalf("Leave(stuck) = %v, want nil", err)
+	}
+	r.run(t)
+	if got := len(r.api.payloads("paystation.scan")); got != 2 {
+		t.Errorf("scans = %d, want 2 (the retry scans again)", got)
+	}
+	if r.sim.Inside() != 1 { // only the held car is left
+		t.Errorf("Inside = %d, want 1", r.sim.Inside())
+	}
+	if err := r.sim.Leave(stuck.ID, false); !errors.Is(err, ErrCarNotFound) {
+		t.Errorf("Leave(exited) = %v, want ErrCarNotFound", err)
+	}
+
+	// The space came back when the car actually left.
+	r.sim.Arrive(&Car{Cred: CredTicket, Dwell: time.Minute})
+	r.run(t)
+	last := r.api.payloads("sensor.space_changed")
+	if first := last[len(last)-2]; first["space_code"] != "E001" || first["occupied"] != true {
+		t.Errorf("sensor events after the exit = %v, want E001 reused", last)
 	}
 }
