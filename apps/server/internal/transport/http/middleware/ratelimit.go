@@ -20,9 +20,10 @@ import (
 // the authenticated device's public id (DeviceAuth must run first). A denied request
 // gets 429 with Retry-After. A limiter failure returns 500 for fail-closed
 // rules and is logged and ignored for FailOpen rules (spec 10.2). Throttling
-// is logged at warn level with the rule name and the hashed key, never the IP
+// is logged at warn level with the rule name and the key hashed by keys
+// (keyed with RATE_LIMIT_PEPPER), never the IP
 // or user id, and is not audited.
-func RateLimit(l ratelimit.Limiter, log *slog.Logger) func(ratelimit.Rule) func(http.Handler) http.Handler {
+func RateLimit(l ratelimit.Limiter, keys ratelimit.KeyHasher, log *slog.Logger) func(ratelimit.Rule) func(http.Handler) http.Handler {
 	return func(rule ratelimit.Rule) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +45,7 @@ func RateLimit(l ratelimit.Limiter, log *slog.Logger) func(ratelimit.Rule) func(
 				if !d.Allowed {
 					log.WarnContext(r.Context(), "ratelimit: throttled",
 						"rule", rule.Name,
-						"key_hash", hex.EncodeToString(ratelimit.HashKey(rule, key)))
+						"key_hash", hex.EncodeToString(keys.Hash(rule, key)))
 					httpx.WriteError(w, r, log, apperr.RateLimited(d.RetryAfter))
 					return
 				}

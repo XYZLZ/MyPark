@@ -47,15 +47,16 @@ var dummyKey = sha256.Sum256([]byte("mypark/devices/dummy-hmac-key"))
 type Authenticator struct {
 	reg    Registry
 	sealer *secretbox.Sealer
+	keys   ratelimit.KeyHasher
 	clock  clock.Clock
 	log    *slog.Logger
 	verify func(secret, canonical []byte, sig string) bool
 }
 
 // NewAuthenticator returns an Authenticator that looks devices up in reg and
-// opens their secrets with s.
-func NewAuthenticator(reg Registry, s *secretbox.Sealer, clk clock.Clock, log *slog.Logger) *Authenticator {
-	return &Authenticator{reg: reg, sealer: s, clock: clk, log: log, verify: devicesig.Verify}
+// opens their secrets with s. keys hashes the client IP of a logged failure.
+func NewAuthenticator(reg Registry, s *secretbox.Sealer, clk clock.Clock, keys ratelimit.KeyHasher, log *slog.Logger) *Authenticator {
+	return &Authenticator{reg: reg, sealer: s, keys: keys, clock: clk, log: log, verify: devicesig.Verify}
 }
 
 // Middleware authenticates the request, in order: headers, clock window, body
@@ -151,7 +152,7 @@ func (a *Authenticator) refuse(w http.ResponseWriter, r *http.Request, claimed u
 		"reason", reason,
 		// Never the raw IP: the rate limiter's hash of the device_ip bucket key,
 		// so it matches that rule's throttle logs (key_hash).
-		"client_ip_hash", hex.EncodeToString(ratelimit.HashKey(ratelimit.DeviceIP, ratelimit.RuleIPKey(ratelimit.DeviceIP, reqctx.ClientIP(r.Context())))))
+		"client_ip_hash", hex.EncodeToString(a.keys.Hash(ratelimit.DeviceIP, ratelimit.RuleIPKey(ratelimit.DeviceIP, reqctx.ClientIP(r.Context())))))
 	httpx.WriteError(w, r, a.log, apperr.Unauthenticated(code))
 }
 

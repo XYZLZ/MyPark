@@ -27,3 +27,7 @@ const (
 	// simulator control API.
 	DevSimulatorControlToken = "s0oW01SL2PN9O1DhLSFg8uD4e/oA+912l90mTMmfg3M=" // dev only
 )
+
+// DevRateLimitPepper is base64 of a 32-byte HMAC pepper for the rate-limit
+// key hashes. A compose default; Load refuses it when APP_ENV=production.
+const DevRateLimitPepper = "cpGwr3/gFKhLD9QtFMbcf9OFi4/rq004pDlCcvhdRTw=" // dev only

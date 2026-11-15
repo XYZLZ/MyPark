@@ -11,6 +11,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
 )
@@ -27,7 +28,7 @@ func TestHandler_RoutesAndPolicies(t *testing.T) {
 		Authn:     passthrough, Legal: passthrough,
 		Roles: func([]authz.Role) func(http.Handler) http.Handler { return passthrough },
 	})
-	auth.NewHandler(auth.NewService(auth.Deps{}), validation.New(), ratelimit.Noop{}, nil).Register(r)
+	auth.NewHandler(auth.NewService(auth.Deps{}), validation.New(), ratelimit.Noop{}, testsupport.TestKeyHasher(), nil).Register(r)
 	want := map[string]string{
 		"POST /v1/auth/register":      ratelimit.RegisterIP.Name,
 		"POST /v1/auth/verify":        ratelimit.CodeSubmitIP.Name,
@@ -76,7 +77,7 @@ func TestHandler_RejectsBadInputBeforeService(t *testing.T) {
 		Authn: passthrough, Legal: passthrough,
 		Roles: func([]authz.Role) func(http.Handler) http.Handler { return passthrough },
 	})
-	auth.NewHandler(auth.NewService(auth.Deps{}), validation.New(), ratelimit.Noop{}, nil).Register(r)
+	auth.NewHandler(auth.NewService(auth.Deps{}), validation.New(), ratelimit.Noop{}, testsupport.TestKeyHasher(), nil).Register(r)
 
 	tests := []struct {
 		name, path, body, ct string

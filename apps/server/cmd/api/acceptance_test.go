@@ -69,7 +69,7 @@ func dataObject(b map[string]any) map[string]any {
 // Spec 15.6 and the M1 backend exit criteria.
 func TestM1BackendAcceptance(t *testing.T) {
 	smtpAddr, api := testsupport.Mailpit(t)
-	e := newAPIEnv(t, func(d *deps) { d.limiter = ratelimit.NewPostgres(d.pool, d.clock) })
+	e := newAPIEnv(t, func(d *deps) { d.limiter = ratelimit.NewPostgres(d.pool, d.clock, d.keys) })
 	a := &acceptance{t: t, e: e, seen: map[string]bool{}}
 
 	// Seed the first admin, as cmd/seed does.

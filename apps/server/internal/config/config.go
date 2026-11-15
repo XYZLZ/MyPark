@@ -47,6 +47,7 @@ const (
 	EnvSSEMaxPerIP         = "SSE_MAX_PER_IP"
 	EnvSSEMaxStreams       = "SSE_MAX_STREAMS"
 	EnvDeviceRateLimitPerS = "DEVICE_RATE_LIMIT_PER_S"
+	EnvRateLimitPepper     = "RATE_LIMIT_PEPPER"
 )
 
 // Default values applied when an optional variable is unset or empty.
@@ -97,6 +98,7 @@ type Config struct {
 	sseMaxPerIP         int
 	sseMaxStreams       int
 	deviceRateLimitPerS int
+	rateLimitPepper     []byte
 }
 
 // Env returns the deployment environment: development, test or production.
@@ -159,6 +161,11 @@ func (c Config) SSEMaxStreams() int { return c.sseMaxStreams }
 // DeviceRateLimitPerS returns the per-device event rate limit per second.
 func (c Config) DeviceRateLimitPerS() int { return c.deviceRateLimitPerS }
 
+// RateLimitPepper returns a copy of the HMAC pepper of the rate-limit bucket
+// key hashes, which reach the logs and the rate_limit_counters table. Every
+// API instance must share it. Never log it.
+func (c Config) RateLimitPepper() []byte { return slices.Clone(c.rateLimitPepper) }
+
 // String renders the redacted LogValue group, so %v, %+v and %s never print
 // credentials.
 func (c Config) String() string { return c.LogValue().String() }
@@ -190,6 +197,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("sse_max_per_ip", c.sseMaxPerIP),
 		slog.Int("sse_max_streams", c.sseMaxStreams),
 		slog.Int("device_rate_limit_per_s", c.deviceRateLimitPerS),
+		slog.String("rate_limit_pepper", redacted),
 	)
 }
 
@@ -244,15 +252,17 @@ type rawEnv struct {
 	SSEMaxPerIP         int64  `env:"SSE_MAX_PER_IP" validate:"min=1,max=1000"`
 	SSEMaxStreams       int64  `env:"SSE_MAX_STREAMS" validate:"min=1,max=100000"`
 	DeviceRateLimitPerS int64  `env:"DEVICE_RATE_LIMIT_PER_S" validate:"min=1,max=10000"`
+	RateLimitPepper     string `env:"RATE_LIMIT_PEPPER" validate:"required"`
 }
 
 // secretVars are never echoed back in error messages.
 var secretVars = map[string]bool{
-	EnvDatabaseURL:    true,
-	EnvJWTSigningKey:  true,
-	EnvAuthCodePepper: true,
-	EnvSecretboxKey:   true,
-	EnvCardUIDPepper:  true,
+	EnvDatabaseURL:     true,
+	EnvJWTSigningKey:   true,
+	EnvAuthCodePepper:  true,
+	EnvSecretboxKey:    true,
+	EnvCardUIDPepper:   true,
+	EnvRateLimitPepper: true,
 }
 
 var envValidator = sync.OnceValue(func() *validator.Validate {
@@ -298,6 +308,7 @@ func Load(getenv func(string) string) (Config, error) {
 		SSEMaxPerIP:         DefaultSSEMaxPerIP,
 		SSEMaxStreams:       DefaultSSEMaxStreams,
 		DeviceRateLimitPerS: DefaultDeviceRateLimitPerS,
+		RateLimitPepper:     strings.TrimSpace(getenv(EnvRateLimitPepper)),
 	}
 	var errs []error
 	for _, v := range []struct {
@@ -385,6 +396,15 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvCardUIDPepper))
 		}
 	}
+	var limitPepper []byte
+	if raw.RateLimitPepper != "" {
+		var err error
+		if limitPepper, err = decodeKey(EnvRateLimitPepper, raw.RateLimitPepper, minPepperLen, false); err != nil {
+			errs = append(errs, err)
+		} else if production && bytes.Equal(limitPepper, devBytes(DevRateLimitPepper)) {
+			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvRateLimitPepper))
+		}
+	}
 	verifyKeys := map[string]ed25519.PublicKey{}
 	if seed != nil {
 		verifyKeys[raw.JWTKeyID] = ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
@@ -438,6 +458,7 @@ func Load(getenv func(string) string) (Config, error) {
 		sseMaxPerIP:         int(raw.SSEMaxPerIP),
 		sseMaxStreams:       int(raw.SSEMaxStreams),
 		deviceRateLimitPerS: int(raw.DeviceRateLimitPerS),
+		rateLimitPepper:     limitPepper,
 	}, nil
 }
 

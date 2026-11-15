@@ -58,6 +58,7 @@ func testDeps(h *health.Handler, pool *pgxpool.Pool) deps {
 		hasher:  hashing.NewArgon2id(hashing.Params{Memory: 1024, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}, 2),
 		limiter: ratelimit.Noop{},
 		sealer:  testSealer,
+		keys:    testsupport.TestKeyHasher(),
 	}
 }
 
@@ -118,12 +119,13 @@ func TestHealthz_ThroughFullChain(t *testing.T) {
 // testEnv adds the required auth variables (the development defaults) to env.
 func testEnv(env map[string]string) map[string]string {
 	out := map[string]string{
-		"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
-		"JWT_KEY_ID":       "dev-1",
-		"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
-		"SECRETBOX_KEY":    config.DevSecretboxKey,
-		"SECRETBOX_KEY_ID": "dev-1",
-		"CARD_UID_PEPPER":  config.DevCardUIDPepper,
+		"JWT_SIGNING_KEY":   config.DevJWTSigningKey,
+		"JWT_KEY_ID":        "dev-1",
+		"AUTH_CODE_PEPPER":  config.DevAuthCodePepper,
+		"SECRETBOX_KEY":     config.DevSecretboxKey,
+		"SECRETBOX_KEY_ID":  "dev-1",
+		"CARD_UID_PEPPER":   config.DevCardUIDPepper,
+		"RATE_LIMIT_PEPPER": config.DevRateLimitPepper,
 	}
 	maps.Copy(out, env)
 	return out

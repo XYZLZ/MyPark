@@ -23,12 +23,14 @@ type Handler struct {
 	svc     *Service
 	v       *validation.Validator
 	limiter ratelimit.Limiter
+	keys    ratelimit.KeyHasher
 	log     *slog.Logger
 }
 
 // NewHandler returns a Handler over s.
-func NewHandler(s *Service, v *validation.Validator, l ratelimit.Limiter, log *slog.Logger) *Handler {
-	return &Handler{svc: s, v: v, limiter: l, log: log}
+// keys hashes the throttled bucket key that is logged.
+func NewHandler(s *Service, v *validation.Validator, l ratelimit.Limiter, keys ratelimit.KeyHasher, log *slog.Logger) *Handler {
+	return &Handler{svc: s, v: v, limiter: l, keys: keys, log: log}
 }
 
 // Register adds the auth routes to r. The per-IP rules run in the router; the
@@ -142,7 +144,7 @@ func (h *Handler) allow(r *http.Request, rule ratelimit.Rule, key string) error 
 		// bucket key, never the raw email or IP.
 		h.log.WarnContext(r.Context(), "ratelimit: throttled",
 			"rule", rule.Name,
-			"key_hash", hex.EncodeToString(ratelimit.HashKey(rule, key)))
+			"key_hash", hex.EncodeToString(h.keys.Hash(rule, key)))
 		return apperr.RateLimited(d.RetryAfter)
 	}
 	return nil

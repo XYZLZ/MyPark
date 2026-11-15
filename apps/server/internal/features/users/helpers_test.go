@@ -98,7 +98,7 @@ func newEnv(t *testing.T) *env {
 		Authn:     g.Authn, Roles: g.Roles, Legal: g.Legal,
 	})
 	v := validation.New()
-	auth.NewHandler(authSvc, v, ratelimit.Noop{}, log).Register(r)
+	auth.NewHandler(authSvc, v, ratelimit.Noop{}, testsupport.TestKeyHasher(), log).Register(r)
 	vehicles.NewHandler(vehicleSvc, v, 5, log).Register(r)
 	users.NewHandler(usersSvc, v, log).Register(r)
 	return &env{t: t, db: db, clock: clk, hasher: hasher, codes: codes, h: httpserver.NewHandler(log, mux, nil)}

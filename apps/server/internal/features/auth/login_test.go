@@ -16,6 +16,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
 const (
@@ -358,7 +359,7 @@ func TestLogin_ThrottleLoggedWithHashedKey(t *testing.T) {
 	if line == "" {
 		t.Fatalf("no throttle log line in:\n%s", e.logs.String())
 	}
-	want := hex.EncodeToString(ratelimit.HashKey(ratelimit.LoginIPEmail, keys[0]))
+	want := hex.EncodeToString(testsupport.TestKeyHasher().Hash(ratelimit.LoginIPEmail, keys[0]))
 	if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "rule="+ratelimit.LoginIPEmail.Name) ||
 		!strings.Contains(line, "key_hash="+want) {
 		t.Errorf("throttle line = %q, want WARN with rule and key_hash %s", line, want)

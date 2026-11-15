@@ -18,7 +18,7 @@ func loginHandler(t *testing.T) (http.Handler, *testsupport.TestDB) {
 	t.Helper()
 	db := testsupport.NewTestDB(t)
 	d := testDeps(readyHealth(), db.App)
-	d.limiter = ratelimit.NewPostgres(db.App, d.clock)
+	d.limiter = ratelimit.NewPostgres(db.App, d.clock, d.keys)
 	signer, err := jwt.NewSigner("test-1", bytes.Repeat([]byte("s"), 32), d.clock, jwt.AccessTTL)
 	if err != nil {
 		t.Fatalf("signer: %v", err)

@@ -96,7 +96,7 @@ func TestLoad_ProductionRefusesM2DevSecrets(t *testing.T) {
 			m := map[string]string{
 				"DATABASE_URL": "postgres://x", "APP_ENV": "production",
 				"JWT_SIGNING_KEY": other, "AUTH_CODE_PEPPER": other,
-				"SECRETBOX_KEY": other, "CARD_UID_PEPPER": other,
+				"SECRETBOX_KEY": other, "CARD_UID_PEPPER": other, "RATE_LIMIT_PEPPER": other,
 			}
 			m[name] = value
 			_, err := config.Load(env(m))

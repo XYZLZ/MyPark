@@ -92,6 +92,7 @@ func TestNoSecretsInLogs(t *testing.T) {
 		"email": email, "email local part": local, "first name": first, "last name": last,
 		"plate": plate, "password": password, "new password": newPass, "weak password": weakPass,
 		"JWT_SIGNING_KEY": config.DevJWTSigningKey, "AUTH_CODE_PEPPER": config.DevAuthCodePepper,
+		"RATE_LIMIT_PEPPER": config.DevRateLimitPepper,
 	} {
 		l.secrets[label] = v
 	}
@@ -293,7 +294,8 @@ func TestNoSecretsInLogs_Devices(t *testing.T) {
 		"SIMULATOR_CONTROL_TOKEN": token, "SIMULATOR_FLEET_SECRET": config.DevSimulatorFleetSecret,
 		"SECRETBOX_KEY": config.DevSecretboxKey, "CARD_UID_PEPPER": config.DevCardUIDPepper,
 		"JWT_SIGNING_KEY": config.DevJWTSigningKey, "AUTH_CODE_PEPPER": config.DevAuthCodePepper,
-		"client IP": clientIP,
+		"RATE_LIMIT_PEPPER": config.DevRateLimitPepper,
+		"client IP":         clientIP,
 	}
 	addBytes := func(label string, raw []byte) {
 		secrets[label+" (hex)"] = hex.EncodeToString(raw)

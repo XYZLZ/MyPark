@@ -191,7 +191,7 @@ func newEnv(t *testing.T, mod ...func(*auth.Deps)) *env {
 		RateLimit: router.PassthroughRateLimit,
 		Authn:     g.Authn, Roles: g.Roles, Legal: g.Legal,
 	})
-	auth.NewHandler(svc, validation.New(), lim, log).Register(r)
+	auth.NewHandler(svc, validation.New(), lim, testsupport.TestKeyHasher(), log).Register(r)
 	// A gated probe route: 200 for any role that passes the legal gate.
 	r.Handle("GET "+pathProbe, router.Policy{Roles: router.AnyRole}, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

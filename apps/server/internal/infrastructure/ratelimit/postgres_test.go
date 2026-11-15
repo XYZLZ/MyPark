@@ -19,7 +19,7 @@ func newPostgres(t *testing.T) (*ratelimit.Postgres, *testsupport.FakeClock, *te
 	t.Helper()
 	db := testsupport.NewTestDB(t)
 	clk := testsupport.NewFakeClock(start)
-	return ratelimit.NewPostgres(db.App, clk), clk, db
+	return ratelimit.NewPostgres(db.App, clk, testsupport.TestKeyHasher()), clk, db
 }
 
 func TestPostgres_SixthLoginIn429(t *testing.T) {
@@ -75,7 +75,7 @@ func TestPostgres_TwoInstancesShareCount(t *testing.T) {
 		t.Fatalf("second pool: %v", err)
 	}
 	t.Cleanup(second.Close)
-	a, b := ratelimit.NewPostgres(db.App, clk), ratelimit.NewPostgres(second, clk)
+	a, b := ratelimit.NewPostgres(db.App, clk, testsupport.TestKeyHasher()), ratelimit.NewPostgres(second, clk, testsupport.TestKeyHasher())
 	for i := range 5 {
 		l := a
 		if i%2 == 1 {
@@ -100,15 +100,15 @@ func TestPostgres_KeysAreHashed(t *testing.T) {
 	if err := db.Super.QueryRow(t.Context(), `select key from rate_limit_counters`).Scan(&stored); err != nil {
 		t.Fatalf("select key: %v", err)
 	}
-	want := sha256.Sum256([]byte(ratelimit.LoginIPEmail.Prefix + key))
-	if len(stored) != 32 || !bytes.Equal(stored, want[:]) {
-		t.Errorf("stored key = %x, want sha256(prefix+key) = %x", stored, want)
+	want := testsupport.TestKeyHasher().Hash(ratelimit.LoginIPEmail, key)
+	if len(stored) != 32 || !bytes.Equal(stored, want) {
+		t.Errorf("stored key = %x, want the keyed hash %x", stored, want)
+	}
+	if plain := sha256.Sum256([]byte(ratelimit.LoginIPEmail.Prefix + key)); bytes.Equal(stored, plain[:]) {
+		t.Error("stored key is the plain sha256(prefix+key)")
 	}
 	if bytes.Contains(stored, []byte("ana@example.com")) || bytes.Contains(stored, []byte("203.0.113.9")) {
 		t.Error("stored key contains the clear email or IP")
-	}
-	if got := ratelimit.HashKey(ratelimit.LoginIPEmail, key); !bytes.Equal(got, want[:]) {
-		t.Errorf("HashKey = %x, want %x", got, want)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestPostgres_StoreErrorIsReturned(t *testing.T) {
 		t.Fatal(err)
 	}
 	pool.Close() // a closed pool fails every query
-	l := ratelimit.NewPostgres(pool, testsupport.NewFakeClock(start))
+	l := ratelimit.NewPostgres(pool, testsupport.NewFakeClock(start), testsupport.TestKeyHasher())
 	if _, err := l.Allow(t.Context(), ratelimit.LoginIPEmail, "k"); err == nil {
 		t.Fatal("Allow on a closed pool returned a nil error")
 	}
@@ -162,8 +162,8 @@ func TestPurge_RemovesExpired(t *testing.T) {
 // count, or a client alternating between them is never throttled.
 func TestPostgres_SkewedOlderHitDoesNotResetCount(t *testing.T) {
 	db := testsupport.NewTestDB(t)
-	ahead := ratelimit.NewPostgres(db.App, testsupport.NewFakeClock(start.Add(time.Minute)))
-	behind := ratelimit.NewPostgres(db.App, testsupport.NewFakeClock(start))
+	ahead := ratelimit.NewPostgres(db.App, testsupport.NewFakeClock(start.Add(time.Minute)), testsupport.TestKeyHasher())
+	behind := ratelimit.NewPostgres(db.App, testsupport.NewFakeClock(start), testsupport.TestKeyHasher())
 	for i := range 5 {
 		if d, err := ahead.Allow(t.Context(), ratelimit.LoginIPEmail, "k"); err != nil || !d.Allowed {
 			t.Fatalf("attempt %d = %+v, %v; want allowed", i+1, d, err)

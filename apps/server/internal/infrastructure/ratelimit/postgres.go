@@ -2,7 +2,6 @@ package ratelimit
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -18,20 +17,15 @@ import (
 // so every API instance shares the same counts (spec 10.2, OC-21).
 type Postgres struct {
 	q     *dbgen.Queries
+	keys  KeyHasher
 	clock clock.Clock
 }
 
-// NewPostgres returns a Limiter over pool. Window boundaries and expiry come
-// from c, never from the database clock.
-func NewPostgres(pool *pgxpool.Pool, c clock.Clock) *Postgres {
-	return &Postgres{q: dbgen.New(pool), clock: c}
-}
-
-// HashKey is the stored bucket key: sha256(rule.Prefix + key). Emails and IPs
-// never reach the table or the logs in clear.
-func HashKey(rule Rule, key string) []byte {
-	sum := sha256.Sum256([]byte(rule.Prefix + key))
-	return sum[:]
+// NewPostgres returns a Limiter over pool. Bucket keys are stored hashed by
+// keys, so emails and IPs never reach the table in clear. Window boundaries
+// and expiry come from c, never from the database clock.
+func NewPostgres(pool *pgxpool.Pool, c clock.Clock, keys KeyHasher) *Postgres {
+	return &Postgres{q: dbgen.New(pool), keys: keys, clock: c}
 }
 
 // Allow counts one attempt against the bucket of (rule, key). Every attempt
@@ -39,7 +33,7 @@ func HashKey(rule Rule, key string) []byte {
 func (p *Postgres) Allow(ctx context.Context, rule Rule, key string) (Decision, error) {
 	now := p.clock.Now()
 	row, err := p.q.HitRateLimit(ctx, dbgen.HitRateLimitParams{
-		Key:        HashKey(rule, key),
+		Key:        p.keys.Hash(rule, key),
 		WindowSize: pgtype.Interval{Microseconds: rule.Window.Microseconds(), Valid: true},
 		Now:        pgtype.Timestamptz{Time: now, Valid: true},
 	})

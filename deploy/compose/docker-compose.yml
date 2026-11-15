@@ -130,6 +130,9 @@ services:
       SECRETBOX_KEY_ID: ${SECRETBOX_KEY_ID:-dev-1}
       SECRETBOX_OLD_KEYS: ${SECRETBOX_OLD_KEYS:-}
       CARD_UID_PEPPER: ${CARD_UID_PEPPER:-5aolRvJpaNIAVU0GqBsELQfbrdRUYDraaxm64URAA9g=}
+      # Dev-only default (config.DevRateLimitPepper); keys the logged and stored
+      # rate-limit key hashes. The API refuses it when APP_ENV=production.
+      RATE_LIMIT_PEPPER: ${RATE_LIMIT_PEPPER:-cpGwr3/gFKhLD9QtFMbcf9OFi4/rq004pDlCcvhdRTw=}
     # All interfaces on purpose: a phone running Expo on the LAN must reach the
     # API. Every other published port is bound to loopback.
     ports:

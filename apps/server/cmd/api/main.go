@@ -123,6 +123,10 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
+	keys, err := ratelimit.NewKeyHasher(cfg.RateLimitPepper())
+	if err != nil {
+		return err
+	}
 	current, old := cfg.SecretboxKeys()
 	sealer, err := secretbox.NewSealer(current, old...)
 	if err != nil {
@@ -159,7 +163,8 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		// Argon2id with the spec 7.1 parameters; at most 4 derivations at once.
 		hasher:  hashing.NewArgon2id(hashing.DefaultParams, maxConcurrentHashes),
 		codes:   codes,
-		limiter: ratelimit.NewComposite(ratelimit.NewPostgres(pool, clock.System{}), ratelimit.NewMemory(clock.System{})),
+		keys:    keys,
+		limiter: ratelimit.NewComposite(ratelimit.NewPostgres(pool, clock.System{}, keys), ratelimit.NewMemory(clock.System{})),
 		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
 
 		timers:     clock.System{},
@@ -208,6 +213,7 @@ type deps struct {
 	hasher  hashing.PasswordHasher
 	codes   hashing.CodeHasher
 	limiter ratelimit.Limiter
+	keys    ratelimit.KeyHasher // hashes logged and stored rate-limit keys
 
 	// Built in run (PF8). Handler-only tests leave them nil, and
 	// newHandlerWithRoutes then builds a hub no listener feeds.
@@ -240,10 +246,10 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	verifier := jwt.NewVerifier(d.cfg.JWTVerifyKeys(), d.clock)
 	gates := authn.New(auth.NewAuthenticator(verifier, authRepo, legalSvc, d.clock), d.log, authn.WithLegal(legalSvc))
 	deviceRepo := devicespg.NewRepo(d.pool)
-	deviceAuth := devices.NewAuthenticator(deviceRepo, d.sealer, d.clock, d.log)
+	deviceAuth := devices.NewAuthenticator(deviceRepo, d.sealer, d.clock, d.keys, d.log)
 	r := router.New(mux, router.Middlewares{
 		ClientIP:    middleware.ClientIP(d.cfg.TrustedProxyCIDRs()),
-		RateLimit:   middleware.RateLimit(d.limiter, d.log),
+		RateLimit:   middleware.RateLimit(d.limiter, d.keys, d.log),
 		Authn:       gates.Authn,
 		Roles:       gates.Roles,
 		Legal:       gates.Legal,
@@ -303,7 +309,7 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		Clock:  d.clock,
 		Signer: d.signer,
 	})
-	auth.NewHandler(authSvc, validation.New(), d.limiter, d.log).Register(r)
+	auth.NewHandler(authSvc, validation.New(), d.limiter, d.keys, d.log).Register(r)
 
 	// NoReservations is the M1 checker (OC-29); M3 swaps in the reservations adapter.
 	vehicleSvc := vehicles.NewService(tx, vehiclespg.NewRepo(d.pool),

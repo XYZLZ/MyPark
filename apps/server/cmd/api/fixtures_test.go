@@ -56,13 +56,14 @@ func newAPIEnv(t *testing.T, mods ...func(*deps)) *apiEnv {
 		t.Fatalf("seed legal: %v", err)
 	}
 	env := map[string]string{
-		"JWT_SIGNING_KEY":  config.DevJWTSigningKey,
-		"JWT_KEY_ID":       "dev-1",
-		"AUTH_CODE_PEPPER": config.DevAuthCodePepper,
-		"SECRETBOX_KEY":    config.DevSecretboxKey,
-		"SECRETBOX_KEY_ID": "dev-1",
-		"CARD_UID_PEPPER":  config.DevCardUIDPepper,
-		"DATABASE_URL":     db.AppURL,
+		"JWT_SIGNING_KEY":   config.DevJWTSigningKey,
+		"JWT_KEY_ID":        "dev-1",
+		"AUTH_CODE_PEPPER":  config.DevAuthCodePepper,
+		"SECRETBOX_KEY":     config.DevSecretboxKey,
+		"SECRETBOX_KEY_ID":  "dev-1",
+		"CARD_UID_PEPPER":   config.DevCardUIDPepper,
+		"RATE_LIMIT_PEPPER": config.DevRateLimitPepper,
+		"DATABASE_URL":      db.AppURL,
 	}
 	cfg, err := config.Load(func(k string) string { return env[k] })
 	if err != nil {
@@ -76,6 +77,10 @@ func newAPIEnv(t *testing.T, mods ...func(*deps)) *apiEnv {
 	codes, err := hashing.NewCodeHasher(cfg.AuthCodePepper())
 	if err != nil {
 		t.Fatalf("code hasher: %v", err)
+	}
+	keys, err := ratelimit.NewKeyHasher(cfg.RateLimitPepper())
+	if err != nil {
+		t.Fatalf("key hasher: %v", err)
 	}
 	hasher := hashing.NewArgon2id(fastHashParams, 2)
 	hash, err := hasher.Hash(t.Context(), fixturePassword)
@@ -94,6 +99,7 @@ func newAPIEnv(t *testing.T, mods ...func(*deps)) *apiEnv {
 		codes:   codes,
 		limiter: ratelimit.Noop{},
 		sealer:  testsupport.TestSealer(t),
+		keys:    keys,
 	}
 	for _, m := range mods {
 		m(&d)

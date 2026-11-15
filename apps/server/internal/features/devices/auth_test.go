@@ -3,6 +3,7 @@ package devices_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -99,7 +100,7 @@ type fixture struct {
 func newFixture(t *testing.T, reg devices.Registry, s *secretbox.Sealer) *fixture {
 	t.Helper()
 	f := &fixture{clock: testsupport.NewFakeClock(t0), logs: &testsupport.SyncBuffer{}, seen: &seen{}}
-	f.auth = devices.NewAuthenticator(reg, s, f.clock, slog.New(slog.NewJSONHandler(f.logs, nil)))
+	f.auth = devices.NewAuthenticator(reg, s, f.clock, testsupport.TestKeyHasher(), slog.New(slog.NewJSONHandler(f.logs, nil)))
 	return f
 }
 
@@ -408,7 +409,7 @@ func TestDeviceAuth_LogsReasonNotSecret(t *testing.T) {
 	unknown := testsupport.TestDevice{PublicID: uuid.New(), Secret: bytes.Repeat([]byte{9}, 32)}
 	var all strings.Builder
 	// The IP is logged only as the rate limiter's hash of its device_ip bucket key.
-	ipHash := hex.EncodeToString(ratelimit.HashKey(ratelimit.DeviceIP, ratelimit.IPKey(netip.MustParseAddr("198.51.100.7"))))
+	ipHash := hex.EncodeToString(testsupport.TestKeyHasher().Hash(ratelimit.DeviceIP, ratelimit.IPKey(netip.MustParseAddr("198.51.100.7"))))
 
 	badSig := dev.Request(t, eventsURI, body, t0)
 	expected := badSig.Header.Get("X-Signature")
@@ -444,7 +445,9 @@ func TestDeviceAuth_LogsReasonNotSecret(t *testing.T) {
 		})
 	}
 	out := all.String()
-	for _, leak := range []string{hex.EncodeToString(dev.Secret), expected, "198.51.100.7"} {
+	// Nor its plain SHA-256: an IPv4 hash without a key reverses in seconds.
+	plainIP := sha256.Sum256([]byte(ratelimit.DeviceIP.Prefix + "198.51.100.7"))
+	for _, leak := range []string{hex.EncodeToString(dev.Secret), expected, "198.51.100.7", hex.EncodeToString(plainIP[:])} {
 		if strings.Contains(out, leak) {
 			t.Errorf("log leaks %q", leak)
 		}
@@ -462,7 +465,7 @@ func TestRateLimit_DeviceKeyedAfterAuth(t *testing.T) {
 	mux := http.NewServeMux()
 	rt := router.New(mux, router.Middlewares{
 		ClientIP:    middleware.ClientIP(nil),
-		RateLimit:   middleware.RateLimit(ratelimit.NewMemory(f.clock), log),
+		RateLimit:   middleware.RateLimit(ratelimit.NewMemory(f.clock), testsupport.TestKeyHasher(), log),
 		DeviceAuth:  f.auth.Middleware,
 		DeviceLimit: ratelimit.DeviceRule(2),
 	})
@@ -496,5 +499,38 @@ func TestRateLimit_DeviceKeyedAfterAuth(t *testing.T) {
 	}
 	if rec := send(b.Request(t, eventsURI, body, t0)); rec.Code != http.StatusOK {
 		t.Errorf("device B: status = %d, want 200 (separate budget)", rec.Code)
+	}
+}
+
+// The logged client_ip_hash is keyed by RATE_LIMIT_PEPPER: another pepper
+// logs another hash for the same IP, and neither is the plain SHA-256.
+func TestDeviceAuth_ClientIPHashIsKeyed(t *testing.T) {
+	s := testsupport.TestSealer(t)
+	reg := &fakeRegistry{}
+	unknown := testsupport.TestDevice{PublicID: uuid.New(), Secret: bytes.Repeat([]byte{9}, 32)}
+	ip := netip.MustParseAddr("198.51.100.7")
+	plain := sha256.Sum256([]byte(ratelimit.DeviceIP.Prefix + ip.String()))
+	hashes := map[string]bool{}
+	for _, fill := range []byte{1, 2} {
+		keys, err := ratelimit.NewKeyHasher(bytes.Repeat([]byte{fill}, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		logs := &testsupport.SyncBuffer{}
+		a := devices.NewAuthenticator(reg, s, testsupport.NewFakeClock(t0), keys, slog.New(slog.NewJSONHandler(logs, nil)))
+		req := unknown.Request(t, eventsURI, body, t0)
+		a.Middleware(http.NotFoundHandler()).ServeHTTP(httptest.NewRecorder(), req.WithContext(reqctx.WithClientIP(req.Context(), ip)))
+		var line map[string]any
+		if err := json.Unmarshal(bytes.TrimSpace([]byte(logs.String())), &line); err != nil {
+			t.Fatalf("want one log line, got %q", logs)
+		}
+		h, _ := line["client_ip_hash"].(string)
+		if h == "" || h == hex.EncodeToString(plain[:]) {
+			t.Errorf("client_ip_hash = %q, want a keyed hash", h)
+		}
+		hashes[h] = true
+	}
+	if len(hashes) != 2 {
+		t.Errorf("two peppers logged %d distinct hashes, want 2", len(hashes))
 	}
 }

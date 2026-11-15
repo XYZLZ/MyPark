@@ -38,7 +38,7 @@ func (s *stubLimiter) Allow(_ context.Context, _ ratelimit.Rule, key string) (ra
 // wrapped handler ran.
 func serve(l ratelimit.Limiter, rule ratelimit.Rule, logs *testsupport.SyncBuffer, mod func(*http.Request) *http.Request) (*httptest.ResponseRecorder, bool) {
 	ran := false
-	h := middleware.RateLimit(l, slog.New(slog.NewJSONHandler(logs, nil)))(rule)(
+	h := middleware.RateLimit(l, testsupport.TestKeyHasher(), slog.New(slog.NewJSONHandler(logs, nil)))(rule)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			ran = true
 			w.WriteHeader(http.StatusNoContent)
@@ -119,7 +119,7 @@ func TestRateLimit_KeysAndLogsHaveNoPII(t *testing.T) {
 	if !strings.Contains(out, `"level":"WARN"`) || !strings.Contains(out, ratelimit.CodeSubmitIP.Name) {
 		t.Errorf("throttle log lacks warn level or rule name: %s", out)
 	}
-	if h := hex.EncodeToString(ratelimit.HashKey(ratelimit.CodeSubmitIP, "203.0.113.9")); !strings.Contains(out, h) {
+	if h := hex.EncodeToString(testsupport.TestKeyHasher().Hash(ratelimit.CodeSubmitIP, "203.0.113.9")); !strings.Contains(out, h) {
 		t.Errorf("throttle log lacks the hashed key %s: %s", h, out)
 	}
 }
