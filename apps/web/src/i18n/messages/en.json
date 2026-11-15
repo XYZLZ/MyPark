@@ -307,5 +307,86 @@
     "pattern": "The format is not valid.",
     "integer": "Enter a whole number.",
     "unknown": "Check this field."
+  },
+  "lot": {
+    "title": "Banreservas Parking",
+    "info": "Parking information",
+    "address": "Address",
+    "location": "Location",
+    "openInMaps": "Open in Maps",
+    "opensInNewTab": "(opens in a new tab)",
+    "hours": {
+      "label": "Hours",
+      "alwaysOpen": "Open 24 hours",
+      "varies": "Hours vary"
+    },
+    "hero": {
+      "title": "Check parking availability in real time",
+      "subtitle": "See how many spaces are free before you arrive.",
+      "photoAlt": "Front of the Banreservas parking lot in the Colonial Zone"
+    },
+    "error": {
+      "title": "We could not load the parking information",
+      "retry": "Try again"
+    },
+    "unavailable": {
+      "closedBody": "The parking lot is not accepting vehicles right now."
+    }
+  },
+  "availability": {
+    "title": "Availability",
+    "total": "Total spaces",
+    "available": "Available",
+    "availableLong": "Available spaces",
+    "occupied": "Occupied",
+    "of": "of {total} spaces",
+    "outOfService": "{count} out of service",
+    "status": {
+      "open": "Open",
+      "full": "Full",
+      "closed": "Closed"
+    },
+    "live": "Live",
+    "lastChange": "Last change {time}",
+    "stale": "Stale — last updated {time}",
+    "reconnecting": "Reconnecting…",
+    "connecting": "Connecting…",
+    "unavailable": "Live updates unavailable",
+    "unavailableAt": "Live updates unavailable · data as of {time}",
+    "announce": {
+      "count": "Available spaces: {count} of {total}.",
+      "status": "The parking lot is {status}.",
+      "live": "Live updates are active.",
+      "stale": "The data is stale. Last updated {time}."
+    }
+  },
+  "spaces": {
+    "title": "Space map",
+    "sensorsLive": "Live sensors",
+    "legend": {
+      "free": "Available",
+      "occupied": "Occupied",
+      "outOfService": "Out of service"
+    },
+    "summary": "Sensors report {free} free, {occupied} occupied and {oos} out of service.",
+    "note": "The map shows sensor readings.",
+    "updating": "Updating the map…",
+    "listFree": "View free spaces",
+    "viewFull": "View full map",
+    "previewCount": "{shown} of {total} spaces",
+    "zoomIn": "Zoom in on the map",
+    "zoomOut": "Zoom out of the map"
+  },
+  "tariff": {
+    "title": "Rates",
+    "firstHour": "First hour",
+    "additionalHour": "Additional hour",
+    "dailyCap": "Daily maximum",
+    "grace": "Free exit window",
+    "postPayment": "Exit after paying",
+    "lostTicket": "Lost ticket"
+  },
+  "money": {
+    "dop": "RD${amount}"
   }
 }
