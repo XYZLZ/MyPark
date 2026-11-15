@@ -230,18 +230,20 @@ func TestWorkerJobs_IncludePurge(t *testing.T) {
 		t.Fatalf("seed device: %v", err)
 	}
 	// 12 001 events 13 months old, and one from yesterday that must survive.
+	// The purge function cuts at the database's now(), not at the job's fake
+	// clock, so the rows are seeded relative to now() as well.
 	if _, err := db.Super.Exec(t.Context(),
 		`insert into device_events (lot_id, device_id, event_id, type, occurred_at, received_at, body_sha256, payload, response)
-		 select $1, d.id, gen_random_uuid(), 'heartbeat', $2::timestamptz, $2::timestamptz - (i || ' seconds')::interval,
+		 select $1, d.id, gen_random_uuid(), 'heartbeat', now() - interval '13 months', now() - interval '13 months' - (i || ' seconds')::interval,
 		        '\x0000000000000000000000000000000000000000000000000000000000000000', '{}', '{}'
 		 from generate_series(1, 12001) i, (select id from devices where name = 'purge test') d`,
-		lotID, clk.Now().AddDate(-1, -1, 0)); err != nil {
+		lotID); err != nil {
 		t.Fatalf("seed old events: %v", err)
 	}
 	if _, err := db.Super.Exec(t.Context(),
 		`insert into device_events (lot_id, device_id, event_id, type, occurred_at, received_at, body_sha256, payload, response)
-		 select $1, id, gen_random_uuid(), 'heartbeat', $2::timestamptz, $2::timestamptz - interval '1 day', '\x0000000000000000000000000000000000000000000000000000000000000000', '{}', '{}'
-		 from devices where name = 'purge test'`, lotID, clk.Now()); err != nil {
+		 select $1, id, gen_random_uuid(), 'heartbeat', now(), now() - interval '1 day', '\x0000000000000000000000000000000000000000000000000000000000000000', '{}', '{}'
+		 from devices where name = 'purge test'`, lotID); err != nil {
 		t.Fatalf("seed recent event: %v", err)
 	}
 

@@ -324,6 +324,18 @@ func TestNoSecretsInLogs_Devices(t *testing.T) {
 	if err := r.db.Super.QueryRow(t.Context(), `select count(*) from device_events`).Scan(&rows); err != nil || rows < 50 {
 		t.Fatalf("device_events rows = %d, %v; the capture looks empty", rows, err)
 	}
+	var audit string
+	if err := r.db.Super.QueryRow(t.Context(),
+		"select coalesce(jsonb_agg(to_jsonb(a)), '[]'::jsonb)::text from audit_log a").Scan(&audit); err != nil {
+		t.Fatalf("read audit_log: %v", err)
+	}
+	var auditRows int
+	if err := r.db.Super.QueryRow(t.Context(), `select count(*) from audit_log`).Scan(&auditRows); err != nil {
+		t.Fatalf("count audit_log: %v", err)
+	}
+	if auditRows < 1 {
+		t.Fatal("audit_log is empty, so scanning it would prove nothing")
+	}
 	output := logs.String()
 	if !strings.Contains(output, deviceEventsPath) || strings.Count(output, "\n") < 50 {
 		t.Fatalf("the log capture looks empty, so the check would prove nothing:\n%.2000s", output)
@@ -334,7 +346,7 @@ func TestNoSecretsInLogs_Devices(t *testing.T) {
 	}
 
 	surfaces := map[string]string{
-		"logs": output, "device_events": events, "error bodies": strings.Join(errBodies, "\n"),
+		"logs": output, "device_events": events, "audit_log": audit, "error bodies": strings.Join(errBodies, "\n"),
 	}
 	for surface, text := range surfaces {
 		lower := strings.ToLower(text)

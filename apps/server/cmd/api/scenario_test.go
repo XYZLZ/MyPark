@@ -342,7 +342,10 @@ func (r *scenarioRig) start(sc simulator.Scenario, seed uint64) {
 
 // waitFor returns once cond holds. cond is re-read after every request and
 // step; recheck covers a state change that moves nothing (a flag set by the
-// engine in a step that sends no request).
+// engine in a step that sends no request). Runner.Wait cannot replace it:
+// fill_to_full does not end its run. After the lot is full the engine goes
+// idle and the run stays open for injects and leaves, so Wait would never
+// return until a stop.
 func (r *scenarioRig) waitFor(what string, cond func() bool) {
 	r.t.Helper()
 	const recheck = 2 * time.Millisecond

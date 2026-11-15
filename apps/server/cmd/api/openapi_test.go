@@ -188,3 +188,14 @@ func TestOpenAPI_PostDeviceEventSecurity(t *testing.T) {
 		}
 	}
 }
+
+// Every operation of the contract is served: contract-first markers
+// (x-mypark-pending) are removed by the slice that serves the operation, and
+// none may remain at the end of M2. A failure names the slice left behind.
+func TestOpenAPI_NoPendingOperations(t *testing.T) {
+	for key, op := range loadOperations(t) {
+		if op.pending != "" {
+			t.Errorf("%s still carries x-mypark-pending %q: slice %s did not remove it", key, op.pending, op.pending)
+		}
+	}
+}
