@@ -1,6 +1,8 @@
 package devices_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,19 +16,35 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
+// testPepper is the card UID pepper of the redaction tests.
+var testPepper = []byte("redaction-test-pepper-0123456789abcdef")
+
+// keyedCard is the stored stand-in of a card UID under pepper: the first 12
+// hex of its HashCardUID, the same prefix as employee_cards.card_uid_hash.
+func keyedCard(pepper []byte, uid string) string {
+	return "hmac:" + hex.EncodeToString(gate.HashCardUID(pepper, uid))[:12]
+}
+
 func TestRedactPayload(t *testing.T) {
 	stay := uuid.MustParse("0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5c")
+	card := keyedCard(testPepper, "DFFE6EADBA0A4C")
 	tests := []struct {
 		name string
 		ev   gate.Event
 		want string
 	}{
-		{"pay scan credential", evOf(gate.EventPayScan, gate.PayScan{Credential: gate.Credential{Kind: "ticket", Value: "DFFE6EADBA0A4C"}}),
+		{"pay scan ticket", evOf(gate.EventPayScan, gate.PayScan{Credential: gate.Credential{Kind: "ticket", Value: "DFFE6EADBA0A4C"}}),
 			`{"credential":{"kind":"ticket","value":"sha256:a923af4c08c9"}}`},
-		{"exit credential", evOf(gate.EventExitCredential, gate.ExitCredential{Credential: gate.Credential{Kind: "employee_card", Value: "DFFE6EADBA0A4C"}}),
-			`{"credential":{"kind":"employee_card","value":"sha256:a923af4c08c9"}}`},
-		{"entry credential", evOf(gate.EventEntryCredential, gate.EntryCredential{Kind: "employee_card", Value: "DFFE6EADBA0A4C"}),
-			`{"kind":"employee_card","value":"sha256:a923af4c08c9"}`},
+		{"pay scan card", evOf(gate.EventPayScan, gate.PayScan{Credential: gate.Credential{Kind: "employee_card", Value: "DFFE6EADBA0A4C"}}),
+			`{"credential":{"kind":"employee_card","value":"` + card + `"}}`},
+		{"exit credential card", evOf(gate.EventExitCredential, gate.ExitCredential{Credential: gate.Credential{Kind: "employee_card", Value: "DFFE6EADBA0A4C"}}),
+			`{"credential":{"kind":"employee_card","value":"` + card + `"}}`},
+		{"exit credential ticket", evOf(gate.EventExitCredential, gate.ExitCredential{Credential: gate.Credential{Kind: "ticket", Value: "DFFE6EADBA0A4C"}}),
+			`{"credential":{"kind":"ticket","value":"sha256:a923af4c08c9"}}`},
+		{"entry credential card", evOf(gate.EventEntryCredential, gate.EntryCredential{Kind: "employee_card", Value: "DFFE6EADBA0A4C"}),
+			`{"kind":"employee_card","value":"` + card + `"}`},
+		{"entry credential qr", evOf(gate.EventEntryCredential, gate.EntryCredential{Kind: "reservation_qr", Value: "DFFE6EADBA0A4C"}),
+			`{"kind":"reservation_qr","value":"sha256:a923af4c08c9"}`},
 		{"ticket_request without value", evOf(gate.EventEntryCredential, gate.EntryCredential{Kind: "ticket_request"}),
 			`{"kind":"ticket_request"}`},
 		{"cash paid unchanged", evOf(gate.EventCashPaid, gate.CashPaid{StayID: stay, AmountCents: 5000}),
@@ -36,7 +54,7 @@ func TestRedactPayload(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := devices.RedactPayload(tc.ev)
+			got, err := devices.RedactPayload(tc.ev, testPepper)
 			if err != nil {
 				t.Fatalf("RedactPayload: %v", err)
 			}
@@ -45,8 +63,52 @@ func TestRedactPayload(t *testing.T) {
 			}
 		})
 	}
-	if _, err := devices.RedactPayload(gate.Event{Type: gate.EventHeartbeat}); err == nil {
+	if _, err := devices.RedactPayload(gate.Event{Type: gate.EventHeartbeat}, testPepper); err == nil {
 		t.Fatal("nil payload: want error")
+	}
+}
+
+// A card UID is short (4 to 10 bytes), so an unkeyed hash of it can be
+// enumerated. The stored value is keyed by CARD_UID_PEPPER instead: it never
+// holds the UID or its plain SHA-256, and it changes with the pepper.
+func TestRedactPayload_CardValuesAreKeyed(t *testing.T) {
+	const uid = "04:a2:2b:1a:6e:80"
+	plain := sha256.Sum256([]byte(uid))
+	normPlain := sha256.Sum256([]byte("04A22B1A6E80"))
+	other := []byte("another-redaction-pepper-0123456789abcd")
+	events := []gate.Event{
+		evOf(gate.EventEntryCredential, gate.EntryCredential{Kind: "employee_card", Value: uid}),
+		evOf(gate.EventExitCredential, gate.ExitCredential{Credential: gate.Credential{Kind: "employee_card", Value: uid}}),
+		evOf(gate.EventPayScan, gate.PayScan{Credential: gate.Credential{Kind: "employee_card", Value: uid}}),
+	}
+	for _, ev := range events {
+		a, err := devices.RedactPayload(ev, testPepper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := devices.RedactPayload(ev, other)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, leak := range []string{uid, "04A22B1A6E80", hex.EncodeToString(plain[:])[:12], hex.EncodeToString(normPlain[:])[:12]} {
+			if strings.Contains(strings.ToUpper(string(a)), strings.ToUpper(leak)) {
+				t.Errorf("%s: stored %s holds %q", ev.Type, a, leak)
+			}
+		}
+		if !strings.Contains(string(a), keyedCard(testPepper, uid)) {
+			t.Errorf("%s: stored %s, want %s", ev.Type, a, keyedCard(testPepper, uid))
+		}
+		if string(a) == string(b) {
+			t.Errorf("%s: two peppers stored the same value %s", ev.Type, a)
+		}
+	}
+}
+
+// Without a pepper the keyed hash is public, so redaction refuses to run.
+func TestRedactPayload_EmptyPepperErrors(t *testing.T) {
+	ev := evOf(gate.EventEntryCredential, gate.EntryCredential{Kind: "employee_card", Value: "DFFE6EADBA0A4C"})
+	if _, err := devices.RedactPayload(ev, nil); err == nil {
+		t.Fatal("RedactPayload with no pepper: want error")
 	}
 }
 
@@ -125,7 +187,7 @@ func TestOpenResult_TamperedBoxFails(t *testing.T) {
 type strayPayload struct{ Value string }
 
 func TestRedactPayload_UnknownPayloadTypeErrors(t *testing.T) {
-	if _, err := devices.RedactPayload(gate.Event{Type: gate.EventHeartbeat, Payload: strayPayload{Value: "secret"}}); err == nil {
+	if _, err := devices.RedactPayload(gate.Event{Type: gate.EventHeartbeat, Payload: strayPayload{Value: "secret"}}, testPepper); err == nil {
 		t.Fatal("unlisted payload type must not be stored unredacted")
 	}
 }

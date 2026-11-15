@@ -285,9 +285,10 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 			// NoReservations until M3 (M2C-1); ticket codes come from crypto/rand.
 			Holds: availability.NoReservations{}, CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
 		}),
-		Sealer: d.sealer,
-		Clock:  d.clock,
-		Log:    d.log,
+		Sealer:     d.sealer,
+		CardPepper: d.cfg.CardUIDPepper(),
+		Clock:      d.clock,
+		Log:        d.log,
 	}).Register(r)
 
 	notifier := notificationspg.NewNotifier(d.clock)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/simulator"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
@@ -310,6 +312,11 @@ func TestNoSecretsInLogs_Devices(t *testing.T) {
 	}
 	for card := range r.tap.cards {
 		secrets["card value "+card] = card
+		// An unkeyed hash of a short UID is enumerable: none may be stored.
+		for _, form := range []string{card, strings.ToUpper(strings.ReplaceAll(card, ":", ""))} {
+			sum := sha256.Sum256([]byte(form))
+			secrets["unkeyed sha256 of card "+form] = hex.EncodeToString(sum[:])[:12]
+		}
 	}
 	for code := range r.tap.codes {
 		secrets["ticket code "+code] = code
@@ -343,6 +350,19 @@ func TestNoSecretsInLogs_Devices(t *testing.T) {
 	errBodies = append(errBodies, r.tap.errors...)
 	if len(errBodies) < 3 {
 		t.Fatalf("only %d error bodies were captured", len(errBodies))
+	}
+
+	// Card values are stored keyed by CARD_UID_PEPPER, as the prefix of their
+	// card_uid_hash: proves the pepper is wired into the redaction.
+	pepper, _ := base64.StdEncoding.DecodeString(config.DevCardUIDPepper)
+	keyed := 0
+	for card := range r.tap.cards {
+		if strings.Contains(events, "hmac:"+hex.EncodeToString(gate.HashCardUID(pepper, card))[:12]) {
+			keyed++
+		}
+	}
+	if keyed == 0 {
+		t.Error("no card value is stored as its pepper-keyed hash")
 	}
 
 	surfaces := map[string]string{

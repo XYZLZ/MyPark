@@ -12,22 +12,32 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
 )
 
+// redactedHexLen is how many hex characters of a hash stand in for a value.
+const redactedHexLen = 12
+
 // RedactPayload returns the payload of ev as JSON with every credential value
-// replaced by "sha256:" and the first 12 hex characters of its SHA-256, so
-// the stored event log never holds a ticket code or card UID. A payload
-// without a value is returned unchanged.
-func RedactPayload(ev gate.Event) (json.RawMessage, error) {
+// replaced, so the stored event log never holds a ticket code or card UID.
+// An employee card UID is short enough to enumerate, so it becomes "hmac:"
+// and the first 12 hex characters of gate.HashCardUID(cardPepper, uid), the
+// prefix of the card's card_uid_hash. Any other value (ticket code,
+// reservation QR) becomes "sha256:" and the first 12 hex characters of its
+// SHA-256. A payload without a value is returned unchanged. An empty pepper
+// is an error: the keyed hash would be public.
+func RedactPayload(ev gate.Event, cardPepper []byte) (json.RawMessage, error) {
+	if len(cardPepper) == 0 {
+		return nil, errors.New("devices: redaction needs the card UID pepper")
+	}
 	switch p := ev.Payload.(type) {
 	case nil:
 		return nil, errors.New("devices: event has no payload")
 	case gate.EntryCredential:
-		p.Value = redactValue(p.Value)
+		p.Value = redactValue(p.Kind, p.Value, cardPepper)
 		return json.Marshal(p)
 	case gate.PayScan:
-		p.Credential.Value = redactValue(p.Credential.Value)
+		p.Credential.Value = redactValue(p.Credential.Kind, p.Credential.Value, cardPepper)
 		return json.Marshal(p)
 	case gate.ExitCredential:
-		p.Credential.Value = redactValue(p.Credential.Value)
+		p.Credential.Value = redactValue(p.Credential.Kind, p.Credential.Value, cardPepper)
 		return json.Marshal(p)
 	case gate.Empty, gate.BarrierPassed, gate.LostTicket, gate.CashPaid, gate.SensorChanged:
 		// No credential value: stored as is.
@@ -37,12 +47,16 @@ func RedactPayload(ev gate.Event) (json.RawMessage, error) {
 	}
 }
 
-func redactValue(v string) string {
-	if v == "" {
+func redactValue(kind, v string, cardPepper []byte) string {
+	switch {
+	case v == "":
 		return ""
+	case kind == gate.KindEmployeeCard:
+		return "hmac:" + hex.EncodeToString(gate.HashCardUID(cardPepper, v))[:redactedHexLen]
+	default:
+		sum := sha256.Sum256([]byte(v))
+		return "sha256:" + hex.EncodeToString(sum[:])[:redactedHexLen]
 	}
-	sum := sha256.Sum256([]byte(v))
-	return "sha256:" + hex.EncodeToString(sum[:])[:12]
 }
 
 // sealedBox is the stored stand-in for a ticket code.

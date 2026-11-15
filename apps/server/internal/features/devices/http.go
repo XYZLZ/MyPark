@@ -39,23 +39,30 @@ type HandlerDeps struct {
 	Store  Store
 	Gate   gate.Handler
 	Sealer *secretbox.Sealer
-	Clock  clock.Clock
-	Log    *slog.Logger
+	// CardPepper keys the stored stand-in of a card UID (RedactPayload).
+	// Never log it.
+	CardPepper []byte
+	Clock      clock.Clock
+	Log        *slog.Logger
 }
 
 // Handler serves POST /v1/devices/events.
 type Handler struct {
-	tx     database.TxRunnerPort
-	store  Store
-	gate   gate.Handler
-	sealer *secretbox.Sealer
-	clock  clock.Clock
-	log    *slog.Logger
+	tx         database.TxRunnerPort
+	store      Store
+	gate       gate.Handler
+	sealer     *secretbox.Sealer
+	cardPepper []byte
+	clock      clock.Clock
+	log        *slog.Logger
 }
 
 // NewHandler returns a Handler over d.
 func NewHandler(d HandlerDeps) *Handler {
-	return &Handler{tx: d.Tx, store: d.Store, gate: d.Gate, sealer: d.Sealer, clock: d.Clock, log: d.Log}
+	return &Handler{
+		tx: d.Tx, store: d.Store, gate: d.Gate, sealer: d.Sealer,
+		cardPepper: d.CardPepper, clock: d.Clock, log: d.Log,
+	}
 }
 
 // Register mounts the device event route behind the device HMAC policy.
@@ -144,7 +151,7 @@ func (h *Handler) replay(w http.ResponseWriter, r *http.Request, deviceID int64,
 // the last statement (M2C-29), so a duplicate is only detected after the
 // gate's locks, and its rollback undoes the gate's writes.
 func (h *Handler) process(ctx context.Context, dev authz.Device, ev gate.Event, sum []byte) (gate.Result, error) {
-	payload, err := RedactPayload(ev)
+	payload, err := RedactPayload(ev, h.cardPepper)
 	if err != nil {
 		return gate.Result{}, err
 	}
