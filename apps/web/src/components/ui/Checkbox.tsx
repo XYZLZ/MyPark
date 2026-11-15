@@ -7,7 +7,7 @@ export function Checkbox({ label, ...rest }: Omit<ComponentProps<'input'>, 'type
       <input
         {...rest}
         type="checkbox"
-        className="size-5 shrink-0 accent-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary"
+        className="size-5 shrink-0 accent-brand-navy focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-navy"
       />
       <span>{label}</span>
     </label>
