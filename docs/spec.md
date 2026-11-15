@@ -416,7 +416,7 @@ stateDiagram-v2
   active --> paid: exit barrier.passed with amount 0 (grace/employee) - zero payment, method none, then exited in the same tx
   paid --> active: exit deadline passed (extra time due)
   paid --> exited: barrier.passed (exit)
-  active --> exited: admin force-close (audited)
+  active --> exited: admin force-close (audited, M4: the M2 state machine rejects it)
   exited --> [*]
   voided --> [*]
 ```
@@ -513,12 +513,12 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 ### M2 — Live availability + simulator + gate flows
 
 **Scope:** FR-AVAIL-1…6, FR-GATE-1…10, FR-SIM-1…7, the device registry with HMAC keys, `device_events`, the occupancy counter, the SSE stream (LISTEN/NOTIFY fan-out), the per-space sensor map, the pay-station fee calculation (§5.1), and a basic Simulator console.
-**Exit criteria**
-- [ ] The `weekday` scenario runs and availability on web and mobile updates in < 2 s.
-- [ ] `fill_to_full` reaches 0 and the dispenser denies with `gate.lot_full`.
-- [ ] The tariff calculator passes a table-driven test suite (grace, cap, multi-day, lost ticket).
-- [ ] A replayed device event (same id) is a no-op. A bad signature returns 401.
-**Demo:** start `weekday` from the console and watch the count and lot map move live; pay and exit a car.
+**Exit criteria** (backend verified on branch `feat/m2-backend` by `TestM2BackendAcceptance` and the tests named below; items marked *needs Track B* are not complete until the web and mobile clients and the Simulator console land)
+- [ ] The `weekday` scenario runs and availability on web and mobile updates in < 2 s. Backend verified: the acceptance subtest runs `weekday` (seed 42, one virtual hour) over the production handler and an SSE client holds the availability event whose `version` equals `lot_occupancy.version`; `TestAvailability_PassToSSELatency` measures pass → SSE over 50 clients (p95 < 2 s); `TestScenario_WeekdayInvariants` and `TestScenario_Deterministic` cover the run. *Needs Track B* for the web and mobile screens and the console that starts the scenario.
+- [x] `fill_to_full` reaches 0 and the dispenser denies with `gate.lot_full`. Proven by the acceptance subtest and `TestScenario_FillToFull` (availability 0, next ticket request `deny gate.lot_full`, occupancy invariant holds).
+- [x] The tariff calculator passes a table-driven test suite (grace, cap, multi-day, lost ticket). Proven by the pure suite in `internal/features/tariffs` and, through the device API on the fake clock, by the acceptance subtest (+10 min → 0, +15 h 0 m 1 s → 40000, +75 h → 130000, lost at +26 h → 57500 centavos).
+- [x] A replayed device event (same id) is a no-op. A bad signature returns 401. Proven by the acceptance subtest (same `receipt_no`, `Idempotent-Replayed: true`, one payment row, occupancy unchanged; a flipped signature is 401 `device.unauthenticated` and stores nothing) and `TestDeviceEvents_ReplayReturnsStoredResponse`.
+**Demo:** start `weekday` from the console and watch the count and lot map move live; pay and exit a car. The demo needs Track B (console, web and mobile maps).
 
 ### M3 — Reservations + payments
 
@@ -618,6 +618,8 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
 36. M1 backend calls OC-1 to OC-39 are accepted as listed in the M1 backend design (`docs/superpowers/specs/2026-11-07-m1-backend-auth-vehicles-design.md` §2.2), including the "Changes during implementation" table at its top.
 37. Gaps resolved while building M1: a second logout (this device) with a revoked session returns 401 and clients treat it as success, while a 401 on logout-all is unconfirmed on both clients (web answers 502 `session.logout_unconfirmed`, mobile shows `logout_all_failed`); refresh for a suspended or pending user returns 401 without a write, and a deleted user's session is revoked with `account_deleted`; `DELETE /v1/me` is limited to 5 per 15 min per user (fails closed); the seed admin takes `SEED_ADMIN_FIRST_NAME` and `SEED_ADMIN_LAST_NAME`; vehicle CRUD is not audited in M1.
 38. M1 client calls CC-1 to CC-27 are accepted as listed in the M1 clients design (`docs/superpowers/specs/2026-11-08-m1-clients-auth-vehicles-design.md` §2.2).
+39. M2 backend calls M2C-13 to M2C-56 are accepted as listed in the M2 backend design (`docs/superpowers/specs/2026-11-13-m2-backend-availability-gates-simulator-design.md` §2.2), including the "Changes during implementation" and "Pending approval" sections at its end.
+40. Gaps resolved while building M2: (1) the scenario and acceptance tests live in `cmd/api`, not `cmd/simulator`, because `newHandler` is unexported in `package main` (the simulator's own parity test stays in `cmd/simulator`); (2) the signing code shared by the API and the simulator is its own package, `internal/devicesig`, pinned by a golden vector; (3) business timestamps are written as the `@now` query parameter taken from `clock.Clock`, never `now()` (only `created_at` and `received_at` defaults use `now()`); (4) the slice that adds `stays` depends on the tariff slice, because `stays.tariff_version_id` references `tariff_versions`; (5) a card UID is the uppercase hex of the first 7 bytes of `HMAC-SHA256(secret, "mypark/card-uid/v1/" + code)`, and ticket codes and card UIDs are normalized before hashing; (6) `amount_cents` on `paystation.cash_paid` must be at least 1 and equal the amount the server computes, with no separate ceiling (a long stay can legitimately owe a large amount); (7) `X-Timestamp` must be exactly `YYYY-MM-DDTHH:MM:SSZ`, and fractions or offsets are `401 device.unauthenticated`; (8) an OpenAPI operation published before it is served carries `x-mypark-pending: <slice>`, and none remain at the end of M2 (`TestOpenAPI_NoPendingOperations`); (9) admin force-close of a stay (spec §5.4, `active → exited`) is M4: the M2 state machine rejects it, and a lost card with an open stay blocks its employee until then; (10) a card revoked while its car is inside may still exit through its open stay (audited `gate.revoked_card_exit`), but cannot enter; (11) pending entries (ticket issued, barrier not yet passed) count as occupied for gate decisions only, so REST and SSE availability can show a space the gate already treats as taken for up to 60 s.
 
 ### 10.3 Open questions
 

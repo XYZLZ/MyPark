@@ -21,8 +21,9 @@ import (
 const (
 	// HeartbeatEvery is the period of the heartbeat event.
 	HeartbeatEvery = 15 * time.Second
-	// WriteTimeout bounds each write of a stream; a client that stops
-	// reading ends its stream.
+	// WriteTimeout bounds each write of a stream. A client that stops
+	// reading is dropped only once the kernel send buffer is full and a
+	// write then blocks for this long; until then writes succeed.
 	WriteTimeout = 10 * time.Second
 )
 

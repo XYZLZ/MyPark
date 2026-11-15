@@ -381,7 +381,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get the current availability of a lot */
+        /**
+         * Get the current availability of a lot
+         * @description Pending entries (a ticket was issued but the barrier has not been passed yet) are not counted in `occupied` or `available` (spec §5.2 rule 5 counts them as occupied only for gate decisions). A pending entry is voided after 60 s, so for up to 60 s the figures can show a space that the gate already treats as taken. The stream shows the same figures.
+         */
         get: operations["getLotAvailability"];
         put?: never;
         post?: never;
@@ -443,7 +446,7 @@ export interface paths {
         };
         /**
          * Stream the availability of a lot (server-sent events)
-         * @description The first event is always the current `availability` snapshot. Event `data` lines are bare JSON objects, not wrapped in the response envelope. The stream sends `retry: 3000` once, then three named events. `availability` (payload `Availability`, event id is its `version`) is sent on every change, at most one push per 250 ms. `spaces` (payload `SpacesEvent`, only with `include=spaces`) starts with a full snapshot and continues with deltas; after a missed update or a reconnect the server sends a full snapshot again. `heartbeat` (payload `HeartbeatEvent`) is sent every 15 seconds. Unknown `include` values and a malformed `Last-Event-ID` are ignored. The connection caps are checked before the stream starts and answer 429 with `Retry-After`.
+         * @description The first event is always the current `availability` snapshot. Event `data` lines are bare JSON objects, not wrapped in the response envelope. The stream sends `retry: 3000` once, then three named events. `availability` (payload `Availability`, event id is its `version`) is sent on every change, at most one push per 250 ms. `spaces` (payload `SpacesEvent`, only with `include=spaces`) starts with a full snapshot and continues with deltas; after a missed update or a reconnect the server sends a full snapshot again. `heartbeat` (payload `HeartbeatEvent`) is sent every 15 seconds. The `spaces` event is sent only when the whole query string is exactly `include=spaces`; any other query, including an extra parameter such as a cache-busting `_=123` that an `EventSource` wrapper adds, gets the stream without it, so clients must not append parameters. Unknown `include` values and a malformed `Last-Event-ID` are ignored. The response carries `X-Accel-Buffering: no` so a buffering reverse proxy passes each event through at once. The connection caps are checked before the stream starts and answer 429 with `Retry-After`.
          */
         get: operations["streamLotAvailability"];
         put?: never;

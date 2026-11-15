@@ -590,7 +590,7 @@ On open, in the same transaction: tariff version at `$now`, ticket code (M2C-26)
 
 ### 9.5 Employee card (FR-GATE-3, M2C-28)
 
-Hash the UID → `employee_cards` in the device's lot with `status = 'active'`, else `deny gate.credential_invalid`. Same capacity decision as drive-up. Insert the stay (`credential_kind 'employee_card'`); a violation of `stays_card_open_key` → `deny gate.credential_in_use` (checked by a lookup first, the index is the backstop). Audit `gate.employee_entry` (actor `system`, entity `stay`, `after: {employee_card_id: <card public id>, device_id: <device public id>}`). No ticket code.
+Hash the UID → `employee_cards` in the device's lot with `status = 'active'`, else `deny gate.credential_invalid`. Same capacity decision as drive-up. Insert the stay (`credential_kind 'employee_card'`). The in-use lookup runs **before** the capacity check, so a card that already has an open stay is denied `gate.credential_in_use` even when the lot is full (`credential_in_use` beats `lot_full`). A violation of `stays_card_open_key` on insert is a 500 that stores nothing: the index is a pure integrity guard, unreachable because every path that opens a card stay takes the lot lock first. Audit `gate.employee_entry` (actor `system`, entity `stay`, `after: {employee_card_id: <card public id>, device_id: <device public id>}`). No ticket code.
 
 ### 9.6 Barrier pass (FR-GATE-4, M2C-31)
 
@@ -641,6 +641,8 @@ Resolve the credential as in §10.1 (lazy `paid → active` included) and comput
 ### 10.5 Exit pass
 
 Under the lot lock: an `active` stay with a fresh authorization → insert `payments (parking_fee, none, 0, succeeded, zero:<stay>)`, `paid_at = exited_at = $now`, status `exited` (the `active → paid → exited` hop happens inside one transaction, spec §10.2 #20). A `paid` stay → `exited_at = $now`, `exited`. Both: occupancy −1, version +1, NOTIFY.
+
+An exit authorization that is still pending is cancelled by a lost-ticket mark (§10.2), by the lazy `paid → active` reactivation after the exit window, and by an `exit.credential_presented` denied with `gate.payment_required`: the stay may owe money, so the car must present its credential again. The zero-amount payment is always written here, at the exit pass, never at the credential.
 
 ---
 
@@ -1046,3 +1048,33 @@ Every slice with a value in the **Sensitive** column carries the PR-template sec
 | Spec FR-GATE-9 | Every device request logged in `device_events` | Every **authenticated** request; failed auth goes to logs | M2C-18 |
 | Spec FR-GATE-2, FR-AVAIL-6, FR-SIM-3/5 (reservation parts) | In M2 scope | Placeholders until M3 | M2C-1 |
 | M1 design §16.3 | Outbox encryption "revisit in M2" | Out of Phase 1 | M2C-51 |
+
+---
+
+## 20. Changes during implementation
+
+Recorded by S14.2. Each row replaces what the sections above say.
+
+| # | Section | Original | As built | Why |
+|---|---|---|---|---|
+| D1 | §15 (PF13) | Scenario and acceptance tests in `cmd/simulator` | In `cmd/api`; the simulator's own parity test stays in `cmd/simulator` | `newHandler` is unexported in `package main` |
+| D2 | §4.1 (PF13) | Signing code inside the API and the simulator | One package, `internal/devicesig`, used by both and pinned by a golden vector | Two copies of the canonical string could drift |
+| D3 | §8.4 (PF13) | Business timestamps written with `now()` | Written as the `@now` parameter from `clock.Clock`; `now()` stays only in `created_at` and `received_at` defaults | M2C-13: one server clock, testable with `FakeClock` |
+| D4 | §9.5 | A `stays_card_open_key` violation maps to `deny gate.credential_in_use` | The violation is a 500 that stores nothing. The in-use lookup runs before the capacity check, so `gate.credential_in_use` beats `gate.lot_full` | Every path that opens a card stay takes the lot lock first, so the index is unreachable and serves as an integrity guard |
+| D5 | Spec §5.4 | `active → exited` by admin force-close | Rejected by the M2 state machine; admin force-close is M4 | No admin endpoints in M2 (M2C-54) |
+| D6 | §9.5, §10.4 | Revoked cards are denied at the next presentation | A card revoked while its car is inside may still exit through its open stay, audited `gate.revoked_card_exit`; entry still refuses it | A revoked card must not trap the car inside |
+| D7 | §10.5 | Zero payment at the exit pass | Unchanged, and a pending exit authorization is cancelled by a lost-ticket mark, a paid-window reactivation or a `gate.payment_required` deny | A stale open must not skip a payment |
+| D8 | §11.1, §11.3 | Availability shows the gate's counts | REST and SSE count passed entries only (spec §5.2 rule 5), so for up to 60 s they can show a space the gate already treats as taken | Pending entries count for gate decisions, not for display |
+| D9 | §11.3 | `include=spaces` adds the `spaces` event | Only the whole query string `include=spaces` does; an extra parameter (for example an `EventSource` cache-buster) turns it off. The stream sets `X-Accel-Buffering: no`. A client that stops reading is dropped only once the send buffer fills. Queued spaces deltas replay after the full list | Matches the handler, which compares the raw query |
+| D10 | §16.1 | Architecture §8.3 mounted key file replaced | Fleet keys derive from `SIMULATOR_FLEET_SECRET` by HMAC (M2C-25); secrets are sealed at rest with `SECRETBOX` keys; ADR-15 | Policies §2.5 |
+
+### 20.1 Pending approval
+
+These two additions to the simulator contract came after the Track B handoff. They need both developers' approval before the clients rely on them.
+
+| # | Change | Where |
+|---|---|---|
+| P1 | `409 simulator.not_running` on `POST /control/cars`, `POST /control/cars/{id}/leave` and `POST /control/sensors/{code}/fault` when no scenario is running | `api/openapi.yaml`, §13.3 |
+| P2 | `POST /control/cars/{id}/leave` answers `202` with `data: {}` | `api/openapi.yaml`, §13.3 |
+
+Status: **pending approval**.

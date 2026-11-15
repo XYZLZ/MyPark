@@ -241,8 +241,9 @@ sequenceDiagram
   - `Last-Event-ID` is parsed and logged, never trusted: the snapshot already carries the latest state, so there is nothing to replay. A malformed value is ignored.
   - The stream subscribes to the hub before it reads its snapshot, and drops any push whose version is not newer than the one it sent. A change that commits during connect is never lost, and an older push never follows the snapshot.
   - Coalescing: per lot, leading and trailing edge at 250 ms, one snapshot query per push, serialized once, and a latest-wins buffer of 1 per client. A slow client skips versions, never blocks the hub.
-  - `include=spaces` (exactly that query) adds `event: spaces`: one full list, then deltas. A client too far behind gets a full list again. Any other `include` value is ignored.
-  - Caps: `SSE_MAX_PER_IP` and `SSE_MAX_STREAMS`, plus the `sse_connect_ip` rate rule, answer `429` before the stream starts. Each write has a 10 s deadline, so the server `WriteTimeout` never ends a healthy stream. Shutdown closes the hub first, which ends every stream.
+  - `include=spaces` adds `event: spaces`: one full list, then deltas. The handler compares the **whole raw query string** with `include=spaces`, so any extra parameter (for example a cache-buster added by an `EventSource` wrapper) turns the event off. Any other `include` value is ignored. Deltas that arrive while the hub reads the full list are queued and replayed after it, because the read may predate them. A client too far behind gets a full list again.
+  - Availability shown here counts only passed entries (`active` and `paid` stays). A pending entry (ticket issued, barrier not yet passed) is not shown, per spec §5.2 rule 5, so for up to 60 s (until the void job runs) a space can look free that the gate already treats as taken.
+  - Caps: `SSE_MAX_PER_IP` and `SSE_MAX_STREAMS`, plus the `sse_connect_ip` rate rule, answer `429` before the stream starts. Each write sets a fresh 10 s deadline, so the server `WriteTimeout` never ends a healthy stream. A client that stops reading is dropped only once the kernel send buffer fills and a write then blocks for the full 10 s. The response sets `X-Accel-Buffering: no` so a reverse proxy does not buffer events. Shutdown closes the hub first, which ends every stream.
 - Mobile reads SSE with `expo/fetch` streaming bodies and a small line parser, since there is no native `EventSource` **(our call)**. Web public pages use `EventSource` directly to Go. The admin stream goes through a BFF streaming route handler.
 
 ---
@@ -333,11 +334,25 @@ Every response carries a `result` field: `ack`, `open`, `deny` or `rejected`. `d
 | `sensor.space_changed` `{space_code, occupied}` | sensor gateway | `{result: ack}` or `{result: rejected, reason: lot.space_unknown}` |
 | `heartbeat` | any | `{result: ack}` |
 
+Exit and payment details **(our call)**:
+
+- The zero-amount payment (method `none`) is written at the **exit pass** (`barrier.passed`, direction exit), not at the exit credential. The credential only stores `exit_authorized_at` (valid 60 s) and takes the zero-due decision then (M2C-32).
+- A pending exit authorization is cancelled by a lost-ticket mark, by the lazy `paid → active` reactivation after the exit window, and by an `exit.credential_presented` denied with `gate.payment_required`. The car must present its credential again, so a stale open cannot skip a payment.
+- An employee card revoked while its car is inside may still leave through its open stay (entry still refuses it). Its exit credential, when it opens, writes the audit row `gate.revoked_card_exit`.
+
+Gate audit actions (all `actor_kind = 'system'`, entity `stay`):
+
+| Action | When |
+|---|---|
+| `gate.employee_entry` | An employee card entry is accepted |
+| `gate.late_entry_pass` | An entry pass arrives for a `voided` stay and reactivates it |
+| `gate.revoked_card_exit` | The exit credential of a revoked card opens through its open stay |
+
 ### 8.3 Simulator
 
 - `internal/simulator` holds the scenario engine: a seeded RNG, arrival process (Poisson rate per scenario and hour), dwell-time distribution, and the probability of paying late or losing a ticket.
-- Each simulated device is a client with its own key. Keys are provisioned by `cmd/seed` into a local file mounted into the simulator container, or created by an admin.
-- The control API (`:8090`, compose-internal network only) is called by the web BFF for the Simulator console. In Phase 2 it is removed and real adapters post to the same device API.
+- Each simulated device is a client with its own key. The fleet is a committed manifest (`internal/devicefleet`) with fixed device public ids. Each device secret is derived as `HMAC-SHA256(SIMULATOR_FLEET_SECRET, "mypark/device-secret/v1/" + public_id)` (M2C-25), so no key file exists: `cmd/seed` (with `SEED_SIMULATOR_FLEET=true`) and `cmd/simulator` read the same env variable and derive the same keys. Secrets are sealed at rest in `devices.secret_ciphertext` with the `SECRETBOX_KEY` keyring (`secretbox`, key id in `secret_key_id`). Production refuses the committed dev values. Devices outside the fleet get random secrets, created by an admin (M4).
+- The control API (`:8090`, compose-internal network only) is called by the web BFF for the Simulator console. Every route requires the `X-Simulator-Token` header, compared in constant time with `SIMULATOR_CONTROL_TOKEN`; an unknown or missing token is 401 and the committed dev value is refused when `APP_ENV=production`. It is not a user-facing API: it takes no bearer token and is not behind the router's role policies. In Phase 2 it is removed and real adapters post to the same device API.
 
 ---
 
@@ -499,7 +514,7 @@ src/
 | Request ID | Accepts `X-Request-Id` or generates a UUIDv7; echoed in responses and error envelopes |
 | Health | `/healthz` (process alive), `/readyz` (DB reachable, migrations at the expected version, listener connected) |
 | Metrics | Counters exposed at `/metrics` (Prometheus text) for events/s, SSE clients and notify latency **(our call)**. Moved from M2 to M5 (M2C-50) |
-| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`, `SECRETBOX_KEY` (with `SECRETBOX_KEY_ID` and `SECRETBOX_OLD_KEYS` for rotation), `CARD_UID_PEPPER`; later phases add `QR_HMAC_KEY`. M2 limits: `SSE_MAX_PER_IP` (20), `SSE_MAX_STREAMS` (2000), `DEVICE_RATE_LIMIT_PER_S` (100, range 1-10000) |
+| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`, `SECRETBOX_KEY` (with `SECRETBOX_KEY_ID` and `SECRETBOX_OLD_KEYS` for rotation), `CARD_UID_PEPPER`, `SIMULATOR_FLEET_SECRET`, `SIMULATOR_CONTROL_TOKEN`; later phases add `QR_HMAC_KEY`. M2 limits: `SSE_MAX_PER_IP` (20), `SSE_MAX_STREAMS` (2000), `DEVICE_RATE_LIMIT_PER_S` (100, range 1-10000) |
 
 ---
 
@@ -538,3 +553,4 @@ src/
 | ADR-12 | Fixed-window rate limiter in an UNLOGGED Postgres table | Redis; in-memory counters per instance | Counts are shared by every API instance with no new infrastructure. A single upsert with `date_bin` keeps it cheap. UNLOGGED data is lost on a crash, which is fine for throttling. A boundary burst up to 2x is accepted. Keys are SHA-256 hashes (no emails or IPs at rest), and the worker purges expired rows every minute |
 | ADR-13 | `proxy.ts` is the sole web refresher, with an in-flight lock and a 30 s result cache bound to `mp_csrf` | Refresh in RSC or route handlers; a backend replay window | RSC cannot set cookies, one entry point means one lock, and refresh tokens stay strictly single-use |
 | ADR-14 | Local limiter scope (M2C-5, M2C-22): `Rule.Scope` routes device, public-read and SSE-connect rules to a per-instance in-memory fixed-window limiter (`ratelimit.Memory`, behind `Composite`); every M1 rule stays `ScopeShared` on Postgres | Postgres counters for every device request (1000/s per IP) or public read; Redis | A Postgres upsert per device event would dominate the hot path and contend on one row. These rules guard capacity, not credential abuse, so an approximate count is enough. Caveat: with N API instances the effective limit is up to N times the configured value, and a restart resets the counts. Auth rules (login, codes, refresh) need exact global counts and stay shared |
+| ADR-15 | Derived fleet secrets (M2C-25): each simulated device secret is `HMAC-SHA256(SIMULATOR_FLEET_SECRET, "mypark/device-secret/v1/" + public_id)`, and card UIDs use a `card-uid` label, over a committed manifest of fixed public ids | A key file mounted into the simulator; random keys read back from the database; the simulator reading the DB | Policies §2.5 forbid secret files, and the simulator must not read the DB. One env value gives seed and simulator the same keys with nothing to copy. Caveat: whoever holds the fleet secret holds every simulated device key, so it is dev-only and the dev value is refused when `APP_ENV=production`. Real devices get random secrets, shown once, in M4 |
