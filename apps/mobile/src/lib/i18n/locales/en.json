@@ -296,7 +296,9 @@
     "unavailableAt": "Live updates unavailable · data as of {{time}}",
     "announce": {
       "count": "Available spaces: {{count}} of {{total}}.",
-      "status": "The parking lot is {{status}}.",
+      "open": "The parking lot is open.",
+      "full": "The parking lot is full.",
+      "closed": "The parking lot is closed.",
       "live": "Live updates are active.",
       "stale": "The data is stale. Last updated {{time}}."
     }
@@ -309,7 +311,7 @@
       "occupied": "Occupied",
       "outOfService": "Out of service"
     },
-    "summary": "Sensors report {{free}} free, {{occupied}} occupied and {{oos}} out of service.",
+    "summary": "Sensors — free: {{free}}, occupied: {{occupied}}, out of service: {{oos}}.",
     "note": "The map shows sensor readings.",
     "updating": "Updating the map…",
     "listFree": "View free spaces",

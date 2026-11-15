@@ -296,7 +296,9 @@
     "unavailableAt": "Actualizaciones en vivo no disponibles · datos de las {{time}}",
     "announce": {
       "count": "Espacios disponibles: {{count}} de {{total}}.",
-      "status": "El parqueo está {{status}}.",
+      "open": "El parqueo está abierto.",
+      "full": "El parqueo está lleno.",
+      "closed": "El parqueo está cerrado.",
       "live": "Actualizaciones en tiempo real activas.",
       "stale": "Los datos están desactualizados. Última actualización {{time}}."
     }
@@ -309,7 +311,7 @@
       "occupied": "Ocupado",
       "outOfService": "Fuera de servicio"
     },
-    "summary": "Los sensores reportan {{free}} libres, {{occupied}} ocupados y {{oos}} fuera de servicio.",
+    "summary": "Sensores — libres: {{free}}, ocupados: {{occupied}}, fuera de servicio: {{oos}}.",
     "note": "El mapa muestra lo que leen los sensores.",
     "updating": "Actualizando el mapa…",
     "listFree": "Ver espacios libres",
