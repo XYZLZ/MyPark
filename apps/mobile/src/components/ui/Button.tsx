@@ -9,7 +9,8 @@ import { AppText } from './AppText';
 // Web hover has no touch equivalent, so the press state uses the same color. The focus border
 // is per variant: on navy (onDark) a navy border would be invisible, so it widens in white.
 const SURFACE_CLASS = {
-  primary: 'bg-brand-navy active:bg-brand-navy-deep focus:border-2 focus:border-brand-navy',
+  primary:
+    'bg-brand-navy active:bg-brand-navy-deep focus:border-2 focus:border-surface focus:outline-2 focus:outline-brand-navy',
   onDark: 'bg-transparent border-2 border-brand-primary-contrast active:bg-white/10 focus:border-4',
   quiet: 'bg-transparent active:bg-brand-primary-tint focus:border-2 focus:border-brand-navy',
   danger: 'bg-danger active:opacity-90 focus:border-2 focus:border-brand-navy',

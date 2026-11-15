@@ -79,8 +79,14 @@ test('primary renders on navy', async () => {
   await render(<Button variant="primary" label="Save" onPress={jest.fn()} />);
   const surface = classesOf(screen.getByRole('button', { name: 'Save' }));
   expect(surface).toEqual(
-    expect.arrayContaining(['bg-brand-navy', 'active:bg-brand-navy-deep', 'focus:border-brand-navy']),
+    expect.arrayContaining(['bg-brand-navy', 'active:bg-brand-navy-deep']),
   );
+  // Focus must stay visible on the navy fill: a white inner ring (11.19:1 on navy) and a navy
+  // outer ring (11.19:1 on the surface), like the web ring. A navy border on navy would vanish.
+  expect(surface).toEqual(
+    expect.arrayContaining(['focus:border-2', 'focus:border-surface', 'focus:outline-2', 'focus:outline-brand-navy']),
+  );
+  expect(surface).not.toContain('focus:border-brand-navy');
   expect(surface).not.toContain('bg-brand-action');
   expect(classesOf(screen.getByText('Save'))).toContain('text-brand-primary-contrast');
 });

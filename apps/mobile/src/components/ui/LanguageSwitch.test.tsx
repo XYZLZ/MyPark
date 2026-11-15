@@ -18,3 +18,23 @@ test('pressing a language reports it', async () => {
   await fireEvent.press(screen.getByRole('button', { name: 'English' }));
   expect(onChange).toHaveBeenCalledWith('en');
 });
+
+const classesOf = (element: { props: { className?: string } }) => (element.props.className ?? '').split(/\s+/);
+
+test('the selected language uses the nav-active border, the other keeps the control line', async () => {
+  await render(<LanguageSwitch value="es-DO" onChange={jest.fn()} />);
+  const selected = classesOf(screen.getByRole('button', { name: 'Español' }));
+  const other = classesOf(screen.getByRole('button', { name: 'English' }));
+  expect(selected).toContain('border-nav-active');
+  expect(selected).not.toContain('border-brand-primary');
+  expect(other).toContain('border-control-line');
+});
+
+test('focus is distinct from selected: a thicker navy border on both', async () => {
+  await render(<LanguageSwitch value="es-DO" onChange={jest.fn()} />);
+  for (const name of ['Español', 'English']) {
+    const classes = classesOf(screen.getByRole('button', { name }));
+    expect(classes).toEqual(expect.arrayContaining(['focus:border-4', 'focus:border-brand-navy']));
+    expect(classes).not.toContain('focus:border-nav-active');
+  }
+});
