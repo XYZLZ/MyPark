@@ -1073,13 +1073,13 @@ Recorded by S14.2. Each row replaces what the sections above say.
 | D14 | §6.1 (config table), §7.3 | Logged rate-limit key hashes (`key_hash`, `client_ip_hash`) and stored `rate_limit_counters.key` are `sha256(prefix + key)` | `HMAC-SHA256(RATE_LIMIT_PEPPER, prefix + key)`. `RATE_LIMIT_PEPPER` is required (base64, ≥ 32 bytes), has an inline compose dev default and is refused in production at its dev value. Every API instance must share it. Counters reset once on deploy | An unkeyed hash of an IPv4 address reverses in seconds; architecture: PII is not logged |
 | D15 | §12.1 | The overstay segment starts at the latest payment's `succeeded_at` | It starts at `stays.paid_at`, which every payment moves (§10.3) and `stays_deadline_needs_paid_check` guarantees. A stay with `exit_deadline_at` but no `paid_at` is priced as an error (500, nothing stored), never from the year 1 | A payment that stops being `succeeded` (an M3 refund) would otherwise bill the segment from the year 1 |
 
-### 20.1 Pending approval
+### 20.1 Post-handoff contract changes (approved)
 
-These two additions to the simulator contract came after the Track B handoff. They need both developers' approval before the clients rely on them.
+These two additions to the simulator contract came after the Track B handoff. They were approved on 2026-11-15, together with the new validation rules (`unknown_field`, `known_space`, `excluded_unless`, `pattern`, `integer`) and the simulator defaults (speed 30, drain off, hold off).
 
 | # | Change | Where |
 |---|---|---|
 | P1 | `409 simulator.not_running` on `POST /control/cars`, `POST /control/cars/{id}/leave` and `POST /control/sensors/{code}/fault` when no scenario is running | `api/openapi.yaml`, §13.3 |
 | P2 | `POST /control/cars/{id}/leave` answers `202` with `data: {}` | `api/openapi.yaml`, §13.3 |
 
-Status: **pending approval**.
+Status: **approved 2026-11-15**.
