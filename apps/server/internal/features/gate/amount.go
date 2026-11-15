@@ -16,18 +16,26 @@ func ReceiptNo(paymentID int64) string { return fmt.Sprintf("MP-%08d", paymentID
 // entered with (M2C-2). Scan, lost ticket, cash and exit all price through it,
 // so their amounts always agree (design §12.2). It also returns the tariff it
 // priced with, which sets a payment's exit window.
+//
+// An overstay is billed from stays.paid_at, which every payment moves (design
+// §10.3, M2C-35) and stays_deadline_needs_paid_check guarantees. A deadline
+// without paid_at would bill from the year 1, so it is an error, not an
+// amount: the event answers 500 and stores nothing.
 func (s *Service) amountDue(ctx context.Context, stay Stay, now time.Time) (int64, tariffs.Breakdown, tariffs.Tariff, error) {
+	if !stay.ExitDeadlineAt.IsZero() && stay.PaidAt.IsZero() {
+		return 0, tariffs.Breakdown{}, tariffs.Tariff{}, fmt.Errorf("gate: stay %s has an exit deadline but no paid_at", stay.PublicID)
+	}
 	v, err := s.tariffs.ByID(ctx, stay.TariffVersionID)
 	if err != nil {
 		return 0, tariffs.Breakdown{}, tariffs.Tariff{}, fmt.Errorf("gate: tariff of stay: %w", err)
 	}
-	paid, paidAt, err := s.repo.PaymentTotals(ctx, stay.LotID, stay.ID)
+	paid, err := s.repo.PaymentTotals(ctx, stay.LotID, stay.ID)
 	if err != nil {
 		return 0, tariffs.Breakdown{}, tariffs.Tariff{}, err
 	}
 	due, bd := tariffs.AmountDue(v.Tariff, tariffs.Stay{
 		Kind: tariffs.StayKind(stay.CredentialKind), EnteredAt: stay.EnteredAt, Paid: stay.Status == StatusPaid,
-		LostTicket: stay.LostTicket, PaidCents: paid, PaidAt: paidAt, ExitDeadline: stay.ExitDeadlineAt,
+		LostTicket: stay.LostTicket, PaidCents: paid, PaidAt: stay.PaidAt, ExitDeadline: stay.ExitDeadlineAt,
 	}, now)
 	return due, bd, v.Tariff, nil
 }

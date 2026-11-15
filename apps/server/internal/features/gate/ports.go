@@ -62,9 +62,8 @@ type Repo interface {
 	// OpenCardStayForUpdate locks the card's entry_pending, active or paid
 	// stay in the lot, or returns ErrNotFound.
 	OpenCardStayForUpdate(ctx context.Context, lotID, cardID int64) (Stay, error)
-	// PaymentTotals sums the stay's succeeded payments and returns the time
-	// of the latest one (zero when there is none).
-	PaymentTotals(ctx context.Context, lotID, stayID int64) (paidCents int64, lastPaidAt time.Time, err error)
+	// PaymentTotals sums the stay's succeeded payments.
+	PaymentTotals(ctx context.Context, lotID, stayID int64) (paidCents int64, err error)
 	// InsertPayment inserts a succeeded payment and returns its id. The stay
 	// must come from a lot-scoped lock.
 	InsertPayment(ctx context.Context, p NewPayment) (int64, error)
@@ -124,14 +123,17 @@ type NewStay struct {
 // Stay is a locked stay. EmployeeCardID is 0 for a ticket; a zero time is a
 // null column.
 type Stay struct {
-	ID               int64
-	PublicID         uuid.UUID
-	LotID            int64
-	CredentialKind   string
-	Status           Status
-	EmployeeCardID   int64
-	TariffVersionID  int64
-	EnteredAt        time.Time
+	ID              int64
+	PublicID        uuid.UUID
+	LotID           int64
+	CredentialKind  string
+	Status          Status
+	EmployeeCardID  int64
+	TariffVersionID int64
+	EnteredAt       time.Time
+	// PaidAt is the latest payment time: every payment moves it (design
+	// §10.3), and an overstay is billed from it (M2C-35).
+	PaidAt           time.Time
 	ExitDeadlineAt   time.Time
 	ExitAuthorizedAt time.Time
 	LostTicket       bool

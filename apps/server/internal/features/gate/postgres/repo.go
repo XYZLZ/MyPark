@@ -200,7 +200,7 @@ func toStay(row dbgen.Stay, err error) (gate.Stay, error) {
 	return gate.Stay{
 		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, CredentialKind: row.CredentialKind,
 		Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64, TariffVersionID: row.TariffVersionID,
-		EnteredAt: row.EnteredAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
+		EnteredAt: row.EnteredAt.Time, PaidAt: row.PaidAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
 		LostTicket: row.LostTicket,
 	}, nil
 }
@@ -268,16 +268,16 @@ func (Repo) OpenCardStayForUpdate(ctx context.Context, lotID, cardID int64) (gat
 }
 
 // PaymentTotals implements gate.Repo.
-func (Repo) PaymentTotals(ctx context.Context, lotID, stayID int64) (int64, time.Time, error) {
+func (Repo) PaymentTotals(ctx context.Context, lotID, stayID int64) (int64, error) {
 	qs, err := q(ctx)
 	if err != nil {
-		return 0, time.Time{}, err
+		return 0, err
 	}
 	row, err := qs.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: stayID})
 	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("gate: payment totals: %w", err)
+		return 0, fmt.Errorf("gate: payment totals: %w", err)
 	}
-	return row.PaidCents, row.LastSucceededAt.Time, nil
+	return row.PaidCents, nil
 }
 
 // InsertPayment implements gate.Repo: a succeeded parking fee.

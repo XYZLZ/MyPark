@@ -538,3 +538,23 @@ func TestCash_AmountChangedSinceScan(t *testing.T) {
 	}
 	e.invariant()
 }
+
+// The overstay segment starts at stays.paid_at (design §10.3: every payment
+// moves it), the column the stays_deadline_needs_paid_check guards. A stay
+// whose only payment is no longer succeeded (an M3 refund, simulated in SQL)
+// still bills its segment from paid_at, never from the year 1.
+func TestOverstay_BilledFromStayPaidAtWithoutSucceededPayment(t *testing.T) {
+	e := newPayEnv(t)
+	first := e.payAt(90*time.Minute, 7500)
+	if _, err := e.db.Super.Exec(t.Context(), `update payments set status = 'refunded'`); err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+
+	e.at(110 * time.Minute)
+	got := e.scan(gate.KindTicket, e.ticketCode)
+	if got.Result != "ack" || got.amount() != 5000 || got.kind() != "overstay" ||
+		got.Breakdown.BilledFrom == nil || !got.Breakdown.BilledFrom.Equal(*first.PaidAt) {
+		t.Fatalf("overstay scan = %s %d %s from %v, want 5000 overstay billed from paid_at %v", got.Result, got.amount(), got.kind(), got.Breakdown.BilledFrom, *first.PaidAt)
+	}
+	e.invariant()
+}
