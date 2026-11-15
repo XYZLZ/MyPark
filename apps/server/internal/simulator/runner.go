@@ -154,7 +154,9 @@ type session struct {
 // keeps its own). The session also keeps the spaces read when Inject started
 // it: re-reading them would reset the free list under the parked cars, so a
 // takeover reads nothing. The switch to the scenario's clock runs in the
-// engine goroutine, between two steps, and Start returns once it is done. A
+// engine goroutine, between two steps, and Start returns once it is done; if
+// the session is stopped before the switch, Start begins a fresh session
+// after a hard stop and answers ErrAlreadyRunning during a drain. A
 // takeover is reproducible from the seed only when the cars it inherits are
 // held and parked: a car still on its way in or out keeps the timing it had on
 // the idle clock.
@@ -183,11 +185,13 @@ func (r *Runner) Start(ctx context.Context, p StartParams) (Status, error) {
 			}
 			applied := s.takeover(p)
 			r.mu.Unlock()
-			select {
-			case <-applied:
+			switch ok, retry := s.awaitTakeover(applied); {
+			case ok:
 				return s.status(), nil
-			case <-s.done:
-				return s.status(), ErrNotRunning
+			case retry:
+				continue // stopped before the switch: start afresh
+			default:
+				return Status{}, ErrAlreadyRunning
 			}
 		}
 		if taking {
@@ -253,22 +257,49 @@ func (s *session) takeable() bool {
 // a step at the current virtual time: the engine finishes the step in flight,
 // then moves to the scenario's clock with its queued events shifted along, so
 // cars in flight carry on and parked cars stay where they are. The returned
-// channel closes once the switch is done.
-func (s *session) takeover(p StartParams) <-chan struct{} {
+// channel receives true once the switch is done, or false when the session
+// was stopped first and nothing was switched.
+func (s *session) takeover(p StartParams) <-chan bool {
 	s.mu.Lock()
 	s.implicit = false
 	s.mu.Unlock()
-	applied := make(chan struct{})
+	applied := make(chan bool, 1)
 	s.eng.At(s.eng.Now(), func(context.Context) {
-		defer close(applied)
+		if s.isClosed() {
+			applied <- false
+			return
+		}
 		clk := s.r.newClock(p.StartAt, p.Speed)
 		s.mu.Lock()
 		s.p, s.startedAt, s.clock = p, s.r.d.Wall.Now(), clk
 		s.mu.Unlock()
 		s.eng.Rebase(clk)
 		s.schedule()
+		applied <- true
 	})
 	return applied
+}
+
+// awaitTakeover waits for the switch queued by takeover. When the session is
+// stopped first, a hard stop lets Start begin a fresh session once it is gone
+// (retry true); a drain makes Start answer ErrAlreadyRunning, as it would to
+// any Start during a drain.
+func (s *session) awaitTakeover(applied <-chan bool) (ok, retry bool) {
+	select {
+	case ok := <-applied:
+		if ok {
+			return true, false
+		}
+	case <-s.done:
+	}
+	s.mu.Lock()
+	drain := s.drainReq
+	s.mu.Unlock()
+	if drain {
+		return false, false
+	}
+	<-s.done
+	return false, true
 }
 
 func (r *Runner) resolve(p StartParams) (StartParams, error) {

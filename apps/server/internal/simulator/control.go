@@ -17,6 +17,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
+	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 )
 
@@ -82,7 +83,7 @@ func NewControl(r *Runner, log *EventLog, token secret.String, l *slog.Logger) h
 	for _, rt := range controlRoutes {
 		mux.HandleFunc(rt.pattern, func(w http.ResponseWriter, req *http.Request) { rt.handle(c, w, req) })
 	}
-	return c.guard(mux)
+	return c.guard(middleware.JSONErrors(mux))
 }
 
 func (c *control) guard(next http.Handler) http.Handler {
@@ -147,7 +148,7 @@ func (c *control) status(w http.ResponseWriter, r *http.Request) {
 
 type startRequest struct {
 	Scenario Scenario   `json:"scenario" validate:"required,oneof=idle weekday weekend_peak fill_to_full sensor_drift reservation_arrivals no_show"`
-	Seed     *uint64    `json:"seed" validate:"omitnil,max=9223372036854775807"`
+	Seed     *int64     `json:"seed" validate:"omitnil,min=0"`
 	Speed    *int       `json:"speed" validate:"omitnil,min=1,max=120"`
 	StartAt  *time.Time `json:"start_at"`
 }
@@ -167,7 +168,7 @@ func (c *control) start(w http.ResponseWriter, r *http.Request) {
 		p.Speed = *req.Speed
 	}
 	if req.Seed != nil {
-		p.Seed = *req.Seed
+		p.Seed = uint64(*req.Seed)
 	} else {
 		p.Seed = rand.Uint64() >> 1
 	}
@@ -284,7 +285,11 @@ func (c *control) listEvents(w http.ResponseWriter, r *http.Request) {
 	var after int64
 	if q := r.URL.Query(); q.Has("after") {
 		n, err := strconv.ParseInt(q.Get("after"), 10, 64)
-		if err != nil || n < 0 {
+		switch {
+		case err != nil:
+			c.fail(w, r, httpx.InvalidFields(validation.FieldError{Field: "after", Rule: "integer"}))
+			return
+		case n < 0:
 			c.fail(w, r, httpx.InvalidFields(validation.FieldError{Field: "after", Rule: "min", Param: "0"}))
 			return
 		}

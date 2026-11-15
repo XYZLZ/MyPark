@@ -722,3 +722,47 @@ func TestRunner_StopAsyncReturnsAtOnceAndDrains(t *testing.T) {
 	}
 	rig.run.Wait()
 }
+
+// When the implicit session is stopped while Start waits for its takeover,
+// Start starts a fresh session instead of failing.
+func TestRunner_TakeoverOfAStoppedSessionStartsFresh(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, released sync.Once
+	unblock := func() { released.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	rig.api.onCall = func(typ string) {
+		if typ == "podium.vehicle_detected" {
+			once.Do(func() { close(entered); <-release })
+		}
+	}
+	if _, err := rig.run.Inject(InjectParams{Cred: CredTicket, Hold: true}); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	type result struct {
+		st  Status
+		err error
+	}
+	out := make(chan result, 1)
+	go func() {
+		st, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioWeekday, Seed: 5, StartAt: monday7})
+		out <- result{st, err}
+	}()
+	eventually(t, "Start to claim the session", rig.run.busy)
+	stopped := make(chan struct{})
+	go func() {
+		_, _ = rig.run.Stop(false)
+		close(stopped)
+	}()
+	eventually(t, "the implicit session to close", func() bool { return rig.run.active() == nil })
+	unblock()
+	<-stopped
+	res := <-out
+	if res.err != nil || !res.st.Running || res.st.Scenario != ScenarioWeekday || res.st.CarsInside != 0 {
+		t.Fatalf("Start = %+v, %v; want a fresh running weekday session", res.st, res.err)
+	}
+	if st := rig.run.Status(); !st.Running || st.Scenario != ScenarioWeekday {
+		t.Errorf("status = %+v, want the fresh weekday run", st)
+	}
+}

@@ -104,6 +104,10 @@
     "password_common": "That password is too common. Choose another.",
     "plate": "Use only letters and numbers, 2 to 10 characters.",
     "unknown_field": "This field is not allowed.",
+    "excluded_unless": "This field does not apply to the chosen option.",
+    "known_space": "That space does not exist in the lot.",
+    "pattern": "The format is not valid.",
+    "integer": "Enter a whole number.",
     "unknown": "Check this field."
   },
   "session": {

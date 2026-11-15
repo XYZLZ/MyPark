@@ -40,9 +40,10 @@ func TestLoadSimulator(t *testing.T) {
 		want []string
 	}{
 		{"missing token", map[string]string{"SIMULATOR_CONTROL_TOKEN": ""}, []string{"SIMULATOR_CONTROL_TOKEN is required"}},
-		{"short token", map[string]string{"SIMULATOR_CONTROL_TOKEN": strings.Repeat("x", 31)}, []string{"SIMULATOR_CONTROL_TOKEN must be at least 32 characters"}},
+		{"short token", map[string]string{"SIMULATOR_CONTROL_TOKEN": strings.Repeat("x", 31)}, []string{"SIMULATOR_CONTROL_TOKEN must be at least 32 bytes"}},
 		{"missing fleet secret", map[string]string{"SIMULATOR_FLEET_SECRET": ""}, []string{"SIMULATOR_FLEET_SECRET is required"}},
 		{"short fleet secret", map[string]string{"SIMULATOR_FLEET_SECRET": b64(31, 3)}, []string{"SIMULATOR_FLEET_SECRET must decode to at least 32 bytes"}},
+		{"padded token", map[string]string{"SIMULATOR_CONTROL_TOKEN": " " + strings.Repeat("p", 40) + "	"}, []string{"SIMULATOR_CONTROL_TOKEN must not have leading or trailing whitespace"}},
 		{"bad api url", map[string]string{"SIMULATOR_API_URL": "not a url"}, []string{"SIMULATOR_API_URL"}},
 		{"bad addr", map[string]string{"SIMULATOR_ADDR": "nope"}, []string{"SIMULATOR_ADDR"}},
 		{"bad env", map[string]string{"APP_ENV": "prod"}, []string{"APP_ENV"}},
@@ -112,5 +113,15 @@ func TestSimulatorComposeDefaults(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("compose file lacks %s", want)
 		}
+	}
+}
+
+func TestLoadSimulator_TrimsTheAPIURLSlash(t *testing.T) {
+	c, err := config.LoadSimulator(simEnv(map[string]string{"SIMULATOR_API_URL": "http://api:8080/"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.APIURL() != "http://api:8080" {
+		t.Errorf("APIURL = %q, want no trailing slash", c.APIURL())
 	}
 }

@@ -166,10 +166,10 @@ func TestControl_StartValidation(t *testing.T) {
 	}{
 		{`{"scenario":"weekday","speed":0}`, 422, "validation.failed", "min"},
 		{`{"scenario":"weekday","speed":121}`, 422, "validation.failed", "max"},
-		{`{"scenario":"weekday","seed":9223372036854775808}`, 422, "validation.failed", "max"},
-		{`{"scenario":"weekday","speed":"fast"}`, 400, "http.invalid_json", ""}, // PF7: a wrong JSON type is 400
+		{`{"scenario":"weekday","seed":9223372036854775808}`, 400, "http.invalid_json", ""}, // overflows int64
+		{`{"scenario":"weekday","speed":"fast"}`, 400, "http.invalid_json", ""},             // PF7: a wrong JSON type is 400
 		{`{"scenario":"weekday","speed":1e3}`, 400, "http.invalid_json", ""},
-		{`{"scenario":"weekday","seed":-1}`, 400, "http.invalid_json", ""},
+		{`{"scenario":"weekday","seed":-1}`, 422, "validation.failed", "min"},
 		{`{"scenario":"weekday","turbo":true}`, 422, "validation.failed", "unknown_field"},
 		{`{"scenario":"weekday","Speed":30}`, 422, "validation.failed", "unknown_field"},
 		{`{"scenario":"weekday","scenario":"idle"}`, 422, "validation.failed", "unknown_field"},
@@ -282,9 +282,13 @@ func TestControl_EventsAfter(t *testing.T) {
 	if r := c.call(t, http.MethodGet, "/control/events", ""); r.status != 200 {
 		t.Errorf("events without after = %d", r.status)
 	}
-	for _, q := range []string{"abc", "-1", "1.5", "99999999999999999999"} {
-		if r := c.call(t, http.MethodGet, "/control/events?after="+q, ""); r.status != 422 || r.code() != "validation.failed" || strings.Contains(r.raw, q) && q != "-1" {
-			t.Errorf("after=%s = %d %s, want 422 without the value", q, r.status, r.raw)
+	for q, rule := range map[string]string{"abc": "integer", "1.5": "integer", "99999999999999999999": "integer", "-1": "min"} {
+		r := c.call(t, http.MethodGet, "/control/events?after="+q, "")
+		if r.status != 422 || r.code() != "validation.failed" || !strings.Contains(r.raw, `"field":"after","rule":"`+rule+`"`) {
+			t.Errorf("after=%s = %d %s, want 422 on after with rule %s", q, r.status, r.raw, rule)
+		}
+		if q != "-1" && strings.Contains(r.raw, q) {
+			t.Errorf("after=%s: the value was echoed: %s", q, r.raw)
 		}
 	}
 
@@ -296,5 +300,43 @@ func TestControl_EventsAfter(t *testing.T) {
 	r = c.call(t, http.MethodGet, "/control/events?after=600", "")
 	if strings.Contains(r.raw, "ticket_code") || strings.Contains(r.raw, "TICKET") {
 		t.Errorf("events leak a ticket code: %s", r.raw)
+	}
+}
+
+// Inside /control/ an authorized unknown path or wrong method still gets the
+// JSON envelope, not Go's text/plain answer.
+func TestControl_UnknownRouteIsJSON(t *testing.T) {
+	c := newControlRig(t)
+	for _, tc := range []struct {
+		method, path string
+		status       int
+		code         string
+	}{
+		{http.MethodGet, "/control/nope", 404, "http.not_found"},
+		{http.MethodPost, "/control/status", 405, "http.method_not_allowed"},
+	} {
+		r := c.call(t, tc.method, tc.path, "")
+		if r.status != tc.status || r.code() != tc.code {
+			t.Errorf("%s %s = %d %q, want %d %s", tc.method, tc.path, r.status, r.raw, tc.status, tc.code)
+		}
+	}
+}
+
+// During a StopAsync drain the run takes no new cars and no faults.
+func TestControl_DrainingRunRefusesCarsAndFaults(t *testing.T) {
+	c := newControlRig(t)
+	stallDrainWith(t, c.runnerRig, func() {
+		if r := c.call(t, http.MethodPost, "/control/scenarios/stop", `{"drain":true}`); r.status != http.StatusAccepted {
+			t.Fatalf("stop = %d %s", r.status, r.raw)
+		}
+	})
+	if !c.run.Status().Running {
+		t.Fatal("the drain already ended")
+	}
+	if r := c.call(t, http.MethodPost, "/control/cars", `{"credential":"ticket"}`); r.status != 409 || r.code() != "simulator.not_running" {
+		t.Errorf("inject during a drain = %d %s, want 409 simulator.not_running", r.status, r.raw)
+	}
+	if r := c.call(t, http.MethodPost, "/control/sensors/E010/fault", `{"fault":"silent"}`); r.status != 409 || r.code() != "simulator.not_running" {
+		t.Errorf("fault during a drain = %d %s, want 409 simulator.not_running", r.status, r.raw)
 	}
 }

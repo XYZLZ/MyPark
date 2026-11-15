@@ -68,7 +68,8 @@ func (c SimulatorConfig) LogValue() slog.Value {
 
 // LoadSimulator reads the simulator's variables. SIMULATOR_FLEET_SECRET
 // follows the seed's rule (base64 of at least 32 bytes). The control token
-// is used as written (no decoding) and must be at least 32 bytes. With
+// is used exactly as written (no decoding, no trimming: surrounding
+// whitespace is an error) and must be at least 32 bytes. With
 // APP_ENV=production the committed dev values of both are refused. Every
 // problem is reported at once, naming the variable and never its value.
 func LoadSimulator(getenv func(string) string) (SimulatorConfig, error) {
@@ -83,7 +84,8 @@ func LoadSimulator(getenv func(string) string) (SimulatorConfig, error) {
 	errs = append(errs, err)
 	c.addr = addr
 
-	c.apiURL = valueOr(getenv(EnvSimulatorAPIURL), DefaultSimulatorAPIURL)
+	// Without a trailing slash, so c.apiURL + "/readyz" is never "//readyz".
+	c.apiURL = strings.TrimRight(valueOr(getenv(EnvSimulatorAPIURL), DefaultSimulatorAPIURL), "/")
 	if err := envValidator().Var(c.apiURL, "http_url"); err != nil {
 		errs = append(errs, fmt.Errorf("%s must be an http(s) URL", EnvSimulatorAPIURL))
 	}
@@ -92,12 +94,16 @@ func LoadSimulator(getenv func(string) string) (SimulatorConfig, error) {
 	errs = append(errs, err)
 	c.fleet = fleet
 
-	token := strings.TrimSpace(getenv(EnvSimulatorControlToken))
+	token := getenv(EnvSimulatorControlToken)
 	switch {
 	case token == "":
 		errs = append(errs, fmt.Errorf("%s is required", EnvSimulatorControlToken))
+	case strings.TrimSpace(token) != token:
+		// A padded value is a copy-paste slip; trimming it would hide which
+		// token the BFF must send.
+		errs = append(errs, fmt.Errorf("%s must not have leading or trailing whitespace", EnvSimulatorControlToken))
 	case len(token) < minControlTokenLen:
-		errs = append(errs, fmt.Errorf("%s must be at least %d characters", EnvSimulatorControlToken, minControlTokenLen))
+		errs = append(errs, fmt.Errorf("%s must be at least %d bytes", EnvSimulatorControlToken, minControlTokenLen))
 	case production && token == DevSimulatorControlToken:
 		errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvSimulatorControlToken))
 	}

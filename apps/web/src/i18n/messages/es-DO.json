@@ -295,6 +295,10 @@
     "password_common": "Esa contraseña es muy común. Elige otra.",
     "plate": "Usa solo letras y números, de 2 a 10 caracteres.",
     "unknown_field": "Este campo no está permitido.",
+    "excluded_unless": "Este campo no aplica a la opción elegida.",
+    "known_space": "Ese espacio no existe en el estacionamiento.",
+    "pattern": "El formato no es válido.",
+    "integer": "Escribe un número entero.",
     "unknown": "Revisa este campo."
   }
 }

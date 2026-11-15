@@ -5,6 +5,7 @@ import usersHttp from '../../../../apps/server/internal/features/users/http.go?r
 import vehiclePlate from '../../../../apps/server/internal/features/vehicles/plate.go?raw';
 import vehiclesHttp from '../../../../apps/server/internal/features/vehicles/http.go?raw';
 import envelopeGo from '../../../../apps/server/internal/features/devices/envelope.go?raw';
+import controlGo from '../../../../apps/server/internal/simulator/control.go?raw';
 import strictGo from '../../../../apps/server/internal/transport/http/httpx/strict.go?raw';
 import validationGo from '../../../../apps/server/internal/infrastructure/validation/validation.go?raw';
 import { CLIENT_ERROR_CODES, VALIDATION_RULES, parseFieldErrors, parseIssueMessage } from './validation';
@@ -19,7 +20,7 @@ const DEVICE_ONLY_RULES = ['uuid', 'datetime', 'future', 'format'];
 /** Every rule name the Go server can put in `details.fields[].rule`, read from its sources. */
 function serverRules(): string[] {
   const rules = new Set<string>();
-  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo, envelopeGo];
+  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo, envelopeGo, controlGo];
   for (const src of sources) {
     for (const [, tags] of src.matchAll(/validate:"([^"]+)"/g)) {
       for (const tag of (tags ?? '').split(',')) {
