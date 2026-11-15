@@ -1,7 +1,7 @@
 import { lotQueryKeys, type Availability } from '@mypark/contracts';
 import { availabilityReducedFixture, errorBody } from '@mypark/contracts/fixtures';
 import { useQuery } from '@tanstack/react-query';
-import { act, screen } from '@testing-library/react';
+import { act, cleanup, screen } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { FakeEventSource } from '@/testing/event-source';
@@ -24,6 +24,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount before the reset (setup.ts cleans up later, as afterEach hooks run in reverse).
+  cleanup();
   resetLiveLotsForTests();
   FakeEventSource.instances = [];
   restoreNotify();

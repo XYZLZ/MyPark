@@ -82,6 +82,7 @@ function createLiveLot(
   let lastSnapshotAt = Number.NEGATIVE_INFINITY;
   let closedByPageHide = false;
   let stopped = false;
+  let tornDown = false;
   let freshTimer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -199,6 +200,8 @@ function createLiveLot(
   };
 
   function teardown(): void {
+    if (tornDown) return;
+    tornDown = true;
     stop();
     clearTimeout(idleTimer);
     deps.target.removeEventListener('pagehide', onPageHide);
@@ -221,7 +224,8 @@ function createLiveLot(
       return {
         store,
         release() {
-          if (released) return;
+          // A release that outlives its connection must not touch a newer one under the same key.
+          if (released || tornDown) return;
           released = true;
           goneHandlers.splice(goneHandlers.indexOf(onLotGone), 1);
           refs--;

@@ -210,6 +210,17 @@ describe('acquireLiveLot', () => {
     expect(instances()).toHaveLength(1);
   });
 
+  test('a late release from a torn-down connection leaves the new one open', () => {
+    const stale = acquire();
+    resetLiveLotsForTests();
+    acquire();
+    stale.release();
+    vi.advanceTimersByTime(5_000);
+    expect(es(1).closed).toBe(false);
+    acquire();
+    expect(instances()).toHaveLength(2);
+  });
+
   test('pagehide closes and pageshow reopens', () => {
     const { store } = acquire();
     target.dispatchEvent(new Event('pageshow'));
