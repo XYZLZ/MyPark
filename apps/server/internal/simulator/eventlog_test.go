@@ -45,3 +45,34 @@ func TestEventLog_JSONShape(t *testing.T) {
 		t.Errorf("%s carries empty optional fields", raw)
 	}
 }
+
+func TestEventLog_LastSeqAndAfterOnAFullRing(t *testing.T) {
+	l := NewEventLog(3)
+	if l.LastSeq() != 0 {
+		t.Errorf("LastSeq of an empty log = %d", l.LastSeq())
+	}
+	for range 5 {
+		l.Append(LogEntry{})
+	}
+	if l.LastSeq() != 5 {
+		t.Errorf("LastSeq = %d, want 5", l.LastSeq())
+	}
+	for _, c := range []struct {
+		after int64
+		want  []int64
+	}{{0, []int64{3, 4, 5}}, {2, []int64{3, 4, 5}}, {3, []int64{4, 5}}, {4, []int64{5}}, {5, nil}, {9, nil}} {
+		var got []int64
+		for _, e := range l.After(c.after) {
+			got = append(got, e.Seq)
+		}
+		if len(got) != len(c.want) {
+			t.Errorf("After(%d) = %v, want %v", c.after, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("After(%d) = %v, want %v", c.after, got, c.want)
+			}
+		}
+	}
+}

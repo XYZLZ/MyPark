@@ -44,16 +44,21 @@ func (l *EventLog) Append(e LogEntry) {
 	l.entries = append(l.entries, e)
 }
 
+// LastSeq returns the sequence number of the latest entry, 0 for an empty log.
+func (l *EventLog) LastSeq() int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.seq
+}
+
 // After returns a copy of the entries with a sequence number above seq, oldest
-// first.
+// first. Sequence numbers are contiguous, so only the tail is copied.
 func (l *EventLog) After(seq int64) []LogEntry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := []LogEntry{}
-	for _, e := range l.entries {
-		if e.Seq > seq {
-			out = append(out, e)
-		}
+	start := 0
+	if len(l.entries) > 0 && seq >= l.entries[0].Seq {
+		start = int(min(seq-l.entries[0].Seq+1, int64(len(l.entries))))
 	}
-	return out
+	return append([]LogEntry{}, l.entries[start:]...)
 }

@@ -71,10 +71,33 @@ func (e *Engine) At(t time.Time, step func(ctx context.Context)) {
 		e.waitStop()
 	}
 	e.mu.Unlock()
+	e.Nudge()
+}
+
+// Nudge makes Wake ready without scheduling anything.
+func (e *Engine) Nudge() {
 	select {
 	case e.wake <- struct{}{}:
 	default:
 	}
+}
+
+// Rebase moves the engine onto clock c: every queued event keeps its distance
+// from the old now and is shifted to the same distance from c's now. A wait on
+// the old clock is cancelled. It lets a run change clock (and speed) while
+// keeping its cars in flight.
+func (e *Engine) Rebase(c Clock) {
+	e.mu.Lock()
+	delta := c.Now().Sub(e.clock.Now())
+	for i := range e.q {
+		e.q[i].at = e.q[i].at.Add(delta)
+	}
+	e.clock = c
+	if e.waitStop != nil {
+		e.waitStop()
+	}
+	e.mu.Unlock()
+	e.Nudge()
 }
 
 // Wake receives a value after At was called. A stale value is harmless: the
@@ -87,15 +110,15 @@ func (e *Engine) SetAfterStep(f func()) { e.after = f }
 
 // arm returns the earliest event's time and a context that At cancels when an
 // earlier event arrives. It reports false on an empty queue.
-func (e *Engine) arm(ctx context.Context) (time.Time, context.Context, context.CancelFunc, bool) {
+func (e *Engine) arm(ctx context.Context) (Clock, time.Time, context.Context, context.CancelFunc, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.q) == 0 {
-		return time.Time{}, nil, nil, false
+		return nil, time.Time{}, nil, nil, false
 	}
 	wctx, cancel := context.WithCancel(ctx)
 	e.waitAt, e.waitStop = e.q[0].at, cancel
-	return e.waitAt, wctx, cancel, true
+	return e.clock, e.waitAt, wctx, cancel, true
 }
 
 func (e *Engine) pop() event {
@@ -112,11 +135,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		at, wctx, cancel, ok := e.arm(ctx)
+		clk, at, wctx, cancel, ok := e.arm(ctx)
 		if !ok {
 			return nil
 		}
-		err := e.clock.WaitUntil(wctx, at)
+		err := clk.WaitUntil(wctx, at)
 		cancel()
 		if err != nil {
 			if ctx.Err() == nil && wctx.Err() != nil {
@@ -133,7 +156,17 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 // Now returns the virtual time.
-func (e *Engine) Now() time.Time { return e.clock.Now() }
+func (e *Engine) Now() time.Time {
+	e.mu.Lock()
+	c := e.clock
+	e.mu.Unlock()
+	return c.Now()
+}
+
+// reseed restarts the generator from seed. Call it only from a step.
+func (e *Engine) reseed(seed uint64) {
+	e.rng = rand.New(rand.NewPCG(seed, seed^pcgStream))
+}
 
 // Rand returns the engine's seeded generator. Use it only from steps.
 func (e *Engine) Rand() *rand.Rand { return e.rng }

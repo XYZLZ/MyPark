@@ -1,11 +1,13 @@
 package simulator
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -85,9 +87,13 @@ type RunnerDeps struct {
 	FleetSecret secret.Bytes
 	// NewClock builds the virtual clock of a run; nil gives a RealClock on Wall.
 	NewClock func(start time.Time, speed int) Clock
-	// Wall times StartedAt and the default start.
-	Wall clock.Clock
+	// Wall times StartedAt, the default start and the drain cap. A real
+	// deployment passes clock.System{}.
+	Wall clock.Timers
 	Log  *EventLog
+	// Ctx bounds a session that Inject starts by itself (the process
+	// context); nil means context.Background().
+	Ctx context.Context
 	// Spaces reads the lot's space codes at each start (see PublicSpaces); nil
 	// keeps the pilot lot's E001..E280.
 	Spaces func(ctx context.Context) ([]string, error)
@@ -110,7 +116,7 @@ func NewRunner(d RunnerDeps) *Runner { return &Runner{d: d} }
 // session is one run: its engine, fleet and goroutine.
 type session struct {
 	r         *Runner
-	p         StartParams
+	p         StartParams // p, startedAt, clock and implicit change at a takeover: use mu
 	startedAt time.Time
 	clock     Clock
 	eng       *Engine
@@ -128,56 +134,100 @@ type session struct {
 	lastSeq int64
 	denials int
 
-	mu     sync.Mutex
-	closed bool     // no more arrivals: Stop was called
-	ids    []string // every car handed to the fleet
+	mu       sync.Mutex
+	closed   bool     // no more arrivals: Stop was called
+	drainReq bool     // that Stop asked for a drain
+	implicit bool     // started by Inject, not by a scenario; Start takes it over
+	ids      []string // every car handed to the fleet
 }
 
 // Start validates p, reads the lot's spaces and starts the scenario. ctx
-// bounds the run, so pass the process context, not a request's.
+// bounds the run, so pass the process context, not a request's. When Inject
+// already started an implicit idle session, Start takes it over: the cars stay,
+// the held ones stay held, and ctx is not used (the session keeps its own).
 func (r *Runner) Start(ctx context.Context, p StartParams) (Status, error) {
 	p, err := r.resolve(p)
 	if err != nil {
 		return Status{}, err
 	}
-	if r.running() {
+	if r.busy() {
 		return Status{}, ErrAlreadyRunning
 	}
-	var codes []string
-	if r.d.Spaces != nil {
-		if codes, err = r.d.Spaces(ctx); err != nil {
-			return Status{}, fmt.Errorf("simulator: read the lot's spaces: %w", err)
-		}
+	codes, err := r.lotSpaces(ctx)
+	if err != nil {
+		return Status{}, err
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.s != nil && !r.s.finished() {
-		return Status{}, ErrAlreadyRunning
+	if s := r.s; s != nil && !s.finished() {
+		if !s.takeable() {
+			return Status{}, ErrAlreadyRunning
+		}
+		s.takeover(p)
+		return s.status(), nil
 	}
-	newClock := r.d.NewClock
-	if newClock == nil {
-		newClock = func(start time.Time, speed int) Clock { return NewRealClock(start, speed, r.d.Wall) }
+	return r.newSession(ctx, p, codes, false).status(), nil
+}
+
+// lotSpaces reads the lot's space codes, or none when no reader is set.
+func (r *Runner) lotSpaces(ctx context.Context) ([]string, error) {
+	if r.d.Spaces == nil {
+		return nil, nil
 	}
-	clk := newClock(p.StartAt, p.Speed)
+	codes, err := r.d.Spaces(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("simulator: read the lot's spaces: %w", err)
+	}
+	return codes, nil
+}
+
+func (r *Runner) newClock(start time.Time, speed int) Clock {
+	if r.d.NewClock != nil {
+		return r.d.NewClock(start, speed)
+	}
+	return NewRealClock(start, speed, r.d.Wall)
+}
+
+// newSession builds and starts a run. The caller holds r.mu.
+func (r *Runner) newSession(ctx context.Context, p StartParams, codes []string, implicit bool) *session {
+	clk := r.newClock(p.StartAt, p.Speed)
 	eng := NewEngine(clk, p.Seed)
 	s := &session{
 		r: r, p: p, startedAt: r.d.Wall.Now(), clock: clk, eng: eng, done: make(chan struct{}), drained: make(chan struct{}),
-		fleet: NewFleetSim(eng, r.d.Client, r.d.FleetSecret, r.d.Log),
+		fleet: NewFleetSim(eng, r.d.Client, r.d.FleetSecret, r.d.Log), implicit: implicit,
 	}
 	if len(codes) > 0 {
 		s.fleet.SetSpaces(codes)
 	}
-	if last := r.d.Log.After(0); len(last) > 0 {
-		s.lastSeq = last[len(last)-1].Seq
-	}
 	eng.SetAfterStep(s.afterStep)
-	s.schedule()
+	if !implicit {
+		s.schedule()
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 	r.s = s
 	r.wg.Go(func() { s.loop(runCtx) })
-	return s.status(), nil
+	return s
+}
+
+// takeable reports whether Start may take the session over.
+func (s *session) takeable() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.implicit && !s.closed
+}
+
+// takeover turns an implicit idle session into the scenario p. The engine moves
+// to the scenario's clock with its queued events shifted along, so cars in
+// flight carry on; parked cars stay where they are.
+func (s *session) takeover(p StartParams) {
+	clk := s.r.newClock(p.StartAt, p.Speed)
+	s.mu.Lock()
+	s.p, s.startedAt, s.clock, s.implicit = p, s.r.d.Wall.Now(), clk, false
+	s.mu.Unlock()
+	s.eng.Rebase(clk)
+	s.schedule()
 }
 
 func (r *Runner) resolve(p StartParams) (StartParams, error) {
@@ -187,6 +237,9 @@ func (r *Runner) resolve(p StartParams) (StartParams, error) {
 		return p, fmt.Errorf("%w: %s", ErrScenarioUnavailable, p.Scenario)
 	default:
 		return p, fmt.Errorf("%w: unknown scenario %q", ErrInvalidParams, p.Scenario)
+	}
+	if p.Seed > math.MaxInt64 {
+		return p, fmt.Errorf("%w: seed %d exceeds the int64 range", ErrInvalidParams, p.Seed)
 	}
 	if p.Speed < 1 || p.Speed > MaxSpeed {
 		return p, fmt.Errorf("%w: speed %d, want 1-%d", ErrInvalidParams, p.Speed, MaxSpeed)
@@ -202,32 +255,49 @@ func (r *Runner) resolve(p StartParams) (StartParams, error) {
 }
 
 // Stop ends the run. With drain, every car inside is sent out first and Stop
-// returns when they are gone (or after drainTimeout). Without it the run is
-// cut and the cars are forgotten, their stays left active (design §13.4).
+// returns when they are gone, when nothing can move any more, or after
+// drainTimeout on the wall clock. Without it the run is cut and the cars are
+// forgotten, their stays left active (design §13.4). Stop(false) during a
+// drain turns it into a hard stop.
 func (r *Runner) Stop(drain bool) (Status, error) {
 	s := r.current()
 	if s == nil {
 		return r.Status(), ErrNotRunning
 	}
 	s.mu.Lock()
-	if s.closed || s.finished() {
+	if s.finished() {
 		s.mu.Unlock()
 		return s.status(), ErrNotRunning
 	}
-	s.closed = true
+	if s.closed {
+		escalate := !drain && s.drainReq
+		s.mu.Unlock()
+		if !escalate {
+			return s.status(), ErrNotRunning
+		}
+		s.cancel()
+		<-s.done
+		return s.status(), nil
+	}
+	s.closed, s.drainReq = true, drain
 	ids := slices.Clone(s.ids)
 	s.mu.Unlock()
 
 	if drain {
-		s.draining.Store(true)
 		for _, id := range ids {
 			_ = s.fleet.Leave(id, false) // a car that is gone answers ErrCarNotFound
 		}
+		// Only now: a queue that empties while Leaves are still being queued
+		// must not end the drain.
+		s.draining.Store(true)
+		s.eng.Nudge() // an idle engine re-checks whether anything is left to run
 		s.checkDrained()
+		timedOut := make(chan struct{})
+		defer r.d.Wall.AfterFunc(drainTimeout, func() { close(timedOut) }).Stop()
 		select {
 		case <-s.drained:
 		case <-s.done:
-		case <-time.After(drainTimeout):
+		case <-timedOut:
 		}
 	}
 	s.cancel()
@@ -240,7 +310,7 @@ func (r *Runner) Status() Status {
 	if s := r.current(); s != nil {
 		return s.status()
 	}
-	return Status{VirtualNow: r.d.Wall.Now()}
+	return Status{Speed: DefaultSpeed, VirtualNow: r.d.Wall.Now()}
 }
 
 // Inject adds a car to the running scenario (design §13.3) and returns its id.
@@ -252,7 +322,7 @@ func (r *Runner) Inject(p InjectParams) (string, error) {
 			return "", fmt.Errorf("%w: a ticket car has no card", ErrInvalidParams)
 		}
 	case CredEmployeeCard:
-		car.Card = cmpOr(p.Card, defaultCard)
+		car.Card = cmp.Or(p.Card, defaultCard)
 		if !cardPattern.MatchString(car.Card) {
 			return "", fmt.Errorf("%w: card %q, want EMP-nnn", ErrInvalidParams, car.Card)
 		}
@@ -265,11 +335,40 @@ func (r *Runner) Inject(p InjectParams) (string, error) {
 	if p.DwellMinutes > 0 {
 		car.Dwell = time.Duration(p.DwellMinutes) * time.Minute
 	}
-	s := r.active()
-	if s == nil || !s.admit(car) {
+	s, err := r.activeOrImplicit()
+	if err != nil {
+		return "", err
+	}
+	if !s.admit(car) {
 		return "", ErrNotRunning
 	}
 	return car.ID, nil
+}
+
+// activeOrImplicit is the active run. With none, it starts an implicit idle
+// session at speed 1 on the real clock, as design §13.3 has injected cars run
+// when idle; a later Start takes it over. A run that is stopping takes no cars.
+func (r *Runner) activeOrImplicit() (*session, error) {
+	if s := r.active(); s != nil {
+		return s, nil
+	}
+	if r.running() {
+		return nil, ErrNotRunning
+	}
+	ctx := cmp.Or(r.d.Ctx, context.Background())
+	codes, err := r.lotSpaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s := r.s; s != nil && !s.finished() { // another caller got there first
+		if s.isClosed() {
+			return nil, ErrNotRunning
+		}
+		return s, nil
+	}
+	return r.newSession(ctx, StartParams{Scenario: ScenarioIdle, Speed: 1, StartAt: r.d.Wall.Now()}, codes, true), nil
 }
 
 // Leave sends a car out: ErrNotRunning without a run, ErrCarNotFound for an
@@ -307,6 +406,12 @@ func (r *Runner) running() bool {
 	return s != nil && !s.finished()
 }
 
+// busy is a run that Start may not replace.
+func (r *Runner) busy() bool {
+	s := r.current()
+	return s != nil && !s.finished() && !s.takeable()
+}
+
 // active is the current run when it still takes work: started, not stopping.
 func (r *Runner) active() *session {
 	s := r.current()
@@ -321,11 +426,10 @@ func (r *Runner) active() *session {
 	return s
 }
 
-func cmpOr(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
+func (s *session) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
 }
 
 func (s *session) finished() bool {
@@ -338,14 +442,17 @@ func (s *session) finished() bool {
 }
 
 func (s *session) status() Status {
+	s.mu.Lock()
+	p, started, clk := s.p, s.startedAt, s.clock
+	s.mu.Unlock()
 	st := Status{
-		Scenario: s.p.Scenario, Seed: s.p.Seed, Speed: s.p.Speed, StartedAt: s.startedAt,
+		Scenario: p.Scenario, Seed: p.Seed, Speed: p.Speed, StartedAt: started,
 		ReachedFull: s.reachedFull.Load(), CarsInside: s.fleet.Inside(),
 	}
 	if s.finished() {
 		st.VirtualNow = s.endNow
 	} else {
-		st.Running, st.VirtualNow = true, s.clock.Now()
+		st.Running, st.VirtualNow = true, clk.Now()
 	}
 	return st
 }
@@ -354,7 +461,9 @@ func (s *session) status() Status {
 // (a Leave, an Inject) instead of letting the run die.
 func (s *session) loop(ctx context.Context) {
 	defer func() {
+		s.mu.Lock()
 		s.endNow = s.clock.Now()
+		s.mu.Unlock()
 		close(s.done)
 	}()
 	for {
@@ -420,6 +529,11 @@ func (s *session) heartbeat(dev devicefleet.Device) func(context.Context) {
 // begin runs once at the start time, in the engine goroutine: it sets up the
 // scenario's extras and queues the first arrival.
 func (s *session) begin(context.Context) {
+	if s.isClosed() {
+		return
+	}
+	s.eng.reseed(s.p.Seed) // a taken-over session drew while implicit
+	s.lastSeq = s.r.d.Log.LastSeq()
 	if s.p.Scenario == ScenarioSensorDrift {
 		s.fleet.DriftSensors(3, 0.1)
 	}
@@ -433,6 +547,9 @@ func (s *session) begin(context.Context) {
 // itself again at midnight. Draws are made for every card, so the sequence
 // does not depend on the start time.
 func (s *session) employees() {
+	if s.isClosed() {
+		return // a stopping run schedules nothing more
+	}
 	now := s.eng.Now().In(lotZone)
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, lotZone)
 	r := s.eng.Rand()

@@ -39,24 +39,25 @@ func (c *haltClock) WaitUntil(ctx context.Context, t time.Time) error {
 func (c *haltClock) release() { c.until.Store(1<<62 - 1) }
 
 type runnerRig struct {
-	api *fakeAPI
-	clk *haltClock
-	log *EventLog
-	run *Runner
+	wall *fakeclock.Clock
+	api  *fakeAPI
+	clk  *haltClock
+	log  *EventLog
+	run  *Runner
 }
 
 // newRunnerRig builds a runner over the fake API. The clock halts horizon
 // after the scenario's start.
 func newRunnerRig(t *testing.T, horizon time.Duration, spaces func(context.Context) ([]string, error)) *runnerRig {
 	t.Helper()
-	rig := &runnerRig{log: NewEventLog(5000)}
+	rig := &runnerRig{log: NewEventLog(5000), wall: fakeclock.New(t0)}
 	rig.api = &fakeAPI{script: nil, used: map[string]int{}, creds: map[string]int{}}
 	client := NewDeviceClient(ClientConfig{
 		BaseURL: "http://api.test", Transport: HandlerTransport(rig.api),
 		SignClock: fakeclock.New(t0), FleetSecret: fleetSecret,
 	})
 	rig.run = NewRunner(RunnerDeps{
-		Client: client, FleetSecret: fleetSecret, Log: rig.log, Wall: fakeclock.New(t0), Spaces: spaces,
+		Client: client, FleetSecret: fleetSecret, Log: rig.log, Wall: rig.wall, Spaces: spaces,
 		NewClock: func(start time.Time, _ int) Clock {
 			rig.clk = &haltClock{StepClock: NewStepClock(start), reached: make(chan struct{})}
 			rig.clk.until.Store(start.Add(horizon).UnixNano())
@@ -90,13 +91,13 @@ func TestRunner_StartStopErrors(t *testing.T) {
 			t.Errorf("Start(%s) = %v, want ErrScenarioUnavailable", s, err)
 		}
 	}
-	for _, p := range []StartParams{{Scenario: ScenarioWeekday}, {Scenario: ScenarioWeekday, Speed: 121}, {Scenario: ScenarioWeekday, Speed: -1}, {Speed: 30, Scenario: "nope"}, {Speed: 30}} {
+	for _, p := range []StartParams{{Scenario: ScenarioWeekday}, {Scenario: ScenarioWeekday, Speed: 121}, {Scenario: ScenarioWeekday, Speed: -1}, {Speed: 30, Scenario: "nope"}, {Speed: 30}, {Speed: 30, Scenario: ScenarioWeekday, Seed: 1 << 63}} {
 		if _, err := rig.run.Start(ctx, p); !errors.Is(err, ErrInvalidParams) {
 			t.Errorf("Start(%+v) = %v, want ErrInvalidParams", p, err)
 		}
 	}
-	if st := rig.run.Status(); st.Running {
-		t.Fatalf("rejected starts left a run: %+v", st)
+	if st := rig.run.Status(); st.Running || st.Speed != DefaultSpeed {
+		t.Fatalf("status before any run = %+v, want idle with speed %d (the contract minimum is 1)", st, DefaultSpeed)
 	}
 
 	st, err := rig.run.Start(ctx, StartParams{Speed: 30, Scenario: ScenarioWeekday, Seed: 5, StartAt: monday7})
@@ -117,9 +118,6 @@ func TestRunner_StartStopErrors(t *testing.T) {
 	}
 	if st := rig.run.Status(); st.Running || st.Scenario != ScenarioWeekday || st.Seed != 5 {
 		t.Errorf("status after stop = %+v, want the last scenario, not running", st)
-	}
-	if _, err := rig.run.Inject(InjectParams{Cred: CredTicket}); !errors.Is(err, ErrNotRunning) {
-		t.Errorf("Inject idle = %v, want ErrNotRunning", err)
 	}
 	if err := rig.run.Leave("car-000001", false); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("Leave idle = %v, want ErrNotRunning", err)
@@ -429,5 +427,182 @@ func TestRunner_SensorDriftRuns(t *testing.T) {
 	entries, sensors := len(rig.api.payloads("entry.credential_presented")), len(rig.api.payloads("sensor.space_changed"))
 	if entries == 0 || sensors == 0 {
 		t.Errorf("entries = %d, sensor events = %d: the scenario did not run", entries, sensors)
+	}
+}
+
+func exited(rig *runnerRig, car string) bool {
+	for _, e := range rig.log.After(0) {
+		if e.CarID == car && e.Type == "barrier.passed" && e.Device == "barrier-exit-1" {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunner_InjectWhileIdleStartsAnImplicitSession(t *testing.T) {
+	rig := newRunnerRig(t, 2*time.Hour, nil)
+	id, err := rig.run.Inject(InjectParams{Cred: CredTicket, Hold: true})
+	if err != nil || id != "car-000001" {
+		t.Fatalf("Inject = %q, %v, want car-000001", id, err)
+	}
+	if st := rig.run.Status(); !st.Running || st.Scenario != ScenarioIdle || st.Speed != 1 {
+		t.Errorf("status = %+v, want a running idle session at speed 1", st)
+	}
+	parked := func() bool {
+		for _, e := range rig.log.After(0) {
+			if e.CarID == id && e.Type == "sensor.space_changed" {
+				return true
+			}
+		}
+		return false
+	}
+	eventually(t, "the car to park", parked)
+	if rig.run.Status().CarsInside != 1 {
+		t.Fatalf("cars inside = %d, want 1", rig.run.Status().CarsInside)
+	}
+
+	// The demo path: the weekday scenario takes the session over, keeping the car.
+	st, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioWeekday, Seed: 5, StartAt: monday7})
+	if err != nil {
+		t.Fatalf("Start over the implicit session = %v", err)
+	}
+	if st.Scenario != ScenarioWeekday || st.Speed != 30 || st.Seed != 5 || st.VirtualNow.Before(monday7) {
+		t.Errorf("status after takeover = %+v", st)
+	}
+	<-rig.clk.reached
+	if exited(rig, id) {
+		t.Fatal("the held car left by itself")
+	}
+	rig.clk.until.Store(rig.clk.Now().Add(30 * time.Minute).UnixNano())
+	if err := rig.run.Leave(id, false); err != nil {
+		t.Fatalf("Leave after takeover = %v", err)
+	}
+	eventually(t, "the held car out", func() bool { return exited(rig, id) })
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioIdle}); !errors.Is(err, ErrAlreadyRunning) {
+		t.Errorf("a second Start = %v, want ErrAlreadyRunning", err)
+	}
+}
+
+func TestRunner_ImplicitSessionTakesLeaveFaultAndStop(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	id, err := rig.run.Inject(InjectParams{Cred: CredEmployeeCard, Card: "EMP-003", Hold: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.run.SetFault("E001", FaultSilent); err != nil {
+		t.Errorf("SetFault = %v", err)
+	}
+	if err := rig.run.Leave(id, false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the car out", func() bool { return exited(rig, id) })
+	st, err := rig.run.Stop(false)
+	if err != nil || st.Running {
+		t.Errorf("Stop = %+v, %v; want the implicit session stopped", st, err)
+	}
+	if _, err := rig.run.Stop(false); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("second Stop = %v, want ErrNotRunning", err)
+	}
+}
+
+func TestRunner_DrainFillToFullLeavesNoCarInside(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	rig.api.fullAfter = 40
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioFillToFull, Seed: 6, StartAt: monday7}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "a full lot", func() bool { st := rig.run.Status(); return st.ReachedFull && st.CarsInside == 39 })
+	st, err := rig.run.Stop(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Running || st.CarsInside != 0 {
+		t.Fatalf("status after drain = %+v, want 0 cars inside", st)
+	}
+	for n := 1; n <= 39; n++ {
+		if id := fmt.Sprintf("car-%06d", n); !exited(rig, id) {
+			t.Errorf("%s never left", id)
+		}
+	}
+}
+
+// stallDrain fills the lot with five held cars, blocks every exit past the
+// current virtual time and starts Stop(true) in the background. It returns
+// once every car has paid, so the drain is under way and cannot finish.
+func stallDrain(t *testing.T, rig *runnerRig) <-chan Status {
+	t.Helper()
+	rig.api.fullAfter = 6
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioFillToFull, Seed: 8, StartAt: monday7}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "a full lot", func() bool { st := rig.run.Status(); return st.ReachedFull && st.CarsInside == 5 })
+	eventually(t, "five parked cars", func() bool { return len(rig.api.payloads("sensor.space_changed")) == 5 })
+	rig.clk.until.Store(rig.clk.Now().UnixNano())
+	out := make(chan Status, 1)
+	go func() {
+		st, _ := rig.run.Stop(true)
+		out <- st
+	}()
+	eventually(t, "five scans", func() bool { return len(rig.api.payloads("paystation.scan")) == 5 })
+	return out
+}
+
+func TestRunner_DrainGivesUpAfterTheCapOnTheWallClock(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	out := stallDrain(t, rig)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rig.wall.Advance(drainTimeout) // the cap is on the injected wall clock
+		select {
+		case st := <-out:
+			if st.Running || st.CarsInside != 5 {
+				t.Errorf("status after the cap = %+v, want stopped with the 5 stuck cars", st)
+			}
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Stop(true) ignored the wall clock cap")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRunner_StopDuringADrainIsAHardStop(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	out := stallDrain(t, rig)
+	if st, err := rig.run.Stop(false); err != nil || st.Running {
+		t.Fatalf("Stop(false) during a drain = %+v, %v; want a hard stop", st, err)
+	}
+	if st := <-out; st.Running {
+		t.Errorf("the drain returned %+v after the hard stop", st)
+	}
+	if _, err := rig.run.Stop(true); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("Stop after the stop = %v, want ErrNotRunning", err)
+	}
+}
+
+// A drain with cars the server will not let out must end when nothing can move
+// any more: the employee chain must not keep the queue alive.
+func TestRunner_DrainEndsWhenStuckCarsLeaveNothingToRun(t *testing.T) {
+	rig := newRunnerRig(t, time.Hour, nil)
+	rig.api.script = map[string][]string{"exit.credential_presented": {denyNotAllowed}}
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioWeekday, Seed: 9, StartAt: monday7}); err != nil {
+		t.Fatal(err)
+	}
+	<-rig.clk.reached
+	rig.clk.release()
+	out := make(chan Status, 1)
+	go func() {
+		st, _ := rig.run.Stop(true)
+		out <- st
+	}()
+	select {
+	case st := <-out:
+		if st.Running || st.CarsInside == 0 {
+			t.Errorf("status = %+v, want stopped with the stuck cars still inside", st)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drain never ended: the queue was kept alive")
 	}
 }

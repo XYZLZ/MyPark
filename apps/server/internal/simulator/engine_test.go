@@ -132,3 +132,28 @@ func TestEngine_AfterStepRunsAfterEveryStep(t *testing.T) {
 		t.Fatalf("Run = %v, hook ran %d times, want 2", err, n)
 	}
 }
+
+func TestEngine_RebaseShiftsQueuedEventsToTheNewClock(t *testing.T) {
+	e := NewEngine(NewStepClock(t0), 1)
+	var at []time.Time
+	e.At(t0.Add(time.Hour), func(context.Context) { at = append(at, e.Now()) })
+	e.At(t0.Add(2*time.Hour), func(context.Context) { at = append(at, e.Now()) })
+	t1 := t0.Add(10 * time.Hour)
+	e.Rebase(NewStepClock(t1))
+	if err := e.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(at) != 2 || !at[0].Equal(t1.Add(time.Hour)) || !at[1].Equal(t1.Add(2*time.Hour)) {
+		t.Errorf("steps ran at %v, want t1+1h and t1+2h", at)
+	}
+}
+
+func TestEngine_NudgeSignalsWake(t *testing.T) {
+	e := NewEngine(NewStepClock(t0), 1)
+	e.Nudge()
+	select {
+	case <-e.Wake():
+	default:
+		t.Fatal("Nudge did not signal Wake")
+	}
+}
