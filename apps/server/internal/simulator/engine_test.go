@@ -79,3 +79,56 @@ func TestEngine_EmptyQueueReturnsNil(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// parkClock blocks every wait until ctx is done, to show what wakes the engine.
+type parkClock struct {
+	*StepClock
+	waiting chan time.Time
+}
+
+func (c parkClock) WaitUntil(ctx context.Context, t time.Time) error {
+	if t.After(c.Now().Add(time.Hour)) {
+		c.waiting <- t
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return c.StepClock.WaitUntil(ctx, t)
+}
+
+func TestEngine_EarlierEventWakesAWait(t *testing.T) {
+	c := parkClock{NewStepClock(t0), make(chan time.Time, 1)}
+	e := NewEngine(c, 1)
+	e.At(t0.Add(5*time.Hour), func(context.Context) { t.Error("the far event ran") })
+	ran := make(chan struct{})
+	go func() { _ = e.Run(t.Context()) }()
+	<-c.waiting // the engine is parked on the far event
+	e.At(t0.Add(time.Minute), func(context.Context) { close(ran) })
+	<-ran
+	if got := (<-c.waiting); !got.Equal(t0.Add(5 * time.Hour)) {
+		t.Errorf("engine went back to wait for %v", got)
+	}
+}
+
+func TestEngine_WakeSignalsAnEventAfterAnEmptyRun(t *testing.T) {
+	e := NewEngine(NewStepClock(t0), 1)
+	if err := e.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.At(t0, func(context.Context) {})
+	select {
+	case <-e.Wake():
+	default:
+		t.Fatal("At after an empty Run did not signal Wake")
+	}
+}
+
+func TestEngine_AfterStepRunsAfterEveryStep(t *testing.T) {
+	e := NewEngine(NewStepClock(t0), 1)
+	n := 0
+	e.SetAfterStep(func() { n++ })
+	e.At(t0, func(context.Context) {})
+	e.At(t0.Add(time.Second), func(context.Context) {})
+	if err := e.Run(t.Context()); err != nil || n != 2 {
+		t.Fatalf("Run = %v, hook ran %d times, want 2", err, n)
+	}
+}

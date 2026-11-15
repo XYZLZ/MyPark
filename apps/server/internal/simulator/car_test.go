@@ -44,14 +44,15 @@ type apiCall struct {
 // object) consumed in order per type; the last one repeats and bypasses the
 // checks. skew shifts paid_at and exit_deadline off the engine's clock.
 type fakeAPI struct {
-	mu     sync.Mutex
-	now    func() time.Time
-	skew   time.Duration
-	calls  []apiCall
-	script map[string][]string
-	used   map[string]int
-	stays  int            // stays issued
-	creds  map[string]int // credential value -> stay number
+	mu        sync.Mutex
+	now       func() time.Time
+	skew      time.Duration
+	calls     []apiCall
+	script    map[string][]string
+	used      map[string]int
+	stays     int            // stays issued
+	fullAfter int            // when > 0, the n-th entry and later ones are denied gate.lot_full
+	creds     map[string]int // credential value -> stay number
 }
 
 func (a *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +102,9 @@ func (a *fakeAPI) reply(kind authz.DeviceKind, typ string, p map[string]any) str
 	}
 	now := a.now().Add(a.skew)
 	if typ == "entry.credential_presented" {
+		if a.fullAfter > 0 && a.stays >= a.fullAfter-1 {
+			return denyFull
+		}
 		a.stays++
 		if kind == authz.DeviceDispenser {
 			a.creds[ticketOf(a.stays)] = a.stays
@@ -605,5 +609,22 @@ func TestCar_StuckCarKeepsItsSpaceAndCanLeaveLater(t *testing.T) {
 	last := r.api.payloads("sensor.space_changed")
 	if first := last[len(last)-2]; first["space_code"] != "E001" || first["occupied"] != true {
 		t.Errorf("sensor events after the exit = %v, want E001 reused", last)
+	}
+}
+
+func TestCar_SensorDropAndActive(t *testing.T) {
+	r := newRig(t, 1, nil)
+	r.sim.DriftSensors(0, 1)
+	car := &Car{Cred: CredTicket, Dwell: 30 * time.Minute}
+	r.sim.Arrive(car)
+	if r.sim.Active() != 1 {
+		t.Errorf("Active = %d, want 1", r.sim.Active())
+	}
+	r.run(t)
+	if n := len(r.api.payloads("sensor.space_changed")); n != 0 {
+		t.Errorf("%d sensor events with every one dropped", n)
+	}
+	if r.sim.Active() != 0 || r.sim.Inside() != 0 {
+		t.Errorf("Active = %d, Inside = %d after the car left", r.sim.Active(), r.sim.Inside())
 	}
 }

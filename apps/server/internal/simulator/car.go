@@ -95,6 +95,7 @@ type FleetSim struct {
 	free   []string
 	faults map[string]Fault
 	inside int
+	drop   float64 // chance that a sensor event is lost
 }
 
 // NewFleetSim returns a simulator over the fleet manifest, with the pilot
@@ -127,6 +128,36 @@ func (f *FleetSim) SetSpaces(codes []string) {
 	}
 	f.faults = map[string]Fault{}
 }
+
+// Active returns how many cars are in play: on their way in, inside, or halted
+// inside the lot. A car that left, or never got in, is not counted.
+func (f *FleetSim) Active() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.cars)
+}
+
+// DriftSensors makes n random spaces' sensors stuck (each occupied or free)
+// and loses each sensor event with probability drop (0..1), on top of the
+// per-space faults (design §13.2 sensor_drift). Call it from the engine
+// goroutine, before cars arrive: it draws from the engine's generator.
+func (f *FleetSim) DriftSensors(n int, drop float64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drop = drop
+	pool := append([]string(nil), f.free...)
+	for range min(n, len(pool)) {
+		i := f.e.Rand().IntN(len(pool))
+		f.faults[pool[i]] = []Fault{FaultStuckOccupied, FaultStuckFree}[f.e.Rand().IntN(2)]
+		pool[i] = pool[len(pool)-1]
+		pool = pool[:len(pool)-1]
+	}
+}
+
+// dropped draws whether a sensor event is lost. It draws only when drops are
+// on, so other scenarios keep their random sequence. Call with f.mu held, from
+// the engine goroutine.
+func (f *FleetSim) dropped() bool { return f.drop > 0 && f.e.Rand().Float64() < f.drop }
 
 // Inside returns how many cars the server let in and has not let out.
 func (f *FleetSim) Inside() int {
@@ -209,18 +240,22 @@ func (f *FleetSim) send(ctx context.Context, r *carRun, dev devicefleet.Device, 
 	rep, err := f.c.Send(ctx, dev, Outgoing{
 		EventID: uuid.New(), Type: typ, Payload: payload,
 	})
-	entry := LogEntry{At: f.e.Now(), Device: dev.Name, Type: typ, CarID: r.car.ID}
+	f.log.Append(outcome(LogEntry{At: f.e.Now(), Device: dev.Name, Type: typ, CarID: r.car.ID}, rep, err))
+	return rep, err == nil
+}
+
+// outcome fills entry's result and reason from a device answer. A transport
+// failure or a non-2xx answer is result "error".
+func outcome(entry LogEntry, rep Reply, err error) LogEntry {
 	if err != nil {
 		entry.Result, entry.Reason = "error", "transport_error"
 		if apiErr, ok := errors.AsType[*APIError](err); ok && apiErr.Code != "" {
 			entry.Reason = apiErr.Code
 		}
-		f.log.Append(entry)
-		return rep, false
+		return entry
 	}
 	entry.Result, entry.Reason = rep.Result, rep.Reason
-	f.log.Append(entry)
-	return rep, true
+	return entry
 }
 
 // halt ends the car's trip where it stands. A car that never entered is gone.
@@ -288,7 +323,7 @@ func (f *FleetSim) park(ctx context.Context, r *carRun) {
 		r.car.Space = f.free[i]
 		f.free[i] = f.free[n-1]
 		f.free = f.free[:n-1]
-		report = f.faults[r.car.Space] != FaultSilent && f.faults[r.car.Space] != FaultStuckFree
+		report = f.faults[r.car.Space] != FaultSilent && f.faults[r.car.Space] != FaultStuckFree && !f.dropped()
 	}
 	space := r.car.Space
 	f.mu.Unlock()
@@ -421,7 +456,7 @@ func (f *FleetSim) exitPass(ctx context.Context, r *carRun) {
 	var report bool
 	if space != "" {
 		f.free = append(f.free, space)
-		report = f.faults[space] != FaultSilent && f.faults[space] != FaultStuckOccupied
+		report = f.faults[space] != FaultSilent && f.faults[space] != FaultStuckOccupied && !f.dropped()
 	}
 	f.mu.Unlock()
 	if report {
