@@ -20,14 +20,16 @@ export type SseParser = {
  * place a leading BOM is stripped (exactly one, as the spec says). Web `EventSource` parses natively
  * and does not use this module.
  *
- * A line still unterminated past `maxLineLength` is discarded, along with the rest of it up to the
- * next line end and the frame it belonged to, and counted in `droppedLines`.
+ * A line still unterminated past `maxLineLength` is discarded with the whole frame it belongs to:
+ * the fields before it, the rest of the line and every field up to the next blank line. Each such
+ * line is counted in `droppedLines`.
  */
 export function createSseParser({ maxLineLength = SSE_MAX_LINE_LENGTH }: { maxLineLength?: number } = {}): SseParser {
   let buffer = '';
   let pendingCr = false;
   let bomChecked = false;
   let skippingLine = false;
+  let skippingFrame = false;
   let droppedLines = 0;
   let eventType = '';
   let data = '';
@@ -71,7 +73,7 @@ export function createSseParser({ maxLineLength = SSE_MAX_LINE_LENGTH }: { maxLi
       let text = chunk;
       if (!bomChecked && text !== '') {
         bomChecked = true;
-        if (text.startsWith('﻿')) text = text.slice(1);
+        if (text.startsWith('\uFEFF')) text = text.slice(1);
       }
       if (pendingCr && text !== '') {
         pendingCr = false;
@@ -85,8 +87,10 @@ export function createSseParser({ maxLineLength = SSE_MAX_LINE_LENGTH }: { maxLi
       for (; i < buffer.length; i++) {
         const ch = buffer[i];
         if (ch !== '\r' && ch !== '\n') continue;
+        const line = buffer.slice(start, i);
         if (skippingLine) skippingLine = false;
-        else processField(buffer.slice(start, i), out);
+        else if (skippingFrame) skippingFrame = line !== '';
+        else processField(line, out);
         if (ch === '\r') {
           if (i + 1 === buffer.length) pendingCr = true;
           else if (buffer[i + 1] === '\n') i++;
@@ -97,6 +101,7 @@ export function createSseParser({ maxLineLength = SSE_MAX_LINE_LENGTH }: { maxLi
       if (buffer.length > maxLineLength) {
         buffer = '';
         skippingLine = true;
+        skippingFrame = true;
         droppedLines++;
         data = '';
         eventType = '';

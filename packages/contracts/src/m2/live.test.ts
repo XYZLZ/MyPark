@@ -64,6 +64,17 @@ describe('reduceLive', () => {
     expect(reduceLive(next, { kind: 'open' })).toBe(next);
   });
 
+  test('lost marks the map not ready so the REST snapshot spaces replace it', () => {
+    const s = ready();
+    const lost = reduceLive(s, { kind: 'lost' });
+    expect(lost).toMatchObject({ spacesReady: false, spaces: s.spaces });
+    expect(reduceLive(lost, { kind: 'lost' })).toBe(lost);
+    const changed = spacesFixture.spaces.map((space) =>
+      space.code === 'E100' ? { ...space, state: 'occupied' as const } : space,
+    );
+    expect(reduceLive(lost, { kind: 'snapshot', spaces: changed }).spaces).toBe(changed);
+  });
+
   test('heartbeat returns the same state', () => {
     const s = initialLiveState({ availability: v(120) });
     expect(reduceLive(s, { kind: 'heartbeat' })).toBe(s);

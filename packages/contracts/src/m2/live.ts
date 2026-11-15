@@ -24,6 +24,8 @@ export type LiveState = {
 
 export type LiveFrame =
   | { kind: 'open' }
+  /** The connection dropped or closed: the map stops being authoritative, so REST spaces may replace it. */
+  | { kind: 'lost' }
   | { kind: 'availability'; data: Availability }
   | { kind: 'spaces'; data: SpacesEvent }
   | { kind: 'heartbeat' }
@@ -60,6 +62,7 @@ function applyDelta(state: LiveState, delta: SpaceState[]): LiveState {
 export function reduceLive(state: LiveState, frame: LiveFrame): LiveState {
   switch (frame.kind) {
     case 'open':
+    case 'lost':
       return state.spacesReady ? { ...state, spacesReady: false } : state;
     case 'availability':
       return applyAvailability(state, frame.data);

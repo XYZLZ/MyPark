@@ -107,9 +107,8 @@ describe('createSseParser', () => {
     expect(parser.push('event: spaces\ndata: ok\ndata: 0123456789')).toEqual([]);
     expect(parser.push('abcdef')).toEqual([]);
     expect(parser.droppedLines).toBe(1);
-    // The rest of the oversized line, up to its line end, is never read as a field.
-    expect(parser.push('xyz\ndata: tail\n\nevent: heartbeat\ndata: {}\n\n')).toEqual([
-      { event: 'message', data: 'tail' },
+    // The rest of that frame, up to the next blank line, is skipped; the next frame parses.
+    expect(parser.push('xyz\ndata: tail\nid: 9\n\nevent: heartbeat\ndata: {}\n\n')).toEqual([
       { event: 'heartbeat', data: '{}' },
     ]);
     expect(parser.droppedLines).toBe(1);
@@ -127,7 +126,7 @@ describe('createSseParser', () => {
 
   // Transports decode with TextDecoder({ ignoreBOM: true }) so this parser is the only BOM stripper.
   test('a leading BOM is dropped once, even after an empty chunk', () => {
-    expect(parseAll(['', '﻿data: a\n\n'])).toEqual([{ event: 'message', data: 'a' }]);
-    expect(parseAll(['﻿', '﻿data: a\n\ndata: b\n\n'])).toEqual([{ event: 'message', data: 'b' }]);
+    expect(parseAll(['', '\uFEFFdata: a\n\n'])).toEqual([{ event: 'message', data: 'a' }]);
+    expect(parseAll(['\uFEFF', '\uFEFFdata: a\n\ndata: b\n\n'])).toEqual([{ event: 'message', data: 'b' }]);
   });
 });
