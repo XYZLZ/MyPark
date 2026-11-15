@@ -345,3 +345,39 @@ func TestPass_LateEntryOnFullLot(t *testing.T) {
 	}
 	e.invariant()
 }
+
+// A late pass whose transaction rolls back after the gate ran (here the
+// device_events insert fails) never happened, so it must not be logged: the
+// warning is written only after the commit.
+func TestPass_LateEntryRolledBackIsNotLogged(t *testing.T) {
+	var logs testsupport.SyncBuffer
+	e := newDeviceEnv(t, func(d *deps) { d.log = slog.New(slog.NewJSONHandler(&logs, nil)) })
+	id := e.openStay(e.device(authz.DeviceDispenser), "")
+	e.voidStale()
+	e.clk.Advance(10 * time.Second)
+	occ, ver := e.occupancy()
+	if _, err := e.db.Super.Exec(t.Context(), `
+		create function fail_pass_insert() returns trigger language plpgsql as $$
+		begin raise exception 'injected device_events failure'; end $$;
+		create trigger fail_pass_insert before insert on device_events
+		for each row when (new.type = 'barrier.passed') execute function fail_pass_insert();`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+
+	if rec := e.send(e.device(authz.DeviceEntryBarrier), e.passBody(gate.DirectionEntry, id)); rec.Code != 500 {
+		t.Fatalf("late pass with a failing insert = %d %s, want 500", rec.Code, rec.Body)
+	}
+	if s := e.stay(id); s.Status != "voided" {
+		t.Errorf("stay = %s, want voided (rolled back)", s.Status)
+	}
+	if occ2, ver2 := e.occupancy(); occ2 != occ || ver2 != ver {
+		t.Errorf("occupancy = %d v%d, want %d v%d", occ2, ver2, occ, ver)
+	}
+	if n := e.count(`select count(*) from audit_log where action = 'gate.late_entry_pass'`); n != 0 {
+		t.Errorf("late pass audit rows = %d, want 0", n)
+	}
+	if strings.Contains(logs.String(), "late entry pass") {
+		t.Errorf("a rolled-back late pass was logged:\n%s", logs.String())
+	}
+	e.invariant()
+}

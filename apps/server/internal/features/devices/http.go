@@ -120,6 +120,8 @@ func (h *Handler) postEvent(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, h.log, err)
 		return
 	}
+	// Committed: only now may the gate's deferred logs claim what happened.
+	gate.LogCommitted(ctx, h.log, dev, res)
 	response.OK(w, r, http.StatusOK, res)
 }
 

@@ -60,7 +60,8 @@ func (s *Service) entryPass(ctx context.Context, d authz.Device, p BarrierPassed
 }
 
 // lateEntryPass reactivates a stay voided before its car passed: the car is
-// inside, so it is counted, logged at warn and audited. A card stay stays
+// inside, so it is counted and audited, and marked for a warn log after
+// the commit (LogCommitted). A card stay stays
 // voided when the card already has a newer open stay (one per card, M2C-28).
 func (s *Service) lateEntryPass(ctx context.Context, d authz.Device, stay Stay, now time.Time) (Result, error) {
 	if stay.EmployeeCardID != 0 {
@@ -83,9 +84,9 @@ func (s *Service) lateEntryPass(ctx context.Context, d authz.Device, stay Stay, 
 	}); err != nil {
 		return Result{}, fmt.Errorf("gate: audit %s: %w", audit.GateLateEntryPass, err)
 	}
-	// Warn only once the audit row is written: the log claims an audited pass.
-	s.log.WarnContext(ctx, "gate: late entry pass on a voided stay",
-		"lot_id", d.LotID, "stay_id", stay.PublicID.String(), "device_id", d.PublicID.String())
+	// The warning claims an audited pass that happened, so the caller logs it
+	// with LogCommitted only once the transaction has committed.
+	res.LateEntryStay = stay.PublicID
 	return res, nil
 }
 

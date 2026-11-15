@@ -1,10 +1,13 @@
 package gate
 
 import (
+	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
 )
 
@@ -34,4 +37,19 @@ type Result struct {
 	ReceiptNo    string             `json:"receipt_no,omitempty"`
 	PaidAt       *time.Time         `json:"paid_at,omitempty"`
 	ExitDeadline *time.Time         `json:"exit_deadline,omitempty"`
+
+	// LateEntryStay is set by a late entry pass (M2C-31). It never reaches
+	// the device or storage: the caller logs it with LogCommitted once the
+	// event's transaction has committed.
+	LateEntryStay uuid.UUID `json:"-"`
+}
+
+// LogCommitted writes the logs a handled event defers until its transaction
+// commits, so a rolled-back event never logs something that did not happen.
+// Call it only after a successful commit.
+func LogCommitted(ctx context.Context, log *slog.Logger, d authz.Device, res Result) {
+	if res.LateEntryStay != uuid.Nil {
+		log.WarnContext(ctx, "gate: late entry pass on a voided stay",
+			"lot_id", d.LotID, "stay_id", res.LateEntryStay.String(), "device_id", d.PublicID.String())
+	}
 }
