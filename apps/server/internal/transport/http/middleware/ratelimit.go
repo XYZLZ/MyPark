@@ -14,7 +14,8 @@ import (
 )
 
 // RateLimit returns the per-route rate-limit middleware factory. KeyIP rules
-// are keyed by the client IP (ClientIP must run first), KeyUser rules by the
+// are keyed by the client IP (ClientIP must run first; in-memory rules key
+// an IPv6 client by its /64, see ratelimit.RuleIPKey), KeyUser rules by the
 // authenticated user's public id (Authn must run first), KeyDevice rules by
 // the authenticated device's public id (DeviceAuth must run first). A denied request
 // gets 429 with Retry-After. A limiter failure returns 500 for fail-closed
@@ -57,7 +58,7 @@ func RateLimit(l ratelimit.Limiter, log *slog.Logger) func(ratelimit.Rule) func(
 func bucketKey(r *http.Request, rule ratelimit.Rule) (string, error) {
 	switch rule.Key {
 	case ratelimit.KeyIP:
-		return ratelimit.IPKey(ClientIPFrom(r.Context())), nil
+		return ratelimit.RuleIPKey(rule, ClientIPFrom(r.Context())), nil
 	case ratelimit.KeyUser:
 		p, ok := authz.PrincipalFrom(r.Context())
 		if !ok {

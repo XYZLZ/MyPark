@@ -107,3 +107,50 @@ func TestDeviceRule(t *testing.T) {
 		t.Error("KeyKind values were renumbered")
 	}
 }
+
+// One IPv6 client usually holds a whole /64, so the in-memory (ScopeLocal)
+// rules count the /64 as one client. IPv4 and IPv4-mapped IPv6 keep their
+// per-address key, and the M1 Postgres (ScopeShared) rules are unchanged.
+func TestRuleIPKey(t *testing.T) {
+	a := netip.MustParseAddr("2001:db8:1:2::1")
+	sameNet := netip.MustParseAddr("2001:db8:1:2:ffff:ffff:ffff:fffe")
+	otherNet := netip.MustParseAddr("2001:db8:1:3::1")
+	for _, rule := range []ratelimit.Rule{ratelimit.DeviceIP, ratelimit.PublicReadIP, ratelimit.SSEConnectIP} {
+		if ka, kb := ratelimit.RuleIPKey(rule, a), ratelimit.RuleIPKey(rule, sameNet); ka != kb {
+			t.Errorf("%s: same /64 keyed %q and %q, want one key", rule.Name, ka, kb)
+		}
+		if ka, kc := ratelimit.RuleIPKey(rule, a), ratelimit.RuleIPKey(rule, otherNet); ka == kc {
+			t.Errorf("%s: different /64s share key %q", rule.Name, ka)
+		}
+		if got := ratelimit.RuleIPKey(rule, netip.MustParseAddr("203.0.113.9")); got != "203.0.113.9" {
+			t.Errorf("%s: IPv4 key = %q, want the address", rule.Name, got)
+		}
+		if got := ratelimit.RuleIPKey(rule, netip.MustParseAddr("::ffff:203.0.113.9")); got != "203.0.113.9" {
+			t.Errorf("%s: mapped IPv4 key = %q, want the unmapped address", rule.Name, got)
+		}
+		if got := ratelimit.RuleIPKey(rule, netip.Addr{}); got != "ip:unknown" {
+			t.Errorf("%s: invalid addr key = %q, want ip:unknown", rule.Name, got)
+		}
+	}
+	// ScopeShared (M1, Postgres) keeps the full address.
+	if ka, kb := ratelimit.RuleIPKey(ratelimit.RegisterIP, a), ratelimit.RuleIPKey(ratelimit.RegisterIP, sameNet); ka == kb || ka != ratelimit.IPKey(a) {
+		t.Errorf("RegisterIP keys = %q, %q; want the per-address IPKey", ka, kb)
+	}
+}
+
+func TestClientNet(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"203.0.113.9", "203.0.113.9"},
+		{"::ffff:203.0.113.9", "203.0.113.9"},
+		{"2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:db8:1:2::"},
+		{"fe80::1%eth0", "fe80::"},
+	}
+	for _, tc := range tests {
+		if got := ratelimit.ClientNet(netip.MustParseAddr(tc.in)); got != netip.MustParseAddr(tc.want) {
+			t.Errorf("ClientNet(%s) = %s, want %s", tc.in, got, tc.want)
+		}
+	}
+	if got := ratelimit.ClientNet(netip.Addr{}); got.IsValid() {
+		t.Errorf("ClientNet(zero) = %s, want the zero Addr", got)
+	}
+}

@@ -173,3 +173,27 @@ func TestRateLimit_DeviceKeyIsDevicePublicID(t *testing.T) {
 		t.Errorf("no device: ran=%v status=%d key=%q, want 500 without a limiter call", ran, rec.Code, l.key)
 	}
 }
+
+// The in-memory rules key IPv6 clients by /64; Postgres rules keep the address.
+func TestRateLimit_LocalRulesKeyIPv6By64(t *testing.T) {
+	var logs testsupport.SyncBuffer
+	withIP := func(s string) func(*http.Request) *http.Request {
+		return func(r *http.Request) *http.Request {
+			return r.WithContext(reqctx.WithClientIP(r.Context(), netip.MustParseAddr(s)))
+		}
+	}
+	keyOf := func(rule ratelimit.Rule, ip string) string {
+		l := &stubLimiter{dec: ratelimit.Decision{Allowed: true}}
+		serve(l, rule, &logs, withIP(ip))
+		return l.key
+	}
+	if a, b := keyOf(ratelimit.PublicReadIP, "2001:db8::1"), keyOf(ratelimit.PublicReadIP, "2001:db8::2"); a != b {
+		t.Errorf("local rule keys = %q, %q; want one /64 key", a, b)
+	}
+	if a, b := keyOf(ratelimit.PublicReadIP, "2001:db8::1"), keyOf(ratelimit.PublicReadIP, "2001:db8:0:1::1"); a == b {
+		t.Errorf("different /64s share local key %q", a)
+	}
+	if a, b := keyOf(ratelimit.CodeSubmitIP, "2001:db8::1"), keyOf(ratelimit.CodeSubmitIP, "2001:db8::2"); a == b {
+		t.Errorf("shared rule keys = %q, %q; want per-address keys", a, b)
+	}
+}

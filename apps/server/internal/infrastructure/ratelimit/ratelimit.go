@@ -82,3 +82,30 @@ func IPKey(addr netip.Addr) string {
 	}
 	return addr.Unmap().String()
 }
+
+// ClientNet returns the network that stands for one client: an IPv4 address
+// (IPv4-mapped IPv6 is unmapped first) as is, an IPv6 address masked to its
+// /64, since one subscriber or host usually holds a whole /64. The zone is
+// dropped. The zero Addr stays zero.
+func ClientNet(addr netip.Addr) netip.Addr {
+	addr = addr.Unmap().WithZone("")
+	if !addr.Is6() {
+		return addr
+	}
+	p, err := addr.Prefix(64)
+	if err != nil {
+		return addr
+	}
+	return p.Addr()
+}
+
+// RuleIPKey returns the bucket key of addr for an IP-keyed rule. In-memory
+// rules (ScopeLocal) key an IPv6 client by its /64 (ClientNet), so one /64
+// cannot take a whole capacity limit with many addresses. Postgres rules
+// (ScopeShared, M1) keep the per-address IPKey.
+func RuleIPKey(rule Rule, addr netip.Addr) string {
+	if rule.Scope != ScopeLocal || !addr.IsValid() {
+		return IPKey(addr)
+	}
+	return ClientNet(addr).String()
+}

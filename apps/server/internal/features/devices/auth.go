@@ -151,7 +151,7 @@ func (a *Authenticator) refuse(w http.ResponseWriter, r *http.Request, claimed u
 		"reason", reason,
 		// Never the raw IP: the rate limiter's hash of the device_ip bucket key,
 		// so it matches that rule's throttle logs (key_hash).
-		"client_ip_hash", hex.EncodeToString(ratelimit.HashKey(ratelimit.DeviceIP, ratelimit.IPKey(reqctx.ClientIP(r.Context())))))
+		"client_ip_hash", hex.EncodeToString(ratelimit.HashKey(ratelimit.DeviceIP, ratelimit.RuleIPKey(ratelimit.DeviceIP, reqctx.ClientIP(r.Context())))))
 	httpx.WriteError(w, r, a.log, apperr.Unauthenticated(code))
 }
 

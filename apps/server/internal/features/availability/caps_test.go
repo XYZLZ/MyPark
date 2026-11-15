@@ -84,3 +84,23 @@ func TestStreamCaps_Concurrent(t *testing.T) {
 		t.Fatal("refused after every stream was released")
 	}
 }
+
+// One IPv6 client usually holds a whole /64, so the per-IP cap counts the
+// /64: otherwise one /64 could hold the whole global cap.
+func TestStreamCaps_IPv6SharesCapPer64(t *testing.T) {
+	caps := availability.NewStreamCaps(1, 10)
+	rel, ok := caps.Acquire(netip.MustParseAddr("2001:db8:1:2::1"))
+	if !ok {
+		t.Fatal("first refused")
+	}
+	if _, ok := caps.Acquire(netip.MustParseAddr("2001:db8:1:2:ffff::9")); ok {
+		t.Fatal("a second address in the same /64 got its own cap")
+	}
+	if _, ok := caps.Acquire(netip.MustParseAddr("2001:db8:1:3::1")); !ok {
+		t.Fatal("a different /64 was refused")
+	}
+	rel()
+	if _, ok := caps.Acquire(netip.MustParseAddr("2001:db8:1:2::77")); !ok {
+		t.Fatal("release did not free the /64's slot")
+	}
+}

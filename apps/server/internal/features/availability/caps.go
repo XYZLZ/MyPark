@@ -3,6 +3,8 @@ package availability
 import (
 	"net/netip"
 	"sync"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 )
 
 // StreamCaps bounds the open availability streams, per client IP and in
@@ -24,9 +26,11 @@ func NewStreamCaps(perIP, total int) *StreamCaps {
 
 // Acquire takes a stream slot for ip. ok is false when either cap is
 // reached. release frees the slot; calling it again does nothing. An IPv4
-// address and its IPv4-mapped IPv6 form share one count.
+// address and its IPv4-mapped IPv6 form share one count, and so do all the
+// IPv6 addresses of one /64 (ratelimit.ClientNet): otherwise one /64 could
+// hold the whole global cap.
 func (c *StreamCaps) Acquire(ip netip.Addr) (release func(), ok bool) {
-	ip = ip.Unmap()
+	ip = ratelimit.ClientNet(ip)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.open >= c.total || c.byIP[ip] >= c.perIP {
