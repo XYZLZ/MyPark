@@ -151,14 +151,17 @@ function placeholders(app, text) {
   return [...new Set(names)].sort();
 }
 
+const isCatalogKey = (key) => key.startsWith('errors.') || key.startsWith('validation.');
+const isSharedKey = (key) => SHARED_NAMESPACES.some((root) => key.startsWith(`${root}.`));
+
 /** Placeholder names must match across all four files, in each app's own brace style. */
-function checkPlaceholders(apps) {
+function checkPlaceholders(apps, isChecked = isCatalogKey) {
   const problems = [];
   const byKey = new Map();
   for (const [app, locales] of Object.entries(apps)) {
     for (const [file, messages] of Object.entries(locales)) {
       for (const [key, text] of flattenEntries(messages)) {
-        if (!key.startsWith('errors.') && !key.startsWith('validation.')) continue;
+        if (!isChecked(key)) continue;
         const names = placeholders(app, text);
         const label = `${app}/${file}`;
         if (names === null) {
@@ -204,6 +207,7 @@ export function checkSharedNamespaces(dirs = LOCALE_DIRS) {
       if (mobileOnly.length) problems.push(`${file} ${root}.* only on mobile: ${mobileOnly.join(', ')}`);
     }
   }
+  problems.push(...checkPlaceholders({ web: webLocales, mobile: mobileLocales }, isSharedKey));
   return problems;
 }
 

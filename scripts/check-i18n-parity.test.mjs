@@ -205,3 +205,39 @@ test('checkSharedNamespaces ignores app-only namespaces', () =>
   ));
 
 test('checkSharedNamespaces passes on the real repo', () => assert.deepEqual(checkSharedNamespaces(), []));
+
+// --- shared namespace placeholders ----------------------------------------
+
+function localeDirs(name, { web, mobile }) {
+  return [
+    { dir: writeLocales(`${name}-web`, web), optional: false },
+    { dir: writeLocales(`${name}-mobile`, mobile), optional: true },
+  ];
+}
+
+const msg = (text) => ({ availability: { stale: text } });
+const same = (text) => ({ 'es-DO.json': msg(text), 'en.json': msg(text) });
+
+test('checkSharedNamespaces accepts matching placeholders in each app style', () =>
+  assert.deepEqual(checkSharedNamespaces(localeDirs('ph-ok', { web: same('At {time}'), mobile: same('At {{time}}') })), []));
+
+test('checkSharedNamespaces reports a renamed parameter between web and mobile', () => {
+  const problems = checkSharedNamespaces(localeDirs('ph-renamed', { web: same('At {time}'), mobile: same('At {{when}}') }));
+  assert.ok(problems.some((p) => /availability\.stale placeholders differ/.test(p) && /\[time\]/.test(p) && /\[when\]/.test(p)), problems.join('\n'));
+});
+
+test('checkSharedNamespaces reports the wrong brace style on web', () => {
+  const problems = checkSharedNamespaces(localeDirs('ph-web-style', { web: same('At {{time}}'), mobile: same('At {{time}}') }));
+  assert.ok(problems.some((p) => /web\/.*availability\.stale.*wrong placeholder style/.test(p)), problems.join('\n'));
+});
+
+test('checkSharedNamespaces reports the wrong brace style on mobile', () => {
+  const problems = checkSharedNamespaces(localeDirs('ph-mobile-style', { web: same('At {time}'), mobile: same('At {time}') }));
+  assert.ok(problems.some((p) => /mobile\/.*availability\.stale.*wrong placeholder style/.test(p)), problems.join('\n'));
+});
+
+test('checkSharedNamespaces reports a single locale that differs', () => {
+  const web = { 'es-DO.json': msg('A las {time}'), 'en.json': msg('At {when}') };
+  const problems = checkSharedNamespaces(localeDirs('ph-one-locale', { web, mobile: { 'es-DO.json': msg('A las {{time}}'), 'en.json': msg('At {{time}}') } }));
+  assert.ok(problems.some((p) => /availability\.stale placeholders differ/.test(p) && /en\.json/.test(p)), problems.join('\n'));
+});
