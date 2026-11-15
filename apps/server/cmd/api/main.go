@@ -130,9 +130,10 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	// One hub fans lot changes out to every stream. Its listener holds a
 	// dedicated connection, hijacked out of the request pool (design §11.6).
-	hub := availability.NewHub(
-		availability.NewService(availabilitypg.NewRepo(pool), availability.NoReservations{}, clock.System{}),
-		clock.System{}, log)
+	// REST and SSE share one availability service, so both see the same
+	// reservation holds when M3 replaces NoReservations.
+	availSvc := newAvailabilityService(pool, clock.System{})
+	hub := availability.NewHub(availSvc, clock.System{}, log)
 	listener := pubsub.New(pool, log, pubsub.Handlers{
 		LotChanged: hub.LotChanged, SpaceChanged: hub.SpaceChanged, Reconnected: hub.Resync,
 	})
@@ -161,6 +162,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		limiter: ratelimit.NewComposite(ratelimit.NewPostgres(pool, clock.System{}), ratelimit.NewMemory(clock.System{})),
 		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
 
+		avail:      availSvc,
 		hub:        hub,
 		listenerUp: listener.Connected,
 	}
@@ -191,6 +193,7 @@ type deps struct {
 	limiter ratelimit.Limiter
 
 	// Built in run (PF8). Handler-only tests leave them nil.
+	avail      *availability.Service // nil: newHandlerWithRoutes builds one on pool and clock
 	hub        *availability.Hub
 	listenerUp func() bool // the LISTEN connection is up (/readyz)
 }
@@ -230,8 +233,10 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	lotRepo := lotspg.NewRepo(d.pool)
 	tariffs.NewHandler(tariffSvc, lotRepo, d.clock, d.log).Register(r)
 
-	// NoReservations until M3 (M2C-1).
-	availSvc := availability.NewService(availabilitypg.NewRepo(d.pool), availability.NoReservations{}, d.clock)
+	availSvc := d.avail
+	if availSvc == nil {
+		availSvc = newAvailabilityService(d.pool, d.clock)
+	}
 	lots.NewHandler(lots.NewService(lotRepo), availSvc, d.log).Register(r)
 	availability.NewHandler(availSvc, lotRepo, d.log).Register(r)
 
@@ -277,4 +282,10 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	users.NewHandler(usersSvc, validation.New(), d.log).Register(r)
 
 	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins()), r.Routes()
+}
+
+// newAvailabilityService builds the availability service. NoReservations
+// until M3 (M2C-1).
+func newAvailabilityService(pool *pgxpool.Pool, clk clock.Clock) *availability.Service {
+	return availability.NewService(availabilitypg.NewRepo(pool), availability.NoReservations{}, clk)
 }

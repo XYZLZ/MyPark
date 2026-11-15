@@ -62,8 +62,10 @@ func (w *Writer) Retry(ms int) error {
 	return w.flush()
 }
 
-// Event writes one event. The id line is omitted when id is empty. data is
-// written as is; a line break in it starts another data line.
+// Event writes one event. The id line is omitted when id is empty. data must
+// be single-line JSON, as json.Marshal produces (the hub payloads are). A
+// LF in data starts another data line, but a bare CR is not split and would
+// end the line early on the client.
 func (w *Writer) Event(name, id string, data []byte) error {
 	if strings.ContainsAny(name, "\r\n") || strings.ContainsAny(id, "\r\n") {
 		return fmt.Errorf("sse: line break in event name or id")

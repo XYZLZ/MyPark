@@ -104,6 +104,9 @@ func TestListener_ReceivesAndReconnects(t *testing.T) {
 	})
 
 	eventually(t, "the first connection", l.Connected)
+	// Called on the first connect too: a hub that got subscribers while the
+	// database was unreachable must resync.
+	receive(t, reconnected, "Reconnected after the first connect")
 	notify := func(channel, payload string) {
 		t.Helper()
 		if _, err := td.Super.Exec(t.Context(), "select pg_notify($1, $2)", channel, payload); err != nil {

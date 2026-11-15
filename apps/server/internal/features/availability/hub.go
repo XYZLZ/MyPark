@@ -14,8 +14,14 @@ import (
 // that falls this far behind gets one full spaces snapshot instead (M2C-39).
 const SpacesQueueCap = 300
 
-// queryTimeout bounds one snapshot or spaces query of the hub.
-const queryTimeout = 5 * time.Second
+// queryTimeout bounds one snapshot or spaces query of the hub. It stays
+// well inside the 2 s push budget (M2 exit criterion).
+const queryTimeout = 1500 * time.Millisecond
+
+// maxRefetches bounds the immediate refetches of a full spaces snapshot that
+// a resync or lost deltas invalidated; after that the refetch is scheduled
+// one CoalesceWindow later, so the loop cannot livelock.
+const maxRefetches = 3
 
 // SnapshotSource reads the lot state the hub fans out. *Service implements it.
 type SnapshotSource interface {
@@ -80,23 +86,47 @@ func (s *Subscriber) close() {
 }
 
 // lotState is the hub state of one lot with subscribers. Guarded by Hub.mu.
+// lotState is the hub state of one lot with subscribers. Guarded by Hub.mu.
 type lotState struct {
-	id    int64
-	subs  map[*Subscriber]struct{}
-	co    Coalescer
-	timer clock.Stopper
+	id   int64
+	subs map[*Subscriber]struct{}
+	co   Coalescer
 
-	pushing, pushAgain   bool // an availability query is in flight; rerun it after
-	fetching, fetchAgain bool // a full spaces query is in flight; rerun it after
+	timer       clock.Stopper // trailing edge
+	retry       clock.Stopper // availability retry after a failed query
+	spacesRetry clock.Stopper // full spaces refetch after a failure or backoff
+
+	pushing, pushAgain   bool // an availability query is in flight; push again after it
+	fetching, fetchAgain bool // a full spaces query is in flight; its result is stale
+	refetches            int  // immediate refetches since the last delivered full snapshot
 	pending              []SpaceState
+}
+
+func (ls *lotState) stopTimers() {
+	for _, t := range []clock.Stopper{ls.timer, ls.retry, ls.spacesRetry} {
+		if t != nil {
+			t.Stop()
+		}
+	}
+	ls.timer, ls.retry, ls.spacesRetry = nil, nil, nil
+}
+
+func (ls *lotState) anyNeedFull() bool {
+	for s := range ls.subs {
+		if s.needFull {
+			return true
+		}
+	}
+	return false
 }
 
 // Hub fans lot changes out to SSE subscribers (design §11.4, M2C-39): per lot,
 // leading and trailing edge coalescing, one snapshot query per push encoded
 // once for every subscriber, and a bounded delta queue per subscriber for
-// spaces. It owns no goroutine: work runs on the caller (the listener) or on
-// a coalescing timer, queries run outside the lock, and the hub never blocks
-// on a subscriber.
+// spaces. Queries run on their own goroutine, one at a time per lot, so a
+// slow lot never holds the caller (the listener) or other lots. A failed
+// query is retried one CoalesceWindow later. The hub never blocks on a
+// subscriber.
 type Hub struct {
 	src    SnapshotSource
 	timers clock.Timers
@@ -104,6 +134,7 @@ type Hub struct {
 	ctx    context.Context // canceled by Close, ends in-flight queries
 	cancel context.CancelFunc
 	done   chan struct{}
+	wg     sync.WaitGroup // query goroutines; Add only under mu while open
 
 	mu     sync.Mutex
 	lots   map[int64]*lotState
@@ -150,80 +181,100 @@ func (h *Hub) unsubscribe(ls *lotState, s *Subscriber) {
 	delete(ls.subs, s)
 	s.close()
 	if len(ls.subs) == 0 && h.lots[ls.id] == ls {
-		if ls.timer != nil {
-			ls.timer.Stop()
-		}
+		ls.stopTimers()
 		delete(h.lots, ls.id)
 	}
 }
+
+// live reports whether ls is still the open hub's state for its lot. mu held.
+func (h *Hub) live(ls *lotState) bool { return !h.closed && h.lots[ls.id] == ls }
 
 // LotChanged handles a lot_changed notification. The pushed payload carries
 // the version read by the snapshot query, not this one.
 func (h *Hub) LotChanged(lotID, _ int64) {
 	h.mu.Lock()
-	ls := h.lots[lotID]
-	if h.closed || ls == nil {
-		h.mu.Unlock()
-		return
+	defer h.mu.Unlock()
+	if ls := h.lots[lotID]; ls != nil && !h.closed {
+		h.bump(ls)
 	}
+}
+
+// bump runs a change through the coalescer: push now, or arm the trailing
+// edge. Every push goes through here, so pushes stay CoalesceWindow apart.
+// mu held.
+func (h *Hub) bump(ls *lotState) {
 	now := h.timers.Now()
 	pushNow, trailingAt := ls.co.Bump(now)
 	if !trailingAt.IsZero() {
 		ls.timer = h.timers.AfterFunc(trailingAt.Sub(now), func() { h.trailing(ls) })
 	}
-	h.mu.Unlock()
 	if pushNow {
-		h.pushAvailability(ls)
+		h.startPush(ls)
 	}
 }
 
 func (h *Hub) trailing(ls *lotState) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	ls.timer = nil
-	fire := !h.closed && h.lots[ls.id] == ls && ls.co.Fire(h.timers.Now())
-	h.mu.Unlock()
-	if fire {
-		h.pushAvailability(ls)
+	if h.live(ls) && ls.co.Fire(h.timers.Now()) {
+		h.startPush(ls)
 	}
 }
 
-// pushAvailability queries the lot once and offers the encoded snapshot to
-// every subscriber. Pushes of one lot never overlap: a push requested while
-// one is in flight reruns it once afterwards, so payloads stay in order.
-func (h *Hub) pushAvailability(ls *lotState) {
+func (h *Hub) retryPush(ls *lotState) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	ls.retry = nil
+	if h.live(ls) {
+		h.bump(ls)
+	}
+}
+
+// startPush starts the availability query of the lot, or, when one is in
+// flight, asks for another push after it. mu held.
+func (h *Hub) startPush(ls *lotState) {
 	if ls.pushing {
 		ls.pushAgain = true
-		h.mu.Unlock()
 		return
 	}
 	ls.pushing = true
-	h.mu.Unlock()
-	for {
-		ctx, cancel := context.WithTimeout(h.ctx, queryTimeout)
-		snap, err := h.src.Snapshot(ctx, ls.id)
-		cancel()
-		var payload []byte
-		if err == nil {
-			payload, err = json.Marshal(snap)
+	h.wg.Add(1)
+	go h.push(ls)
+}
+
+// push queries the lot once and offers the encoded snapshot to every
+// subscriber. A push asked for meanwhile goes back through the coalescer; a
+// failure is retried one CoalesceWindow later.
+func (h *Hub) push(ls *lotState) {
+	defer h.wg.Done()
+	ctx, cancel := context.WithTimeout(h.ctx, queryTimeout)
+	snap, err := h.src.Snapshot(ctx, ls.id)
+	cancel()
+	var payload []byte
+	if err == nil {
+		payload, err = json.Marshal(snap)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ls.pushing = false
+	again := ls.pushAgain
+	ls.pushAgain = false
+	if !h.live(ls) {
+		return
+	}
+	if err != nil {
+		h.log.Warn("availability hub: snapshot failed, retrying", "lot_id", ls.id, "err", err)
+		if ls.retry == nil {
+			ls.retry = h.timers.AfterFunc(CoalesceWindow, func() { h.retryPush(ls) })
 		}
-		h.mu.Lock()
-		switch {
-		case h.closed:
-		case err != nil:
-			h.log.Warn("availability hub: snapshot failed", "lot_id", ls.id, "err", err)
-		default:
-			for s := range ls.subs {
-				s.offer(payload)
-			}
-		}
-		if h.closed || !ls.pushAgain {
-			ls.pushing = false
-			h.mu.Unlock()
-			return
-		}
-		ls.pushAgain = false
-		h.mu.Unlock()
+		return
+	}
+	for s := range ls.subs {
+		s.offer(payload)
+	}
+	if again {
+		h.bump(ls)
 	}
 }
 
@@ -232,29 +283,23 @@ func (h *Hub) pushAvailability(ls *lotState) {
 // full snapshot, so a slow subscriber never blocks the hub.
 func (h *Hub) SpaceChanged(lotID int64, code, state string) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	ls := h.lots[lotID]
 	if h.closed || ls == nil {
-		h.mu.Unlock()
 		return
 	}
 	delta := SpaceState{Code: code, State: state}
-	anyNeedFull := false
 	for s := range ls.subs {
-		if !s.withSpaces {
+		if !s.withSpaces || s.needFull {
 			continue
 		}
-		if !s.needFull {
-			select {
-			case s.spaces <- SpacesMsg{Spaces: []SpaceState{delta}}:
-				continue
-			default:
-				s.drainSpaces()
-				s.needFull = true
-			}
+		select {
+		case s.spaces <- SpacesMsg{Spaces: []SpaceState{delta}}:
+		default:
+			s.drainSpaces()
+			s.needFull = true
 		}
-		anyNeedFull = true
 	}
-	fetch := false
 	switch {
 	case ls.fetching:
 		// Replayed after the full snapshot in flight, which may predate it.
@@ -264,114 +309,128 @@ func (h *Hub) SpaceChanged(lotID int64, code, state string) {
 		} else {
 			ls.fetchAgain = true
 		}
-	case anyNeedFull:
-		fetch = true
-	}
-	h.mu.Unlock()
-	if fetch {
-		h.fetchSpaces(ls)
+	case ls.spacesRetry == nil && ls.anyNeedFull():
+		h.startFetch(ls)
 	}
 }
 
-// fetchSpaces queries the spaces of the lot once and sends the full snapshot,
-// then the deltas received meanwhile, to every subscriber that needs it.
-func (h *Hub) fetchSpaces(ls *lotState) {
-	h.mu.Lock()
+// startFetch starts the full spaces query of the lot, or marks the one in
+// flight stale. mu held.
+func (h *Hub) startFetch(ls *lotState) {
 	if ls.fetching {
 		ls.fetchAgain = true
-		h.mu.Unlock()
 		return
 	}
 	ls.fetching = true
-	h.mu.Unlock()
-	for {
-		ctx, cancel := context.WithTimeout(h.ctx, queryTimeout)
-		spaces, err := h.src.Spaces(ctx, ls.id)
-		cancel()
-		h.mu.Lock()
-		switch {
-		case h.closed || ls.fetchAgain: // stale: a resync or lost deltas ask for a fresh one
-		case err != nil:
-			h.log.Warn("availability hub: spaces failed", "lot_id", ls.id, "err", err)
-		default:
-			for s := range ls.subs {
-				if !s.needFull {
-					continue
-				}
-				s.drainSpaces()
-				s.spaces <- SpacesMsg{Full: true, Spaces: spaces}
-				for _, d := range ls.pending {
-					s.spaces <- SpacesMsg{Spaces: []SpaceState{d}}
-				}
-				s.needFull = false
-			}
-		}
+	ls.pending = nil
+	h.wg.Add(1)
+	go h.fetch(ls)
+}
+
+func (h *Hub) retryFetch(ls *lotState) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ls.spacesRetry = nil
+	if h.live(ls) && ls.anyNeedFull() {
+		h.startFetch(ls)
+	}
+}
+
+// fetch queries the spaces of the lot once and sends the full snapshot, then
+// the deltas received meanwhile, to every subscriber that needs it. A stale
+// result is refetched at once up to maxRefetches times, then one
+// CoalesceWindow later, as is a failed one.
+func (h *Hub) fetch(ls *lotState) {
+	defer h.wg.Done()
+	ctx, cancel := context.WithTimeout(h.ctx, queryTimeout)
+	spaces, err := h.src.Spaces(ctx, ls.id)
+	cancel()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	stale := ls.fetchAgain
+	ls.fetchAgain = false
+	if !h.live(ls) {
+		ls.fetching, ls.pending = false, nil
+		return
+	}
+	switch {
+	case err != nil:
+		h.log.Warn("availability hub: spaces failed, retrying", "lot_id", ls.id, "err", err)
+	case stale && ls.refetches < maxRefetches:
+		ls.refetches++
 		ls.pending = nil
-		if h.closed || !ls.fetchAgain {
-			ls.fetching = false
-			h.mu.Unlock()
-			return
+		h.wg.Add(1)
+		go h.fetch(ls) // still fetching
+		return
+	case stale:
+		// Keeps changing under the fetch: back off instead of looping.
+	default:
+		for s := range ls.subs {
+			if !s.needFull {
+				continue
+			}
+			s.drainSpaces()
+			s.spaces <- SpacesMsg{Full: true, Spaces: spaces}
+			for _, d := range ls.pending {
+				s.spaces <- SpacesMsg{Spaces: []SpaceState{d}}
+			}
+			s.needFull = false
 		}
-		ls.fetchAgain = false
-		h.mu.Unlock()
+		ls.fetching, ls.pending, ls.refetches = false, nil, 0
+		return
+	}
+	ls.fetching, ls.pending, ls.refetches = false, nil, 0
+	if ls.spacesRetry == nil {
+		ls.spacesRetry = h.timers.AfterFunc(CoalesceWindow, func() { h.retryFetch(ls) })
 	}
 }
 
 // Resync sends a fresh availability snapshot to every subscriber and a full
-// spaces snapshot to those that want spaces. The listener calls it after a
-// reconnect, when notifications may have been missed.
+// spaces snapshot to those that want spaces. The listener calls it after
+// every connect, since notifications may have been missed.
 func (h *Hub) Resync() {
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return
-	}
-	type job struct {
-		ls     *lotState
-		spaces bool
-	}
-	jobs := make([]job, 0, len(h.lots))
-	for _, ls := range h.lots {
-		j := job{ls: ls}
-		for s := range ls.subs {
-			if s.withSpaces {
-				s.drainSpaces()
-				s.needFull, j.spaces = true, true
-			}
-		}
-		jobs = append(jobs, j)
-	}
-	h.mu.Unlock()
-	for _, j := range jobs {
-		h.pushAvailability(j.ls)
-		if j.spaces {
-			h.fetchSpaces(j.ls)
-		}
-	}
-}
-
-// Close ends every subscriber, stops the coalescing timers and cancels
-// in-flight queries. Later calls do nothing. Shutdown calls it before
-// srv.Shutdown so open streams end at once.
-func (h *Hub) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return
 	}
+	for _, ls := range h.lots {
+		h.bump(ls)
+		spaces := false
+		for s := range ls.subs {
+			if s.withSpaces {
+				s.drainSpaces()
+				s.needFull, spaces = true, true
+			}
+		}
+		if spaces {
+			h.startFetch(ls)
+		}
+	}
+}
+
+// Close ends every subscriber, stops the timers, cancels in-flight queries
+// and waits for them. Later calls do nothing. Shutdown calls it before
+// srv.Shutdown so open streams end at once.
+func (h *Hub) Close() {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
 	h.closed = true
 	h.cancel()
 	for _, ls := range h.lots {
-		if ls.timer != nil {
-			ls.timer.Stop()
-		}
+		ls.stopTimers()
 		for s := range ls.subs {
 			s.close()
 		}
 	}
 	clear(h.lots)
+	h.mu.Unlock()
+	h.wg.Wait()
 	close(h.done)
 }
 
-// Done is closed by Close.
+// Done is closed once Close has ended every subscriber and query.
 func (h *Hub) Done() <-chan struct{} { return h.done }

@@ -30,8 +30,10 @@ const closeTimeout = 5 * time.Second
 type Handlers struct {
 	LotChanged   func(lotID, version int64)
 	SpaceChanged func(lotID int64, code, state string)
-	// Reconnected runs after a reconnect has LISTEN in place again.
-	// Notifications sent while disconnected are lost, so it resyncs.
+	// Reconnected runs each time LISTEN is in place, the first connect
+	// included: notifications sent while disconnected (or before the first
+	// connect, if subscribers came first) are lost, so it resyncs. With no
+	// subscribers it is a no-op.
 	Reconnected func()
 }
 
@@ -58,12 +60,10 @@ func (l *Listener) Connected() bool { return l.connected.Load() }
 // up to 5 s) after any error. It returns ctx's error.
 func (l *Listener) Run(ctx context.Context) error {
 	delay := backoffMin
-	for attempt := 0; ; attempt++ {
+	for {
 		err := l.session(ctx, func() {
 			delay = backoffMin
-			if attempt > 0 {
-				l.h.Reconnected()
-			}
+			l.h.Reconnected()
 		})
 		l.connected.Store(false)
 		if ctx.Err() != nil {
