@@ -3,8 +3,13 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/middleware"
 )
 
@@ -64,6 +69,32 @@ func assertEnvelopeShape(t *testing.T, label string, rec *httptest.ResponseRecor
 	}
 }
 
+// assertStreamOrEnvelope checks the stream route: an unknown lot is a 404
+// envelope, a known lot an event stream (not enveloped, design §11.3) that
+// starts with retry: 3000.
+func assertStreamOrEnvelope(t *testing.T, e *apiEnv) {
+	t.Helper()
+	path := "/v1/lots/" + uuid.NewString() + "/availability/stream"
+	rec := e.serve(streamReq(path), "")
+	if rec.Code != http.StatusNotFound || errCode(decodeBody(t, rec)) != string(errcodes.LotNotFound) {
+		t.Errorf("unknown lot: got %d %s, want 404 lot.not_found", rec.Code, rec.Body)
+	}
+	assertEnvelopeShape(t, "unknown lot", rec)
+
+	var pub uuid.UUID
+	lotID := testsupport.SeedPilotLot(t, e.db)
+	if err := e.db.App.QueryRow(t.Context(), "select public_id from lots where id = $1", lotID).Scan(&pub); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.serve(streamReq("/v1/lots/"+pub.String()+"/availability/stream"), "")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("known lot: got %d %q, want 200 text/event-stream", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !strings.HasPrefix(rec.Body.String(), "retry: 3000\n\n") {
+		t.Errorf("known lot: body starts %q, want retry: 3000", rec.Body.String())
+	}
+}
+
 // Spec 6.0: every registered route answers with the envelope, for an
 // anonymous caller and for the authorized owner.
 func TestEveryRouteReturnsEnvelope(t *testing.T) {
@@ -72,6 +103,10 @@ func TestEveryRouteReturnsEnvelope(t *testing.T) {
 		entry, ok := matrix[rt.Pattern]
 		if !ok {
 			t.Errorf("route %s has no matrix entry", rt.Pattern)
+			continue
+		}
+		if rt.Pattern == streamPattern {
+			t.Run(rt.Pattern, func(t *testing.T) { assertStreamOrEnvelope(t, e) })
 			continue
 		}
 		t.Run(rt.Pattern, func(t *testing.T) {

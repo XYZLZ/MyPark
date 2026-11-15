@@ -87,6 +87,7 @@ func newAPIEnv(t *testing.T, mods ...func(*deps)) *apiEnv {
 		cfg:     cfg,
 		pool:    db.App,
 		clock:   clk,
+		timers:  clk,
 		health:  readyHealth(),
 		signer:  signer,
 		hasher:  hasher,

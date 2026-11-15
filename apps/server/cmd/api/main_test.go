@@ -152,10 +152,19 @@ func getReadyz(t *testing.T, baseURL string) (int, map[string]any) {
 // migration status: a reachable, migrated database makes /readyz 200.
 func TestRun_ReadyzReady_Integration(t *testing.T) {
 	base := startRun(t, testEnv(map[string]string{"HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": testsupport.NewDBURL(t)}))
-	status, body := getReadyz(t, base)
-	data, _ := body["data"].(map[string]any)
-	if status != http.StatusOK || data["status"] != "ready" {
-		t.Fatalf("/readyz = %d %v, want 200 ready", status, body)
+	// The listener connects in the background: /readyz is 503 until it has.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status, body := getReadyz(t, base)
+		data, _ := body["data"].(map[string]any)
+		checks, _ := data["checks"].(map[string]any)
+		if status == http.StatusOK && data["status"] == "ready" && checks["listener"] == "ok" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("/readyz = %d %v, want 200 ready with listener ok", status, body)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -169,8 +178,9 @@ func TestRun_ReadyzDBDown(t *testing.T) {
 	status, body := getReadyz(t, base)
 	errObj, _ := body["error"].(map[string]any)
 	details, _ := errObj["details"].(map[string]any)
-	if status != http.StatusServiceUnavailable || errObj["code"] != "health.not_ready" || details["database"] != "fail" {
-		t.Fatalf("/readyz = %d %v, want 503 health.not_ready database=fail", status, body)
+	if status != http.StatusServiceUnavailable || errObj["code"] != "health.not_ready" || details["database"] != "fail" ||
+		details["listener"] != "fail" {
+		t.Fatalf("/readyz = %d %v, want 503 health.not_ready database=fail listener=fail", status, body)
 	}
 }
 

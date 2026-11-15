@@ -99,34 +99,14 @@ func TestOpenAPI_CoversRegisteredRoutes(t *testing.T) {
 
 var pendingSliceID = regexp.MustCompile(`^(S|C)[0-9.]+$`)
 
-// The M2 public lot and device operations are published before they are served. This must
-// not pass vacuously: the seven operationIds have to exist, each is either still
-// pending or already served, and a pending one is never in the router. Serving
-// an operation without removing its marker fails too.
+// An operation published before it is served (contract first, M2C-12)
+// carries x-mypark-pending with a slice id and is never in the router;
+// serving it without removing the marker fails. The M2 lot and device
+// operations are all served now, so TestOpenAPI_CoversRegisteredRoutes
+// checks them like any other route; no list of them is kept here.
 func TestOpenAPI_PendingOperationsAreNotServed(t *testing.T) {
 	ops := loadOperations(t)
 	served := servedRoutes()
-
-	byID := map[string]string{}
-	for key, op := range ops {
-		if op.id != "" {
-			byID[op.id] = key
-		}
-	}
-	for _, id := range []string{
-		"listLots", "getLot", "getLotAvailability", "getLotSpaces", "getLotTariff", "streamLotAvailability",
-		"postDeviceEvent",
-	} {
-		key, ok := byID[id]
-		if !ok {
-			t.Errorf("operationId %s is not in openapi.yaml", id)
-			continue
-		}
-		if ops[key].pending == "" && !served[key] {
-			t.Errorf("%s (%s) is neither marked x-mypark-pending nor served", id, key)
-		}
-	}
-
 	for key, op := range ops {
 		if op.pending == "" {
 			continue

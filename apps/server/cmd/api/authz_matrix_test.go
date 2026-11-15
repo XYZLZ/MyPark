@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -37,6 +38,16 @@ type matrixEntry struct {
 
 func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.String() }
 
+const streamPattern = "GET /v1/lots/{id}/availability/stream"
+
+// streamReq builds a stream request that ends after 200 ms, so a stream
+// served into a ResponseRecorder returns instead of running forever.
+func streamReq(path string) *http.Request {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	time.AfterFunc(time.Second, cancel)
+	return httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+}
+
 // matrix has one entry per route pattern of the registry. TestAuthzMatrix
 // fails for a registered route that is missing here.
 var matrix = map[string]matrixEntry{
@@ -54,6 +65,9 @@ var matrix = map[string]matrixEntry{
 	}},
 	"GET /v1/lots/{id}/tariff": {build: func(*fixture) *http.Request {
 		return jsonReq("GET", "/v1/lots/"+uuid.NewString()+"/tariff", nil)
+	}},
+	streamPattern: {build: func(*fixture) *http.Request {
+		return streamReq("/v1/lots/" + uuid.NewString() + "/availability/stream")
 	}},
 
 	"POST /v1/auth/register": {build: func(f *fixture) *http.Request {
@@ -393,6 +407,7 @@ var specPolicy = map[string]struct {
 	"GET /v1/lots/{id}/availability":   {access: "public", limit: &ratelimit.PublicReadIP},
 	"GET /v1/lots/{id}/spaces":         {access: "public", limit: &ratelimit.PublicReadIP},
 	"GET /v1/lots/{id}/tariff":         {access: "public", limit: &ratelimit.PublicReadIP},
+	streamPattern:                      {access: "public", limit: &ratelimit.SSEConnectIP},
 	"POST /v1/auth/register":           {access: "public", limit: &ratelimit.RegisterIP},
 	"POST /v1/auth/verify":             {access: "public", limit: &ratelimit.CodeSubmitIP},
 	"POST /v1/auth/verify/resend":      {access: "public", limit: &ratelimit.CodeRequestIP},

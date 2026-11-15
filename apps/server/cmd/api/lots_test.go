@@ -193,7 +193,7 @@ func TestSpaces_280OrderedNoPrivateData(t *testing.T) {
 // Review focus 4: whatever the id, an unknown lot is one 404 with one body.
 func TestLots_GarbageIDIs404(t *testing.T) {
 	e := newLotEnv(t)
-	suffixes := []string{"", "/availability", "/spaces", "/tariff"}
+	suffixes := []string{"", "/availability", "/spaces", "/tariff", "/availability/stream"}
 	var first string
 	for _, id := range []string{"zona-colonial", "123", uuid.NewString(), "not-a-uuid"} {
 		for _, suf := range suffixes {

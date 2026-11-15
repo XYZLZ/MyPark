@@ -25,11 +25,32 @@ type Handler struct {
 	version    string
 	db         Pinger
 	migrations MigrationStatus
+	extra      []namedCheck
+}
+
+// namedCheck is a readiness check added with WithCheck.
+type namedCheck struct {
+	name string
+	fn   func(ctx context.Context) bool
 }
 
 // NewHandler returns a Handler for the given service name and build version.
 func NewHandler(service, version string, p Pinger, m MigrationStatus) *Handler {
 	return &Handler{service: service, version: version, db: p, migrations: m}
+}
+
+// WithCheck adds a readiness check reported under name as "ok" or "fail"; a
+// failing check makes /readyz answer 503 health.not_ready. Adding a name again
+// replaces its check. It returns h. Call it before serving.
+func (h *Handler) WithCheck(name string, fn func(ctx context.Context) bool) *Handler {
+	for i, c := range h.extra {
+		if c.name == name {
+			h.extra[i].fn = fn
+			return h
+		}
+	}
+	h.extra = append(h.extra, namedCheck{name: name, fn: fn})
+	return h
 }
 
 // Register adds GET /healthz and GET /readyz to mux.
@@ -56,28 +77,42 @@ type healthBody struct {
 }
 
 type readinessChecks struct {
-	Database   string `json:"database"`
-	Migrations string `json:"migrations"`
+	Database   string
+	Migrations string
 }
 
 type readinessBody struct {
-	Status string          `json:"status"`
-	Checks readinessChecks `json:"checks"`
+	Status string            `json:"status"`
+	Checks map[string]string `json:"checks"`
 }
 
-// readyz returns 200 only when the database answers and migrations are
-// current; otherwise 503 health.not_ready with both checks in details.
+// readyz returns 200 only when the database answers, migrations are current
+// and every added check passes; otherwise 503 health.not_ready with every
+// check in details.
 func (h *Handler) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
 	defer cancel()
 
-	checks := h.check(ctx)
-	if checks.Database == checkOK && checks.Migrations == checkOK {
+	base := h.check(ctx)
+	checks := map[string]string{"database": base.Database, "migrations": base.Migrations}
+	ready := base.Database == checkOK && base.Migrations == checkOK
+	for _, c := range h.extra {
+		checks[c.name] = checkFail
+		if c.fn(ctx) {
+			checks[c.name] = checkOK
+		} else {
+			ready = false
+		}
+	}
+	if ready {
 		response.OK(w, r, http.StatusOK, readinessBody{Status: "ready", Checks: checks})
 		return
 	}
-	response.Error(w, r, http.StatusServiceUnavailable, errcodes.HealthNotReady, "service is not ready",
-		map[string]any{"database": checks.Database, "migrations": checks.Migrations})
+	details := make(map[string]any, len(checks))
+	for k, v := range checks {
+		details[k] = v
+	}
+	response.Error(w, r, http.StatusServiceUnavailable, errcodes.HealthNotReady, "service is not ready", details)
 }
 
 // check runs the readiness checks. When the database is unreachable the

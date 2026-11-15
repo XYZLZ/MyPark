@@ -161,3 +161,59 @@ func TestRegisterLiveness(t *testing.T) {
 		t.Fatalf("/readyz status = %d, want 404", rec.Code)
 	}
 }
+
+func serveHandler(t *testing.T, h *health.Handler) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	mux := http.NewServeMux()
+	h.Register(mux)
+	rec := httptest.NewRecorder()
+	middleware.RequestID(mux).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	return rec, body
+}
+
+// WithCheck adds a named check to /readyz: "ok" or "fail", and any failing
+// check makes the service not ready.
+func TestReadyz_WithCheck(t *testing.T) {
+	up := false
+	h := health.NewHandler("api", "test", fakePinger{}, fakeMigrations{current: 3, expected: 3}).
+		WithCheck("listener", func(context.Context) bool { return up })
+
+	rec, body := serveHandler(t, h)
+	details := notReadyDetails(t, rec, body)
+	if details["listener"] != "fail" || details["database"] != "ok" || details["migrations"] != "ok" {
+		t.Errorf("details = %v, want listener=fail database=ok migrations=ok", details)
+	}
+
+	up = true
+	rec, body = serveHandler(t, h)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %v)", rec.Code, body)
+	}
+	data, _ := body["data"].(map[string]any)
+	checks, _ := data["checks"].(map[string]any)
+	if checks["listener"] != "ok" || checks["database"] != "ok" || checks["migrations"] != "ok" {
+		t.Errorf("checks = %v, want listener, database and migrations ok", checks)
+	}
+}
+
+// A check runs even when the database is down, and a handler without extra
+// checks reports only the database and the migrations.
+func TestReadyz_WithCheckDBDown(t *testing.T) {
+	h := health.NewHandler("api", "test", fakePinger{err: errors.New("down")}, fakeMigrations{}).
+		WithCheck("listener", func(context.Context) bool { return true })
+	rec, body := serveHandler(t, h)
+	details := notReadyDetails(t, rec, body)
+	if details["listener"] != "ok" || details["database"] != "fail" {
+		t.Errorf("details = %v, want listener=ok database=fail", details)
+	}
+
+	rec, body = serveHandler(t, health.NewHandler("api", "test", fakePinger{}, fakeMigrations{current: 1, expected: 1}))
+	data, _ := body["data"].(map[string]any)
+	if checks, _ := data["checks"].(map[string]any); rec.Code != http.StatusOK || len(checks) != 2 {
+		t.Errorf("/readyz = %d checks %v, want 200 with database and migrations only", rec.Code, checks)
+	}
+}

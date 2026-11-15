@@ -802,7 +802,6 @@ paths:
         `Retry-After`.
       tags: [lots]
       security: []
-      x-mypark-pending: S11.2
       parameters:
         - name: include
           in: query
@@ -822,6 +821,9 @@ paths:
           headers:
             Cache-Control:
               schema: { type: string, const: no-store }
+            X-Accel-Buffering:
+              description: Tells a buffering reverse proxy (nginx) to pass each event through at once.
+              schema: { type: string, const: "no" }
           content:
             text/event-stream:
               schema:

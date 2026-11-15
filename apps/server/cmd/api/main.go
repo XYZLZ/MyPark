@@ -107,7 +107,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 
 	// The pool connects lazily: an unreachable database does not stop the
 	// API from booting, /readyz reports it as 503 instead.
-	pool, err := database.NewPool(ctx, cfg.DatabaseURL(), cfg.DBMaxConns())
+	pool, err := database.NewPool(ctx, cfg.DatabaseURL(), requestPoolConns(cfg.DBMaxConns()))
 	if err != nil {
 		return err
 	}
@@ -162,14 +162,31 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		limiter: ratelimit.NewComposite(ratelimit.NewPostgres(pool, clock.System{}), ratelimit.NewMemory(clock.System{})),
 		health:  health.NewHandler(serviceName, version, pool, database.NewMigrationStatus(sqlDB)),
 
+		timers:     clock.System{},
 		avail:      availSvc,
 		hub:        hub,
 		listenerUp: listener.Connected,
 	}
-	srv := httpserver.New(cfg.HTTPAddr(), newHandler(d), log)
+	srv := newServer(cfg.HTTPAddr(), newHandler(d), log, hub)
 	// The config is logged only through Config.LogValue, which redacts the
 	// database password.
 	return httpserver.Serve(ctx, log, srv, serviceName, "version", version, "config", cfg)
+}
+
+// newServer returns the API server. Shutdown closes the hub first, which ends
+// every open stream, so srv.Shutdown does not wait on them (design §11.4).
+func newServer(addr string, h http.Handler, log *slog.Logger, hub *availability.Hub) *http.Server {
+	srv := httpserver.New(addr, h, log)
+	srv.RegisterOnShutdown(hub.Close)
+	return srv
+}
+
+// requestPoolConns is the request pool size for DB_MAX_CONNS: the listener
+// hijacks one connection out of the pool, which the pool then replaces, so
+// the pool keeps one less to stay within DB_MAX_CONNS (design §11.6). It is
+// never below 1; DB_MAX_CONNS=1 thus means two connections in total.
+func requestPoolConns(dbMaxConns int32) int32 {
+	return max(dbMaxConns-1, 1)
 }
 
 // legalCacheTTL is how long the current legal versions are cached.
@@ -192,10 +209,12 @@ type deps struct {
 	codes   hashing.CodeHasher
 	limiter ratelimit.Limiter
 
-	// Built in run (PF8). Handler-only tests leave them nil.
+	// Built in run (PF8). Handler-only tests leave them nil, and
+	// newHandlerWithRoutes then builds a hub no listener feeds.
 	avail      *availability.Service // nil: newHandlerWithRoutes builds one on pool and clock
 	hub        *availability.Hub
-	listenerUp func() bool // the LISTEN connection is up (/readyz)
+	timers     clock.Timers // the hub and stream heartbeats; nil: clock.System
+	listenerUp func() bool  // the LISTEN connection is up (/readyz); nil: no listener check
 }
 
 // newHandler builds the API router with every feature handler and wraps it
@@ -209,6 +228,10 @@ func newHandler(d deps) http.Handler {
 // check every registered route against its access policy.
 func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	mux := http.NewServeMux()
+	if d.listenerUp != nil {
+		up := d.listenerUp
+		d.health.WithCheck("listener", func(context.Context) bool { return up() })
+	}
 	d.health.Register(mux)
 
 	// The router composes the gates per route, so they are built first.
@@ -239,6 +262,18 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	}
 	lots.NewHandler(lots.NewService(lotRepo), availSvc, d.log).Register(r)
 	availability.NewHandler(availSvc, lotRepo, d.log).Register(r)
+	timers := d.timers
+	if timers == nil {
+		timers = clock.System{}
+	}
+	hub := d.hub
+	if hub == nil {
+		hub = availability.NewHub(availSvc, timers, d.log)
+	}
+	availability.RegisterStream(r, availability.NewStreamHandler(availability.StreamDeps{
+		Hub: hub, Service: availSvc, Lots: lotRepo, Timers: timers, Clock: timers, Log: d.log,
+		Caps: availability.NewStreamCaps(d.cfg.SSEMaxPerIP(), d.cfg.SSEMaxStreams()),
+	}))
 
 	tx := database.NewTxRunner(d.pool)
 	auditRec := auditpg.NewRecorder()

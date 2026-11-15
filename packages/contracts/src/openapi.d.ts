@@ -2428,6 +2428,8 @@ export interface operations {
             200: {
                 headers: {
                     "Cache-Control"?: "no-store";
+                    /** @description Tells a buffering reverse proxy (nginx) to pass each event through at once. */
+                    "X-Accel-Buffering"?: "no";
                     [name: string]: unknown;
                 };
                 content: {
