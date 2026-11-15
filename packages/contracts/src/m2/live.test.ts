@@ -149,6 +149,28 @@ test('planAnnouncement: silent on mount, status at once, count at most every 30 
   expect(step.say).toBeNull();
 });
 
+test('planAnnouncement returns when a held-back count becomes due', () => {
+  const t = 1_000_000;
+  const input: AnnounceInput = { available: 211, status: 'open', connection: 'live' };
+  let step = planAnnouncement(null, input, t);
+  expect(step.dueAt).toBeNull();
+  // The count changes at t + 2 s and nothing else happens: the caller re-calls at dueAt.
+  step = planAnnouncement(step.memo, { ...input, available: 210 }, t + 2_000);
+  expect(step).toMatchObject({ say: null, dueAt: t + 30_000 });
+  step = planAnnouncement(step.memo, { ...input, available: 210 }, step.dueAt!);
+  expect(step).toMatchObject({ say: 'count', dueAt: null });
+});
+
+test('a status announcement leaves the count pending (the status copy has no number)', () => {
+  const t = 1_000_000;
+  const input: AnnounceInput = { available: 211, status: 'open', connection: 'live' };
+  let step = planAnnouncement(null, input, t);
+  step = planAnnouncement(step.memo, { ...input, status: 'full', available: 0 }, t + 10_000);
+  expect(step).toMatchObject({ say: 'status', dueAt: t + 30_000 });
+  step = planAnnouncement(step.memo, { ...input, status: 'full', available: 0 }, t + 30_000);
+  expect(step.say).toBe('count');
+});
+
 test('lotQueryKeys builds the design keys', () => {
   expect(lotQueryKeys.all).toEqual(['lots']);
   expect(lotQueryKeys.lot('L1')).toEqual(['lot', 'L1']);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { availabilityReducedFixture, lotFixture, sseText } from '../fixtures';
-import { createSseParser, type SseFrame } from './parser';
+import { createSseParser, SSE_MAX_LINE_LENGTH, type SseFrame } from './parser';
 
 function parseAll(chunks: string[]): SseFrame[] {
   const parser = createSseParser();
@@ -101,6 +101,31 @@ describe('createSseParser', () => {
     ]);
   });
 
+  test('an unterminated line over the cap is dropped with its frame and reported', () => {
+    expect(SSE_MAX_LINE_LENGTH).toBe(1_048_576);
+    const parser = createSseParser({ maxLineLength: 16 });
+    expect(parser.push('event: spaces\ndata: ok\ndata: 0123456789')).toEqual([]);
+    expect(parser.push('abcdef')).toEqual([]);
+    expect(parser.droppedLines).toBe(1);
+    // The rest of the oversized line, up to its line end, is never read as a field.
+    expect(parser.push('xyz\ndata: tail\n\nevent: heartbeat\ndata: {}\n\n')).toEqual([
+      { event: 'message', data: 'tail' },
+      { event: 'heartbeat', data: '{}' },
+    ]);
+    expect(parser.droppedLines).toBe(1);
+  });
+
+  test('a long line split across many chunks still parses under the cap', () => {
+    const parser = createSseParser();
+    const payload = 'x'.repeat(200_000);
+    const text = `data: ${payload}\n\n`;
+    const frames: SseFrame[] = [];
+    for (let i = 0; i < text.length; i += 1_000) frames.push(...parser.push(text.slice(i, i + 1_000)));
+    expect(frames).toEqual([{ event: 'message', data: payload }]);
+    expect(parser.droppedLines).toBe(0);
+  });
+
+  // Transports decode with TextDecoder({ ignoreBOM: true }) so this parser is the only BOM stripper.
   test('a leading BOM is dropped once, even after an empty chunk', () => {
     expect(parseAll(['', '﻿data: a\n\n'])).toEqual([{ event: 'message', data: 'a' }]);
     expect(parseAll(['﻿', '﻿data: a\n\ndata: b\n\n'])).toEqual([{ event: 'message', data: 'b' }]);

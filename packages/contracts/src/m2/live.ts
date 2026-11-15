@@ -154,25 +154,38 @@ export type AnnounceMemo = AnnounceMemoFields & { readonly [announceMemoBrand]: 
 
 const memo = (fields: AnnounceMemoFields) => fields as AnnounceMemo;
 
+export type AnnouncementStep = {
+  say: 'status' | 'connection' | 'count' | null;
+  memo: AnnounceMemo;
+  /** When a count change is still pending, the time it becomes due; otherwise `null`. */
+  dueAt: number | null;
+};
+
 /**
  * One polite announcer (M2B-22): silent on mount, a status or connection change at once,
  * a count change at most every 30 s and only when it differs from the last announced count.
  * When several things change, one is said and the rest stay pending in the memo.
+ *
+ * A held-back count is only said on a later call, so callers re-call with the same input at
+ * `dueAt` (a timer) even when nothing else changes. The status sentences (`announce.open`,
+ * `full`, `closed`) carry no number, so a status announcement leaves `memo.count` alone and
+ * a count that changed with it is still announced when due.
  */
-export function planAnnouncement(
-  prev: AnnounceMemo | null,
-  input: AnnounceInput,
-  now: number,
-): { say: 'status' | 'connection' | 'count' | null; memo: AnnounceMemo } {
+export function planAnnouncement(prev: AnnounceMemo | null, input: AnnounceInput, now: number): AnnouncementStep {
+  const step = (say: AnnouncementStep['say'], next: AnnounceMemo): AnnouncementStep => ({
+    say,
+    memo: next,
+    dueAt: input.available === next.count ? null : next.countAt + ANNOUNCE_COUNT_INTERVAL_MS,
+  });
   if (prev === null) {
-    return { say: null, memo: memo({ status: input.status, connection: input.connection, count: input.available, countAt: now }) };
+    return step(null, memo({ status: input.status, connection: input.connection, count: input.available, countAt: now }));
   }
-  if (input.status !== prev.status) return { say: 'status', memo: memo({ ...prev, status: input.status }) };
-  if (input.connection !== prev.connection) return { say: 'connection', memo: memo({ ...prev, connection: input.connection }) };
+  if (input.status !== prev.status) return step('status', memo({ ...prev, status: input.status }));
+  if (input.connection !== prev.connection) return step('connection', memo({ ...prev, connection: input.connection }));
   if (input.available !== prev.count && now - prev.countAt >= ANNOUNCE_COUNT_INTERVAL_MS) {
-    return { say: 'count', memo: memo({ ...prev, count: input.available, countAt: now }) };
+    return step('count', memo({ ...prev, count: input.available, countAt: now }));
   }
-  return { say: null, memo: prev };
+  return step(null, prev);
 }
 
 /** TanStack Query keys (M2B-19). */
@@ -200,11 +213,9 @@ export function createConnectionStore(initial: Connection): ConnectionStore {
   return {
     get: () => current,
     set(patch) {
-      const next = { ...current, ...patch };
-      if (next.status === current.status && next.lastFrameAt === current.lastFrameAt && next.spacesReady === current.spacesReady) {
-        return;
-      }
-      current = next;
+      const keys = Object.keys(patch) as Array<keyof Connection>;
+      if (keys.every((key) => patch[key] === current[key])) return;
+      current = { ...current, ...patch };
       for (const listener of [...listeners]) listener();
     },
     subscribe(listener) {

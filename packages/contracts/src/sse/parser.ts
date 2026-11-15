@@ -1,21 +1,34 @@
 /** One dispatched server-sent event. `id` is the last event id, present while it is non-empty. */
 export type SseFrame = { event: string; id?: string; data: string };
 
+/** The longest line kept while waiting for its line end (1 MiB). Stream payloads are a few KiB. */
+export const SSE_MAX_LINE_LENGTH = 1_048_576;
+
 export type SseParser = {
   /** Feeds decoded text; returns the frames completed by it. Results do not depend on where chunks split. */
   push(chunk: string): SseFrame[];
   /** The last valid `retry` value in milliseconds, or `null` if none was received. */
   readonly retryMs: number | null;
+  /** Lines dropped for exceeding `maxLineLength`, each with the frame it belonged to. */
+  readonly droppedLines: number;
 };
 
 /**
  * Incremental parser for `text/event-stream` text, per the WHATWG "interpreting an event stream" rules.
- * Pure: no I/O and no timers. Byte decoding (UTF-8, `stream: true`) is the transport's job.
+ * Pure: no I/O and no timers. Byte decoding (UTF-8, `stream: true`) is the transport's job, and
+ * transports decode with `new TextDecoder('utf-8', { ignoreBOM: true })` so this parser is the only
+ * place a leading BOM is stripped (exactly one, as the spec says). Web `EventSource` parses natively
+ * and does not use this module.
+ *
+ * A line still unterminated past `maxLineLength` is discarded, along with the rest of it up to the
+ * next line end and the frame it belonged to, and counted in `droppedLines`.
  */
-export function createSseParser(): SseParser {
+export function createSseParser({ maxLineLength = SSE_MAX_LINE_LENGTH }: { maxLineLength?: number } = {}): SseParser {
   let buffer = '';
   let pendingCr = false;
   let bomChecked = false;
+  let skippingLine = false;
+  let droppedLines = 0;
   let eventType = '';
   let data = '';
   let lastEventId = '';
@@ -65,23 +78,36 @@ export function createSseParser(): SseParser {
         if (text.startsWith('\n')) text = text.slice(1);
       }
       const out: SseFrame[] = [];
+      // The kept buffer never holds a line end, so scanning resumes where the last chunk stopped.
+      let i = buffer.length;
       buffer += text;
       let start = 0;
-      for (let i = 0; i < buffer.length; i++) {
+      for (; i < buffer.length; i++) {
         const ch = buffer[i];
         if (ch !== '\r' && ch !== '\n') continue;
-        processField(buffer.slice(start, i), out);
+        if (skippingLine) skippingLine = false;
+        else processField(buffer.slice(start, i), out);
         if (ch === '\r') {
           if (i + 1 === buffer.length) pendingCr = true;
           else if (buffer[i + 1] === '\n') i++;
         }
         start = i + 1;
       }
-      buffer = buffer.slice(start);
+      buffer = skippingLine ? '' : buffer.slice(start);
+      if (buffer.length > maxLineLength) {
+        buffer = '';
+        skippingLine = true;
+        droppedLines++;
+        data = '';
+        eventType = '';
+      }
       return out;
     },
     get retryMs() {
       return retryMs;
+    },
+    get droppedLines() {
+      return droppedLines;
     },
   };
 }
