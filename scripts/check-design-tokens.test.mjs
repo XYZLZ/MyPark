@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkTokens, contrastRatio, parseCssTokens, parseTsTokens, readRealFiles } from './check-design-tokens.mjs';
+import { checkTokens, contrastRatio, MUST_FAIL, parseCssTokens, parseTsTokens, readRealFiles } from './check-design-tokens.mjs';
 
 test('parseCssTokens reads --color, --radius and --motion entries from @theme', () => {
   const css = `
@@ -46,6 +46,14 @@ test('contrastRatio matches the documented values', () => {
   assert.equal(contrastRatio('#fff', '#ffffff'), 1);
 });
 
+test('contrastRatio matches the design 9.1b values', () => {
+  const round = (n) => Math.round(n * 100) / 100;
+  assert.equal(round(contrastRatio('#ffffff', '#0b3a75')), 11.19);
+  assert.equal(round(contrastRatio('#c4610a', '#e3e8ef')), 3.37);
+  assert.equal(round(contrastRatio('#f39a1e', '#ffffff')), 2.22);
+  assert.equal(round(contrastRatio('#1e7a46', '#163b63')), 2.13);
+});
+
 function realFiles() {
   return readRealFiles();
 }
@@ -79,6 +87,22 @@ test('checkTokens flags a required pair below its threshold', () => {
   assert.equal(problems.length, 1, problems.join('\n'));
   assert.match(problems[0], /brand-action-contrast on brand-action-press/);
   assert.match(problems[0], /4\.49/);
+});
+
+test('checkTokens reports a new token missing from global.css', () => {
+  const files = realFiles();
+  files.mobileCss = files.mobileCss.replace(/--color-space-occupied:\s*[^;]+;/, '');
+  const problems = checkTokens(files);
+  assert.ok(problems.some((p) => p.includes('"space-occupied"') && p.includes('mobile global.css')), problems.join('\n'));
+});
+
+test('checkTokens flags brand-orange if it ever passes as text', () => {
+  assert.ok(MUST_FAIL.some(([fg, bg]) => fg === 'brand-orange' && bg === 'surface'));
+  const files = realFiles();
+  // Same value everywhere, so only the contrast rule can object.
+  for (const key of ['webCss', 'mobileCss', 'mobileTs']) files[key] = files[key].replaceAll('#f39a1e', '#7a4a00');
+  const problems = checkTokens(files);
+  assert.ok(problems.some((p) => p.includes('brand-orange on surface')), problems.join('\n'));
 });
 
 test('checkTokens passes on the real repo', () => {
