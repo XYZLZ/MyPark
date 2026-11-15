@@ -3,7 +3,7 @@ import { availabilityReducedFixture, spacesFixture, spacesFullEventFixture } fro
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { FakeEventSource } from '@/testing/event-source';
-import { acquireLiveLot, resetLiveLotsForTests, type LiveDeps } from './manager';
+import { acquireLiveLot, liveLotStore, resetLiveLotsForTests, type LiveDeps } from './manager';
 
 const ORIGIN = 'http://api.test';
 const LOT = 'L1';
@@ -13,6 +13,7 @@ let queryClient: QueryClient;
 let target: EventTarget;
 let fetchSnapshot: ReturnType<typeof vi.fn<LiveDeps['fetchSnapshot']>>;
 let onLotGone: ReturnType<typeof vi.fn<() => void>>;
+let log: ReturnType<typeof vi.fn<LiveDeps['log']>>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -20,6 +21,7 @@ beforeEach(() => {
   target = new EventTarget();
   fetchSnapshot = vi.fn<LiveDeps['fetchSnapshot']>(async () => ({ availability: v(125, 200), spaces: spacesFixture.spaces }));
   onLotGone = vi.fn<() => void>();
+  log = vi.fn<LiveDeps['log']>();
 });
 
 afterEach(() => {
@@ -36,6 +38,7 @@ const acquire = () =>
     now: () => Date.now(),
     onLotGone,
     target,
+    log,
   });
 
 const instances = () => FakeEventSource.instances;
@@ -221,12 +224,84 @@ describe('acquireLiveLot', () => {
     expect(instances()).toHaveLength(2);
   });
 
+  test('a dropped stream lets the REST snapshot replace the map until the next full list', async () => {
+    const changed = spacesFixture.spaces.map((space) =>
+      space.code === 'E100' ? { ...space, state: 'occupied' as const } : space,
+    );
+    fetchSnapshot.mockResolvedValue({ availability: v(125, 200), spaces: changed });
+    const { store } = acquire();
+    es(0).emit('spaces', spacesFullEventFixture);
+    expect(store.get().spacesReady).toBe(true);
+    es(0).fail(0);
+    expect(store.get().spacesReady).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cachedSpaces()).toEqual(changed);
+    await vi.advanceTimersByTimeAsync(1_000);
+    es(1).emit('heartbeat', { as_of: '2026-11-15T14:47:15Z' });
+    expect(store.get().spacesReady).toBe(false);
+    es(1).emit('spaces', spacesFullEventFixture);
+    expect(store.get().spacesReady).toBe(true);
+    expect(cachedSpaces()).toEqual(spacesFixture.spaces);
+  });
+
+  test('an older snapshot after a newer stream frame keeps the newer count', async () => {
+    fetchSnapshot.mockResolvedValue({ availability: v(119, 5), spaces: spacesFixture.spaces });
+    acquire();
+    es(0).emit('availability', v(121));
+    es(0).fail(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cachedAvailability()).toMatchObject({ version: 121, available: 211 });
+  });
+
+  test('a dropped frame is logged, a valid one is not', () => {
+    acquire();
+    es(0).emit('availability', 'not json');
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]![0]).toMatch(/dropped/);
+    es(0).emit('availability', v(121));
+    es(0).emit('heartbeat', { as_of: '2026-11-15T14:47:15Z' });
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  test('a retry due after the last release does not reconnect; a new subscriber does', () => {
+    const first = acquire();
+    es(0).fail(0);
+    first.release();
+    vi.advanceTimersByTime(1_500);
+    expect(instances()).toHaveLength(1);
+    acquire();
+    expect(instances()).toHaveLength(2);
+  });
+
+  test('a retry is never opened once nobody subscribes', () => {
+    const first = acquire();
+    es(0).fail(0);
+    first.release();
+    vi.advanceTimersByTime(60_000);
+    expect(instances()).toHaveLength(1);
+  });
+
+  test('a torn-down lot forgets its store once nothing listens', () => {
+    const first = acquire();
+    const unsubscribe = first.store.subscribe(() => {});
+    first.release();
+    vi.advanceTimersByTime(2_000);
+    expect(liveLotStore(ORIGIN, LOT)).toBe(first.store);
+    unsubscribe();
+    expect(liveLotStore(ORIGIN, LOT)).not.toBe(first.store);
+    const second = acquire();
+    second.release();
+    vi.advanceTimersByTime(2_000);
+    expect(liveLotStore(ORIGIN, LOT)).not.toBe(second.store);
+  });
+
   test('pagehide closes and pageshow reopens', () => {
     const { store } = acquire();
     target.dispatchEvent(new Event('pageshow'));
     expect(instances()).toHaveLength(1);
     es(0).emit('spaces', spacesFullEventFixture);
     target.dispatchEvent(new Event('pagehide'));
+    expect(store.get().spacesReady).toBe(false);
     expect(es(0).closed).toBe(true);
     expect(store.get().status).toBe('stale');
     vi.advanceTimersByTime(60_000);

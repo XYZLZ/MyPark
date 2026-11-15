@@ -28,6 +28,8 @@ export type LiveDeps = {
   now: () => number;
   onLotGone: () => void;
   target: Pick<Window, 'addEventListener' | 'removeEventListener'>;
+  /** Dev diagnostics, e.g. a dropped frame (design §5.2). A no-op outside development. */
+  log: (message: string, detail?: unknown) => void;
 };
 
 type LiveLot = { acquire(onLotGone: () => void): { store: ConnectionStore; release(): void }; teardown(): void };
@@ -39,20 +41,45 @@ const noop = () => {};
 
 /** One live connection per `(origin, lotId)` per app instance (M2B-20). */
 const lots = new Map<string, LiveLot>();
-/** Stores outlive connections, so a hook can read one during render before its effect acquires. */
-const stores = new Map<string, ConnectionStore>();
+/**
+ * Stores outlive connections, so a hook can read one during render before its effect acquires.
+ * A store is forgotten once its lot is torn down and nothing listens to it.
+ */
+const stores = new Map<string, { store: ConnectionStore; listeners: number }>();
 
 const keyOf = (origin: string, lotId: string) => JSON.stringify([origin, lotId]);
+
+function pruneStore(key: string): void {
+  if (!lots.has(key) && stores.get(key)?.listeners === 0) stores.delete(key);
+}
 
 /** The connection store for a lot. Browser only: the registry is module state. */
 export function liveLotStore(origin: string, lotId: string): ConnectionStore {
   const key = keyOf(origin, lotId);
-  let store = stores.get(key);
-  if (!store) {
-    store = createConnectionStore(CONNECTING);
-    stores.set(key, store);
-  }
-  return store;
+  const existing = stores.get(key);
+  if (existing) return existing.store;
+  const base = createConnectionStore(CONNECTING);
+  const entry = {
+    listeners: 0,
+    store: {
+      get: base.get,
+      set: base.set,
+      subscribe(listener: () => void) {
+        const unsubscribe = base.subscribe(listener);
+        entry.listeners++;
+        let active = true;
+        return () => {
+          if (!active) return;
+          active = false;
+          unsubscribe();
+          entry.listeners--;
+          if (stores.get(key) === entry) pruneStore(key);
+        };
+      },
+    } satisfies ConnectionStore,
+  };
+  stores.set(key, entry);
+  return entry.store;
 }
 
 /**
@@ -85,6 +112,7 @@ function createLiveLot(
   let tornDown = false;
   let freshTimer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryPending = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Writes only what changed; the same reference means no cache write. */
@@ -115,6 +143,7 @@ function createLiveLot(
 
   function open(): void {
     clearTimeout(retryTimer);
+    retryPending = false;
     if (stopped || closedByPageHide || source) return;
     const es = new deps.EventSourceImpl(streamUrl(origin, lotId));
     const onFrame = (event: Event) => {
@@ -146,17 +175,22 @@ function createLiveLot(
     const data = typeof event.data === 'string' ? event.data : '';
     const frame = decodeFrame(event.lastEventId ? { event: event.type, id: event.lastEventId, data } : { event: event.type, data });
     if (frame) apply(frame);
+    else deps.log('live: dropped a malformed stream frame', { event: event.type });
     store.set({ status: 'live', lastFrameAt: deps.now() });
   }
 
   /** A drop, an HTTP failure or 45 s of silence: stale now, one snapshot, our own backoff. */
   function fail(httpFailure: boolean): void {
     closeSource();
+    // Before the snapshot, so its spaces replace a map the stream no longer keeps current.
+    apply({ kind: 'lost' });
     store.set({ status: 'stale' });
     fetchSnapshot();
     const delay = nextDelay(attempt, deps.random, httpFailure ? HTTP_FAILURE_FLOOR_MS : 0);
     attempt++;
-    retryTimer = setTimeout(open, delay);
+    retryPending = true;
+    // With no subscribers left (the idle close is pending) the retry is skipped; a new acquire opens.
+    retryTimer = setTimeout(() => (refs > 0 ? open() : (retryPending = false)), delay);
   }
 
   /** The REST fallback: at most once per attempt and never within 10 s of the last (M2B-18). */
@@ -183,6 +217,7 @@ function createLiveLot(
     stopped = true;
     closeSource();
     clearTimeout(retryTimer);
+    retryPending = false;
   }
 
   const onPageHide = () => {
@@ -190,6 +225,8 @@ function createLiveLot(
     closedByPageHide = true;
     closeSource();
     clearTimeout(retryTimer);
+    retryPending = false;
+    apply({ kind: 'lost' });
     if (store.get().status === 'live') store.set({ status: 'stale' });
   };
   // `pageshow` also fires on the first load; only reopen what `pagehide` closed.
@@ -208,6 +245,7 @@ function createLiveLot(
     deps.target.removeEventListener('pageshow', onPageShow);
     store.set(CONNECTING);
     lots.delete(key);
+    pruneStore(key);
   }
 
   deps.target.addEventListener('pagehide', onPageHide);
@@ -219,6 +257,7 @@ function createLiveLot(
     acquire(onLotGone) {
       refs++;
       clearTimeout(idleTimer);
+      if (!source && !retryPending) open();
       goneHandlers.push(onLotGone);
       let released = false;
       return {
@@ -256,6 +295,7 @@ export function acquireLiveLot(
       random: deps.random ?? Math.random,
       now: deps.now ?? (() => Date.now()),
       target: deps.target ?? window,
+      log: deps.log ?? (process.env.NODE_ENV === 'development' ? (message, detail) => console.debug(message, detail) : noop),
     });
     lots.set(key, lot);
   }
