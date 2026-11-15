@@ -108,6 +108,10 @@ type Runner struct {
 
 	mu sync.Mutex
 	s  *session // the current or the last run
+
+	// afterDrainLeave, when set (tests only), runs after each Leave a drain
+	// queues.
+	afterDrainLeave func(*session)
 }
 
 // NewRunner returns an idle runner.
@@ -129,6 +133,7 @@ type session struct {
 	draining    atomic.Bool
 	drained     chan struct{}
 	drainOnce   sync.Once
+	idle        atomic.Bool // the loop waits for work on an empty queue
 
 	// Engine goroutine only.
 	lastSeq int64
@@ -142,32 +147,57 @@ type session struct {
 }
 
 // Start validates p, reads the lot's spaces and starts the scenario. ctx
-// bounds the run, so pass the process context, not a request's. When Inject
-// already started an implicit idle session, Start takes it over: the cars stay,
-// the held ones stay held, and ctx is not used (the session keeps its own).
+// bounds the run, so pass the process context, not a request's.
+//
+// When Inject already started an implicit idle session, Start takes it over:
+// the cars stay, the held ones stay held, and ctx is not used (the session
+// keeps its own). The session also keeps the spaces read when Inject started
+// it: re-reading them would reset the free list under the parked cars, so a
+// takeover reads nothing. The switch to the scenario's clock runs in the
+// engine goroutine, between two steps, and Start returns once it is done. A
+// takeover is reproducible from the seed only when the cars it inherits are
+// held and parked: a car still on its way in or out keeps the timing it had on
+// the idle clock.
 func (r *Runner) Start(ctx context.Context, p StartParams) (Status, error) {
 	p, err := r.resolve(p)
 	if err != nil {
 		return Status{}, err
 	}
-	if r.busy() {
-		return Status{}, ErrAlreadyRunning
-	}
-	codes, err := r.lotSpaces(ctx)
-	if err != nil {
-		return Status{}, err
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if s := r.s; s != nil && !s.finished() {
-		if !s.takeable() {
+	for {
+		if r.busy() {
 			return Status{}, ErrAlreadyRunning
 		}
-		s.takeover(p)
-		return s.status(), nil
+		taking := r.running() // an implicit session, since not busy
+		var codes []string
+		if !taking {
+			if codes, err = r.lotSpaces(ctx); err != nil {
+				return Status{}, err
+			}
+		}
+
+		r.mu.Lock()
+		if s := r.s; s != nil && !s.finished() {
+			if !s.takeable() {
+				r.mu.Unlock()
+				return Status{}, ErrAlreadyRunning
+			}
+			applied := s.takeover(p)
+			r.mu.Unlock()
+			select {
+			case <-applied:
+				return s.status(), nil
+			case <-s.done:
+				return s.status(), ErrNotRunning
+			}
+		}
+		if taking {
+			r.mu.Unlock()
+			continue // the implicit session ended meanwhile: read the spaces
+		}
+		st := r.newSession(ctx, p, codes, false).status()
+		r.mu.Unlock()
+		return st, nil
 	}
-	return r.newSession(ctx, p, codes, false).status(), nil
 }
 
 // lotSpaces reads the lot's space codes, or none when no reader is set.
@@ -218,16 +248,27 @@ func (s *session) takeable() bool {
 	return s.implicit && !s.closed
 }
 
-// takeover turns an implicit idle session into the scenario p. The engine moves
-// to the scenario's clock with its queued events shifted along, so cars in
-// flight carry on; parked cars stay where they are.
-func (s *session) takeover(p StartParams) {
-	clk := s.r.newClock(p.StartAt, p.Speed)
+// takeover turns an implicit idle session into the scenario p. It claims the
+// session at once, so a concurrent Start is refused, and queues the switch as
+// a step at the current virtual time: the engine finishes the step in flight,
+// then moves to the scenario's clock with its queued events shifted along, so
+// cars in flight carry on and parked cars stay where they are. The returned
+// channel closes once the switch is done.
+func (s *session) takeover(p StartParams) <-chan struct{} {
 	s.mu.Lock()
-	s.p, s.startedAt, s.clock, s.implicit = p, s.r.d.Wall.Now(), clk, false
+	s.implicit = false
 	s.mu.Unlock()
-	s.eng.Rebase(clk)
-	s.schedule()
+	applied := make(chan struct{})
+	s.eng.At(s.eng.Now(), func(context.Context) {
+		defer close(applied)
+		clk := s.r.newClock(p.StartAt, p.Speed)
+		s.mu.Lock()
+		s.p, s.startedAt, s.clock = p, s.r.d.Wall.Now(), clk
+		s.mu.Unlock()
+		s.eng.Rebase(clk)
+		s.schedule()
+	})
+	return applied
 }
 
 func (r *Runner) resolve(p StartParams) (StartParams, error) {
@@ -260,49 +301,82 @@ func (r *Runner) resolve(p StartParams) (StartParams, error) {
 // forgotten, their stays left active (design §13.4). Stop(false) during a
 // drain turns it into a hard stop.
 func (r *Runner) Stop(drain bool) (Status, error) {
+	s, finish, err := r.beginStop(drain)
+	if err != nil {
+		return s, err
+	}
+	return finish(), nil
+}
+
+// StopAsync is Stop without the wait: it closes the run, queues the drain's
+// Leaves and returns the run's status at once, while the drain (up to
+// drainTimeout) and the shutdown finish in the background. Wait joins them.
+// A second stop during the drain gives ErrNotRunning, except Stop(false),
+// which cuts the drain.
+func (r *Runner) StopAsync(drain bool) (Status, error) {
+	s, finish, err := r.beginStop(drain)
+	if err != nil {
+		return s, err
+	}
+	st := r.Status()
+	r.wg.Go(func() { finish() })
+	return st, nil
+}
+
+// beginStop does the part of a stop that does not wait and returns the part
+// that does.
+func (r *Runner) beginStop(drain bool) (Status, func() Status, error) {
 	s := r.current()
 	if s == nil {
-		return r.Status(), ErrNotRunning
+		return r.Status(), nil, ErrNotRunning
 	}
 	s.mu.Lock()
 	if s.finished() {
 		s.mu.Unlock()
-		return s.status(), ErrNotRunning
+		return s.status(), nil, ErrNotRunning
+	}
+	hard := func() Status {
+		s.cancel()
+		<-s.done
+		return s.status()
 	}
 	if s.closed {
 		escalate := !drain && s.drainReq
 		s.mu.Unlock()
 		if !escalate {
-			return s.status(), ErrNotRunning
+			return s.status(), nil, ErrNotRunning
 		}
-		s.cancel()
-		<-s.done
-		return s.status(), nil
+		return Status{}, hard, nil
 	}
 	s.closed, s.drainReq = true, drain
 	ids := slices.Clone(s.ids)
 	s.mu.Unlock()
+	if !drain {
+		return Status{}, hard, nil
+	}
 
-	if drain {
-		for _, id := range ids {
-			_ = s.fleet.Leave(id, false) // a car that is gone answers ErrCarNotFound
+	for _, id := range ids {
+		_ = s.fleet.Leave(id, false) // a car that is gone answers ErrCarNotFound
+		if r.afterDrainLeave != nil {
+			r.afterDrainLeave(s)
 		}
-		// Only now: a queue that empties while Leaves are still being queued
-		// must not end the drain.
-		s.draining.Store(true)
-		s.eng.Nudge() // an idle engine re-checks whether anything is left to run
-		s.checkDrained()
-		timedOut := make(chan struct{})
-		defer r.d.Wall.AfterFunc(drainTimeout, func() { close(timedOut) }).Stop()
+	}
+	// Only now: a queue that empties while Leaves are still being queued
+	// must not end the drain.
+	s.draining.Store(true)
+	s.eng.Nudge() // an idle engine re-checks whether anything is left to run
+	s.checkDrained()
+	timedOut := make(chan struct{})
+	timer := r.d.Wall.AfterFunc(drainTimeout, func() { close(timedOut) })
+	return Status{}, func() Status {
+		defer timer.Stop()
 		select {
 		case <-s.drained:
 		case <-s.done:
 		case <-timedOut:
 		}
-	}
-	s.cancel()
-	<-s.done
-	return s.status(), nil
+		return hard()
+	}, nil
 }
 
 // Status reports the current run, or the last one after it ended.
@@ -355,7 +429,7 @@ func (r *Runner) activeOrImplicit() (*session, error) {
 	if r.running() {
 		return nil, ErrNotRunning
 	}
-	ctx := cmp.Or(r.d.Ctx, context.Background())
+	ctx := r.runCtx()
 	codes, err := r.lotSpaces(ctx)
 	if err != nil {
 		return nil, err
@@ -390,6 +464,9 @@ func (r *Runner) SetFault(code string, f Fault) error {
 	}
 	return s.fleet.SetFault(code, f)
 }
+
+// runCtx is the process context runs are bound to (RunnerDeps.Ctx).
+func (r *Runner) runCtx() context.Context { return cmp.Or(r.d.Ctx, context.Background()) }
 
 // Wait returns once every run goroutine has ended: after Stop, or after the
 // start context was cancelled.
@@ -473,11 +550,13 @@ func (s *session) loop(ctx context.Context) {
 		if s.draining.Load() {
 			s.drainOnce.Do(func() { close(s.drained) }) // nothing more can move
 		}
+		s.idle.Store(true)
 		select {
 		case <-s.eng.Wake():
 		case <-ctx.Done():
 			return
 		}
+		s.idle.Store(false)
 	}
 }
 
@@ -520,6 +599,9 @@ func (s *session) schedule() {
 
 func (s *session) heartbeat(dev devicefleet.Device) func(context.Context) {
 	return func(ctx context.Context) {
+		if s.isClosed() {
+			return // a stopping run sends nothing more, so a drain can see an empty queue
+		}
 		rep, err := s.r.d.Client.Send(ctx, dev, Outgoing{EventID: uuid.New(), Type: "heartbeat", Payload: struct{}{}})
 		s.r.d.Log.Append(outcome(LogEntry{At: s.eng.Now(), Device: dev.Name, Type: "heartbeat"}, rep, err))
 		s.eng.At(s.eng.Now().Add(heartbeatEvery), s.heartbeat(dev))

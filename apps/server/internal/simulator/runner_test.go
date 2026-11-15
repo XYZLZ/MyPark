@@ -508,6 +508,19 @@ func TestRunner_ImplicitSessionTakesLeaveFaultAndStop(t *testing.T) {
 func TestRunner_DrainFillToFullLeavesNoCarInside(t *testing.T) {
 	rig := newRunnerRig(t, 100*time.Hour, nil)
 	rig.api.fullAfter = 40
+	// After each Leave, let the engine run that car out and go idle: a drain
+	// marked before every Leave is queued would end at the first idle engine,
+	// with cars still to send out.
+	leaves := 0
+	rig.run.afterDrainLeave = func(s *session) {
+		leaves++
+		eventually(t, "an idle engine", func() bool { return s.idle.Load() && s.eng.pending() == 0 })
+		select {
+		case <-s.drained:
+			t.Fatalf("the drain ended after %d of 39 Leaves", leaves)
+		default:
+		}
+	}
 	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioFillToFull, Seed: 6, StartAt: monday7}); err != nil {
 		t.Fatal(err)
 	}
@@ -531,6 +544,19 @@ func TestRunner_DrainFillToFullLeavesNoCarInside(t *testing.T) {
 // once every car has paid, so the drain is under way and cannot finish.
 func stallDrain(t *testing.T, rig *runnerRig) <-chan Status {
 	t.Helper()
+	out := make(chan Status, 1)
+	stallDrainWith(t, rig, func() {
+		go func() {
+			st, _ := rig.run.Stop(true)
+			out <- st
+		}()
+	})
+	return out
+}
+
+// stallDrainWith is stallDrain with the stop call given by the caller.
+func stallDrainWith(t *testing.T, rig *runnerRig, stop func()) {
+	t.Helper()
 	rig.api.fullAfter = 6
 	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioFillToFull, Seed: 8, StartAt: monday7}); err != nil {
 		t.Fatal(err)
@@ -538,13 +564,8 @@ func stallDrain(t *testing.T, rig *runnerRig) <-chan Status {
 	eventually(t, "a full lot", func() bool { st := rig.run.Status(); return st.ReachedFull && st.CarsInside == 5 })
 	eventually(t, "five parked cars", func() bool { return len(rig.api.payloads("sensor.space_changed")) == 5 })
 	rig.clk.until.Store(rig.clk.Now().UnixNano())
-	out := make(chan Status, 1)
-	go func() {
-		st, _ := rig.run.Stop(true)
-		out <- st
-	}()
+	stop()
 	eventually(t, "five scans", func() bool { return len(rig.api.payloads("paystation.scan")) == 5 })
-	return out
 }
 
 func TestRunner_DrainGivesUpAfterTheCapOnTheWallClock(t *testing.T) {
@@ -605,4 +626,99 @@ func TestRunner_DrainEndsWhenStuckCarsLeaveNothingToRun(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the drain never ended: the queue was kept alive")
 	}
+}
+
+// Takeover runs in the engine goroutine: while a car step is in flight, Start
+// waits, and the session keeps its old scenario until the step is done, so the
+// step cannot schedule into the old time frame after the rebase.
+func TestRunner_TakeoverWaitsForTheStepInFlight(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, released sync.Once
+	unblock := func() { released.Do(func() { close(release) }) }
+	t.Cleanup(unblock) // runs before the rig's Stop, which waits for the step
+	rig.api.onCall = func(typ string) {
+		if typ == "podium.vehicle_detected" {
+			once.Do(func() { close(entered); <-release })
+		}
+	}
+	if _, err := rig.run.Inject(InjectParams{Cred: CredTicket, Hold: true}); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	out := make(chan Status, 1)
+	go func() {
+		st, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioWeekday, Seed: 5, StartAt: monday7})
+		if err != nil {
+			t.Errorf("Start = %v", err)
+		}
+		out <- st
+	}()
+	eventually(t, "Start to claim the session", rig.run.busy)
+	if st := rig.run.Status(); st.Scenario != ScenarioIdle {
+		t.Errorf("status while the step is in flight = %+v, want the implicit idle session untouched", st)
+	}
+	select {
+	case st := <-out:
+		t.Fatalf("Start returned %+v while a car step was in flight", st)
+	default:
+	}
+	unblock()
+	if st := <-out; st.Scenario != ScenarioWeekday || st.VirtualNow.Before(monday7) {
+		t.Errorf("status after the takeover = %+v", st)
+	}
+}
+
+// A closed idle session sends no more heartbeats, so a drain with a car the
+// server will not let out ends by an empty queue, not by the wall clock cap.
+func TestRunner_HeartbeatsStopOnceClosed(t *testing.T) {
+	rig := newRunnerRig(t, time.Hour, nil)
+	rig.api.script = map[string][]string{"exit.credential_presented": {denyNotAllowed}}
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioIdle, StartAt: monday7}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.run.Inject(InjectParams{Cred: CredTicket, Hold: true}); err != nil {
+		t.Fatal(err)
+	}
+	<-rig.clk.reached
+	rig.clk.release() // time runs free: only a closed run can end the heartbeats
+	out := make(chan Status, 1)
+	go func() {
+		st, _ := rig.run.Stop(true)
+		out <- st
+	}()
+	select {
+	case st := <-out:
+		if st.Running || st.CarsInside != 1 {
+			t.Errorf("status = %+v, want stopped with the stuck car inside", st)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drain never ended: heartbeats kept the queue alive")
+	}
+}
+
+func TestRunner_StopAsyncReturnsAtOnceAndDrains(t *testing.T) {
+	rig := newRunnerRig(t, 100*time.Hour, nil)
+	var first Status
+	stallDrainWith(t, rig, func() {
+		var err error
+		if first, err = rig.run.StopAsync(true); err != nil {
+			t.Fatalf("StopAsync = %v", err)
+		}
+	})
+	if !first.Running || !rig.run.Status().Running {
+		t.Fatalf("StopAsync answered %+v, want the run still draining", first)
+	}
+	if _, err := rig.run.StopAsync(true); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("a second stop during the drain = %v, want ErrNotRunning", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for rig.run.Status().Running {
+		if time.Now().After(deadline) {
+			t.Fatal("the background drain never ended at the cap")
+		}
+		rig.wall.Advance(drainTimeout)
+		time.Sleep(time.Millisecond)
+	}
+	rig.run.Wait()
 }

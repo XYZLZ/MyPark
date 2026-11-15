@@ -7,7 +7,7 @@
 # reuse these credentials outside local development.
 #
 # Boot order: postgres (healthy) -> migrate (exits 0) -> seed (exits 0) ->
-# api, worker -> web (once api is healthy). postgres creates the
+# api, worker -> web, simulator (once api is healthy). postgres creates the
 # mypark_migrator and mypark_app roles on first start from ./postgres/init/01-roles.sh.
 
 name: mypark
@@ -187,11 +187,23 @@ services:
         VERSION: ${VERSION:-dev}
     image: mypark/simulator:${VERSION:-dev}
     environment:
+      APP_ENV: ${APP_ENV:-development}
       SIMULATOR_ADDR: ":8090"
-    # Reached by the other services on the internal network as
-    # http://simulator:8090; the port is published for local development only.
+      # Pinned to the compose network, like the web's API_INTERNAL_URL.
+      SIMULATOR_API_URL: http://api:8080
+      # Dev-only defaults (config.DevSimulatorFleetSecret / DevSimulatorControlToken);
+      # the simulator refuses them when APP_ENV=production. The fleet secret
+      # must match the seed's; the control token must match the web's.
+      SIMULATOR_FLEET_SECRET: ${SIMULATOR_FLEET_SECRET:-WXDXaWhcsK1yFwswbHoQjtSo1CqGtuoMo6QHfFvF7dY=}
+      SIMULATOR_CONTROL_TOKEN: ${SIMULATOR_CONTROL_TOKEN:-s0oW01SL2PN9O1DhLSFg8uD4e/oA+912l90mTMmfg3M=}
+    # The control API is for the compose network (the web BFF calls
+    # http://simulator:8090). The port is published on loopback only, for the
+    # demo script and local development; every /control call needs the token.
     ports:
       - "127.0.0.1:${SIMULATOR_PORT:-8090}:8090"
+    depends_on:
+      api:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/app/simulator", "-healthcheck"]
       interval: 10s
@@ -215,6 +227,10 @@ services:
       # Origins the BFF accepts on POST, PATCH and DELETE (CSRF check, spec 5.4).
       # The default follows the published port, so a custom WEB_PORT keeps mutations working.
       WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:${WEB_PORT:-3000},http://127.0.0.1:${WEB_PORT:-3000}}
+      # Simulator console (Track B): the BFF calls the control API with the
+      # simulator's token. Same dev-only default as the simulator service.
+      SIMULATOR_INTERNAL_URL: http://simulator:8090
+      SIMULATOR_CONTROL_TOKEN: ${SIMULATOR_CONTROL_TOKEN:-s0oW01SL2PN9O1DhLSFg8uD4e/oA+912l90mTMmfg3M=}
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:

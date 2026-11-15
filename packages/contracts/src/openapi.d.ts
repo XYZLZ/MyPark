@@ -546,7 +546,7 @@ export interface paths {
         put?: never;
         /**
          * Stop the running scenario
-         * @description With `drain` true, every car inside is scheduled to leave and the scenario completes when they are gone. The body is strictly decoded (see `startSimulatorScenario`).
+         * @description With `drain` true, every car inside is scheduled to leave and the scenario completes when they are gone (at most 10 minutes); the drain runs after the answer, so the 202 status still shows `running` true and `GET /control/status` reports the end. Without `drain` the run is cut at once. The body is strictly decoded (see `startSimulatorScenario`).
          */
         post: operations["stopSimulatorScenario"];
         delete?: never;
@@ -606,7 +606,7 @@ export interface paths {
         put?: never;
         /**
          * Set a sensor fault
-         * @description `none` clears the fault. The body is strictly decoded (see `startSimulatorScenario`).
+         * @description `none` clears the fault. A space code the lot lacks is 422 `validation.failed` on field `code`. The body is strictly decoded (see `startSimulatorScenario`).
          */
         post: operations["setSimulatorSensorFault"];
         delete?: never;
@@ -666,7 +666,10 @@ export interface components {
         StartScenarioRequest: {
             /** @enum {string} */
             scenario: "idle" | "weekday" | "weekend_peak" | "fill_to_full" | "sensor_drift" | "reservation_arrivals" | "no_show";
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Seeds every random draw of the run. Omitted, the simulator draws a random seed and reports it in the status, so the run can be replayed.
+             */
             seed?: number;
             /** @default 30 */
             speed: number;
@@ -1220,6 +1223,27 @@ export interface components {
                  *       "error": {
                  *         "code": "simulator.unauthorized",
                  *         "message": "simulator unauthorized",
+                 *         "details": {}
+                 *       },
+                 *       "meta": {
+                 *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description No scenario is running, or the running one is stopping and takes no more work. */
+        SimulatorNotRunning: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "simulator.not_running",
+                 *         "message": "scenario not running",
                  *         "details": {}
                  *       },
                  *       "meta": {
@@ -2839,6 +2863,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["SimulatorUnauthorized"];
+            409: components["responses"]["SimulatorNotRunning"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             500: components["responses"]["InternalError"];
@@ -2865,12 +2890,17 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The car will leave. */
+            /** @description The car will leave. `data` is an empty object. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data: Record<string, never>;
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["SimulatorUnauthorized"];
@@ -2895,6 +2925,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            409: components["responses"]["SimulatorNotRunning"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             500: components["responses"]["InternalError"];
@@ -2930,6 +2961,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["SimulatorUnauthorized"];
+            409: components["responses"]["SimulatorNotRunning"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             500: components["responses"]["InternalError"];

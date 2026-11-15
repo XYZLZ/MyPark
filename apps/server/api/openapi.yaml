@@ -1051,7 +1051,6 @@ paths:
         `X-Simulator-Token`.
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       responses:
         "200":
           description: The current scenario state.
@@ -1075,7 +1074,6 @@ paths:
         `application/json` is 415.
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       requestBody:
         required: true
         content:
@@ -1129,11 +1127,13 @@ paths:
       summary: Stop the running scenario
       description: >-
         With `drain` true, every car inside is scheduled to leave and the
-        scenario completes when they are gone. The body is strictly decoded
-        (see `startSimulatorScenario`).
+        scenario completes when they are gone (at most 10 minutes); the drain
+        runs after the answer, so the 202 status still shows `running` true
+        and `GET /control/status` reports the end. Without `drain` the run is
+        cut at once. The body is strictly decoded (see
+        `startSimulatorScenario`).
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       requestBody:
         required: true
         content:
@@ -1174,7 +1174,6 @@ paths:
         `startSimulatorScenario`).
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       requestBody:
         required: true
         content:
@@ -1194,6 +1193,7 @@ paths:
                   meta: { $ref: "#/components/schemas/Meta" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "409": { $ref: "#/components/responses/SimulatorNotRunning" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1208,7 +1208,6 @@ paths:
         true. The body is strictly decoded (see `startSimulatorScenario`).
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       parameters:
         - $ref: "#/components/parameters/CarId"
       requestBody:
@@ -1218,9 +1217,19 @@ paths:
             schema: { $ref: "#/components/schemas/LeaveCarRequest" }
             example: { lose_ticket: false }
       responses:
-        "202": { description: The car will leave. }
+        "202":
+          description: The car will leave. `data` is an empty object.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: object, additionalProperties: false }
+                  meta: { $ref: "#/components/schemas/Meta" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "409": { $ref: "#/components/responses/SimulatorNotRunning" }
         "404":
           description: There is no such car.
           content:
@@ -1239,11 +1248,11 @@ paths:
       operationId: setSimulatorSensorFault
       summary: Set a sensor fault
       description: >-
-        `none` clears the fault. The body is strictly decoded (see
+        `none` clears the fault. A space code the lot lacks is 422
+        `validation.failed` on field `code`. The body is strictly decoded (see
         `startSimulatorScenario`).
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       parameters:
         - name: code
           in: path
@@ -1260,6 +1269,7 @@ paths:
         "204": { description: The fault was set. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/SimulatorUnauthorized" }
+        "409": { $ref: "#/components/responses/SimulatorNotRunning" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1274,7 +1284,6 @@ paths:
         console polls it with `after` set to the last `seq` it has seen.
       tags: [simulator]
       security: [{ simulatorToken: [] }]
-      x-mypark-pending: S13.2
       parameters:
         - name: after
           in: query
@@ -1333,7 +1342,13 @@ components:
         scenario:
           type: string
           enum: [idle, weekday, weekend_peak, fill_to_full, sensor_drift, reservation_arrivals, no_show]
-        seed: { type: integer, format: int64, minimum: 0 }
+        seed:
+          description: >-
+            Seeds every random draw of the run. Omitted, the simulator draws a
+            random seed and reports it in the status, so the run can be replayed.
+          type: integer
+          format: int64
+          minimum: 0
         speed: { type: integer, minimum: 1, maximum: 120, default: 30 }
         start_at: { type: string, format: date-time }
     StopScenarioRequest:
@@ -2095,6 +2110,14 @@ components:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
           example:
             error: { code: simulator.unauthorized, message: simulator unauthorized, details: {} }
+            meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    SimulatorNotRunning:
+      description: No scenario is running, or the running one is stopping and takes no more work.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: simulator.not_running, message: scenario not running, details: {} }
             meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
     Accepted:
       description: Request accepted. The answer is the same whether or not the account exists.

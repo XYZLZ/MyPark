@@ -155,6 +155,13 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
+// pending returns how many events are queued.
+func (e *Engine) pending() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.q)
+}
+
 // Now returns the virtual time.
 func (e *Engine) Now() time.Time {
 	e.mu.Lock()

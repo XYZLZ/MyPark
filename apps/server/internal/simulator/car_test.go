@@ -48,6 +48,7 @@ type fakeAPI struct {
 	now       func() time.Time
 	skew      time.Duration
 	calls     []apiCall
+	onCall    func(typ string) // when set, runs before each call is answered, outside mu
 	script    map[string][]string
 	used      map[string]int
 	stays     int            // stays issued
@@ -71,6 +72,9 @@ func (a *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if d.PublicID == id {
 			kind = d.Kind
 		}
+	}
+	if a.onCall != nil {
+		a.onCall(ev.Type)
 	}
 	a.mu.Lock()
 	a.calls = append(a.calls, apiCall{kind, ev.Type, ev.Payload})
