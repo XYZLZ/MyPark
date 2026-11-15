@@ -9,14 +9,14 @@ import { AppText } from './AppText';
 // Web hover has no touch equivalent, so the press state uses the same color. The focus border
 // is per variant: on navy (onDark) a navy border would be invisible, so it widens in white.
 const SURFACE_CLASS = {
-  primary: 'bg-brand-action active:bg-brand-action-press focus:border-2 focus:border-brand-primary',
+  primary: 'bg-brand-navy active:bg-brand-navy-deep focus:border-2 focus:border-brand-navy',
   onDark: 'bg-transparent border-2 border-brand-primary-contrast active:bg-white/10 focus:border-4',
-  quiet: 'bg-transparent active:bg-brand-primary-tint focus:border-2 focus:border-brand-primary',
-  danger: 'bg-danger active:opacity-90 focus:border-2 focus:border-brand-primary',
+  quiet: 'bg-transparent active:bg-brand-primary-tint focus:border-2 focus:border-brand-navy',
+  danger: 'bg-danger active:opacity-90 focus:border-2 focus:border-brand-navy',
 } as const;
 
 const TEXT_CLASS = {
-  primary: 'text-brand-action-contrast',
+  primary: 'text-brand-primary-contrast',
   onDark: 'text-brand-primary-contrast',
   quiet: 'text-brand-primary',
   danger: 'text-brand-primary-contrast',
@@ -33,7 +33,7 @@ const DISABLED_SURFACE = {
 // Spinner color per variant, the text color as on web (`border-current`). The `accent-` form is
 // for non-style props; a literal token value works too.
 const SPINNER_COLOR = {
-  primary: tokens.brandActionContrast,
+  primary: tokens.brandPrimaryContrast,
   onDark: tokens.brandPrimaryContrast,
   quiet: tokens.brandPrimary,
   danger: tokens.brandPrimaryContrast,

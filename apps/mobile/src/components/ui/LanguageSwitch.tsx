@@ -26,7 +26,7 @@ export function LanguageSwitch({ value, onChange }: Props) {
             accessibilityLanguage={option.speech}
             accessibilityState={{ selected }}
             onPress={() => onChange(option.value)}
-            className={`min-h-12 min-w-12 items-center justify-center rounded-full border-2 px-4 focus:border-brand-primary ${selected ? 'border-brand-primary bg-brand-primary-tint' : 'border-control-line bg-surface'}`}
+            className={`min-h-12 min-w-12 items-center justify-center rounded-full border-2 px-4 focus:border-brand-navy ${selected ? 'border-brand-primary bg-brand-primary-tint' : 'border-control-line bg-surface'}`}
           >
             <AppText weight={selected ? 'bold' : 'regular'} className={selected ? 'text-brand-primary' : 'text-ink'}>
               {option.label}

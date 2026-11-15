@@ -21,7 +21,7 @@ function VehicleRow({ vehicle, onPress }: { vehicle: Vehicle; onPress: () => voi
       accessibilityRole="button"
       accessibilityLabel={t('vehicles.editFor', { plate: vehicle.plate })}
       onPress={onPress}
-      className="min-h-12 gap-2 rounded-panel border border-hairline bg-surface p-4 active:bg-brand-primary-tint focus:border-2 focus:border-brand-primary"
+      className="min-h-12 gap-2 rounded-panel border border-hairline bg-surface p-4 active:bg-brand-primary-tint focus:border-2 focus:border-brand-navy"
     >
       <Plate value={vehicle.plate} />
       <AppText>{`${vehicle.make} ${vehicle.model} · ${vehicle.color}`}</AppText>

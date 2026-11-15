@@ -75,6 +75,16 @@ test('onDark is a transparent outline with white text, like web', async () => {
   expect(classesOf(screen.getByText('Log in'))).toContain('text-brand-primary-contrast');
 });
 
+test('primary renders on navy', async () => {
+  await render(<Button variant="primary" label="Save" onPress={jest.fn()} />);
+  const surface = classesOf(screen.getByRole('button', { name: 'Save' }));
+  expect(surface).toEqual(
+    expect.arrayContaining(['bg-brand-navy', 'active:bg-brand-navy-deep', 'focus:border-brand-navy']),
+  );
+  expect(surface).not.toContain('bg-brand-action');
+  expect(classesOf(screen.getByText('Save'))).toContain('text-brand-primary-contrast');
+});
+
 test('quiet has no border, like web', async () => {
   await render(<Button variant="quiet" label="Back" onPress={jest.fn()} />);
   const surface = classesOf(screen.getByRole('button', { name: 'Back' }));
@@ -94,7 +104,7 @@ test('disabled has no border except on onDark, like web', async () => {
 });
 
 test.each([
-  ['primary', tokens.brandActionContrast],
+  ['primary', tokens.brandPrimaryContrast],
   ['onDark', tokens.brandPrimaryContrast],
   ['quiet', tokens.brandPrimary],
   ['danger', tokens.brandPrimaryContrast],

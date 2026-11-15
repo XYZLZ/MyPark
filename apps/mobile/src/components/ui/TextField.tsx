@@ -15,7 +15,7 @@ type Props = Omit<TextInputProps, 'accessibilityLabel' | 'accessibilityHint' | '
 export function TextField({ label, error, hint, ref, className, ...inputProps }: Props) {
   // The input's own label carries the error so it is read on focus, not only when it appears (spec §11).
   const accessibleLabel = error ? `${label}, ${error}` : label;
-  const border = error ? 'border-danger' : 'border-control-line focus:border-brand-primary';
+  const border = error ? 'border-danger' : 'border-control-line focus:border-brand-navy';
   return (
     <View className="gap-1">
       <AppText weight="medium" variant="label" importantForAccessibility="no" accessibilityElementsHidden>
