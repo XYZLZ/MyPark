@@ -29,7 +29,7 @@ export function LotHomeScreen() {
       }
     >
       <HeroPlaceholder />
-      <LotLive cardClassName="-mt-14" />
+      <LotLive mapHref="/home/map" cardClassName="-mt-14" />
     </ScreenScroll>
   );
 }

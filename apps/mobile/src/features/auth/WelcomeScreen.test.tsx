@@ -117,3 +117,9 @@ test('Crear cuenta is the outline button', async () => {
   await renderScreen(<WelcomeScreen />, { language: 'es-DO' });
   expect(screen.getByRole('button', { name: 'Crear cuenta' }).props.className).toContain('border-brand-navy');
 });
+
+test('View full map opens the pre-login map route', async () => {
+  await renderScreen(<WelcomeScreen />);
+  await fireEvent.press(await screen.findByRole('button', { name: 'View full map' }));
+  expect(mockPush).toHaveBeenLastCalledWith('/map');
+});

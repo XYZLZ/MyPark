@@ -12,6 +12,8 @@ import { countHorizontalScrolls, DEVICE_INSETS, LAYOUT_SIZES, renderAtSize, scro
 import { stubLotApi } from '@/testing/lot-api';
 
 import { LotHomeScreen } from './LotHomeScreen';
+import { LotMapScreen } from './LotMapScreen';
+import { cellSize, MAP_CARD_PADDING, MAP_COLUMNS, MAP_GAP } from './map-layout';
 
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), Redirect: () => null }));
 jest.mock('@/services/runtime', () => ({ http: { request: jest.fn() } }));
@@ -64,4 +66,24 @@ test('the header keeps the gutter and adds the side insets, and the content belo
   await renderAtSize(<LotHomeScreen />, 'large', { language: 'es-DO', insets: { top: 0, bottom: 0, left: 8, right: 12 } });
   expect(headerPadding()).toEqual({ top: 16, left: 24, right: 28 });
   expect(scrollPadding()).toMatchObject({ top: 0, left: 24, right: 28 });
+});
+
+test.each(sizes)('the full map at %s keeps the gutter, never scrolls sideways and its cells fit the card', async (size) => {
+  await renderAtSize(<LotMapScreen edge="tabBar" />, size, { language: 'es-DO' });
+  await screen.findByTestId('space-E280', { includeHiddenElements: true });
+  expect(scrollPadding()).toMatchObject({ left: 16, right: 16, bottom: 24 });
+  expect(countHorizontalScrolls()).toBe(0);
+
+  const width = LAYOUT_SIZES[size].width;
+  const cell = StyleSheet.flatten(screen.getByTestId('space-E001', { includeHiddenElements: true }).props.style);
+  expect(cell.width).toBe(cellSize(width));
+  const cardInner = width - 2 * 16 - 2 * MAP_CARD_PADDING;
+  expect(MAP_COLUMNS * cell.width + (MAP_COLUMNS - 1) * MAP_GAP).toBeLessThanOrEqual(cardInner);
+  const grid = StyleSheet.flatten(screen.getByTestId('space-grid', { includeHiddenElements: true }).props.style);
+  expect(grid.width).toBeLessThanOrEqual(cardInner);
+});
+
+test('the full map before login adds the bottom inset itself', async () => {
+  await renderAtSize(<LotMapScreen edge="screen" />, 'small', { language: 'es-DO' });
+  expect(scrollPadding()).toMatchObject({ bottom: 24 + DEVICE_INSETS.bottom });
 });

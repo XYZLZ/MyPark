@@ -494,7 +494,7 @@ src/
 
 ```
 src/
-├─ app/                 # expo-router: (auth)/, (tabs)/{availability,reserve,reservations,vehicles,profile}, _layout.tsx. M1 ships the Vehicles and Profile tabs only (X11)
+├─ app/                 # expo-router: (auth)/, (auth)/{welcome,map,...}, (tabs)/{home/{index,map},vehicles,profile}, _layout.tsx. M2 tabs are Inicio, Vehículos, Perfil (X11)
 ├─ components/          # presentational
 ├─ features/<feature>/  # screens' containers, hooks
 ├─ services/            # httpClient (refresh single-flight), tokenStorage (secure-store), sse
@@ -503,6 +503,7 @@ src/
 ├─ hooks/  design/tokens.ts  global.css (@import 'tailwindcss'; @import 'uniwind'; @theme ...)
 ```
 
+- **Navigation (M2):** the tabs are Inicio, Vehículos and Perfil, in that order (`TAB_ORDER`), and Inicio is the landing after login (`rootHref('tabs')` is `/home`). Signed out, Welcome shows the live lot with Log in and Sign up. Inicio and Welcome show a 40-space map preview, and "View full map" opens a full-map screen of all 280 spaces (`/home/map` in the tabs, `/map` before login). The map is 10 columns on mobile, hidden from screen readers, and backed by a text summary and a list of free spaces.
 - **Brand tokens** are the same names on web and mobile (`brand-primary`, `brand-primary-contrast`, `brand-accent`, `brand-accent-contrast`). Phase 1 ships placeholder values marked `TODO(brand)` in `src/global.css` `@theme` and `src/design/tokens.ts`. They are replaced from official Banreservas assets supplied by the team, and an AA contrast check runs on replacement. The app display name is "MyPark · Banreservas Zona Colonial".
 - `metro.config.js` uses `withUniwindConfig(config, { cssEntryFile: './src/global.css', dtsFile: './src/types/uniwind-types.d.ts' })`.
 - The QR is rendered locally from the token (`react-native-qrcode-svg` or similar) and the last active QR is cached in secure storage for offline display.

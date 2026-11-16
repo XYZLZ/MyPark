@@ -16,6 +16,8 @@ export type LotData = {
   spaces?: SpaceState[];
   tariff?: Tariff;
   connection: Connection;
+  /** False between a (re)connect and the first full spaces frame: the map is then dimmed (design §9.3). Server data alone does not dim it. */
+  mapReady: boolean;
   /** Nothing to show and no way to get it right now (design §4.3): the error panel replaces the live block. */
   loadError: boolean;
   retry: () => void;
@@ -63,6 +65,7 @@ export function useLotData(): LotData {
     spaces: spaces.data,
     tariff: tariff.data,
     connection: lotId === null ? CONNECTING : connection,
+    mapReady: connection.spacesReady || connection.status === 'connecting' || connection.status === 'unavailable',
     loadError: noLot || noFigures,
     retry: () => {
       if (lotId === null) return id.refetch();

@@ -1,6 +1,7 @@
 import { lotQueryKeys } from '@mypark/contracts';
 import {
   availabilityClosedFixture,
+  spacesFullEventFixture,
   availabilityFullFixture,
   availabilityReducedFixture,
   heartbeatFixture,
@@ -8,7 +9,7 @@ import {
   sseText,
 } from '@mypark/contracts/fixtures';
 import { focusManager, QueryClient } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, screen } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, screen, within } from '@testing-library/react-native';
 import { AccessibilityInfo, Linking, Text } from 'react-native';
 
 import { getApiBaseUrl } from '@/lib/env';
@@ -21,6 +22,8 @@ import { controllableStream, type ControllableStream } from '@/testing/stream';
 import { LotLive } from './LotLive';
 import { acquireLiveLot, resetLiveLotsForTests } from './live/manager';
 
+const mockRouter = { push: jest.fn() };
+jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
 jest.mock('@/services/runtime', () => ({ http: { request: jest.fn() } }));
 
 const request = jest.mocked(http.request);
@@ -36,6 +39,7 @@ beforeEach(() => {
   jest.useFakeTimers({ now: NOW });
   restoreNotify = notifyQuerySynchronously();
   request.mockReset();
+  mockRouter.push.mockReset();
   stubLotApi(request);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   stream = controllableStream();
@@ -59,7 +63,7 @@ afterEach(async () => {
 });
 
 const renderLot = async () => {
-  await renderScreen(<LotLive />, { language: 'es-DO', queryClient });
+  await renderScreen(<LotLive mapHref="/home/map" />, { language: 'es-DO', queryClient });
   return screen.findByText('Espacios disponibles');
 };
 const pushAvailability = (patch: object, version: number) =>
@@ -162,7 +166,7 @@ test('Abrir en Maps opens the server map_url and says what it does', async () =>
 });
 
 test('renders the actions right under the count card', async () => {
-  await renderScreen(<LotLive actions={<Text>acciones</Text>} />, { language: 'es-DO', queryClient });
+  await renderScreen(<LotLive mapHref="/home/map" actions={<Text>acciones</Text>} />, { language: 'es-DO', queryClient });
   await screen.findByText('Espacios disponibles');
 
   const order = JSON.stringify(screen.toJSON());
@@ -236,4 +240,47 @@ test('heartbeat keeps the live line', async () => {
   await renderLot();
   await act(async () => stream.push(sseText('heartbeat', heartbeatFixture)));
   expect(screen.getByText(/En tiempo real/)).toBeOnTheScreen();
+});
+
+const hidden = { includeHiddenElements: true } as const;
+
+test('frame to screen: a spaces delta changes the cell without a timer (M2B-42)', async () => {
+  await renderLot();
+  await act(async () => stream.push(sseText('spaces', spacesFullEventFixture)));
+  // E100 is past the 40 the preview draws, so the delta frees E010, which is in it.
+  expect(within(screen.getByTestId('space-E010', hidden)).getByTestId('shape-car', hidden)).toBeTruthy();
+
+  await act(async () => stream.push(sseText('spaces', { full: false, spaces: [{ code: 'E010', state: 'free' }] })));
+
+  expect(within(screen.getByTestId('space-E010', hidden)).getByTestId('shape-free', hidden)).toBeTruthy();
+});
+
+test('the preview shows the first 40 spaces and says 40 de 280 espacios', async () => {
+  await renderLot();
+  expect(await screen.findByTestId('space-E040', hidden)).toBeTruthy();
+  expect(screen.queryByTestId('space-E041', hidden)).toBeNull();
+  expect(screen.getByText('40 de 280 espacios')).toBeOnTheScreen();
+});
+
+test('Ver mapa completo opens the full map', async () => {
+  await renderLot();
+  await fireEvent.press(await screen.findByRole('button', { name: 'Ver mapa completo' }));
+  expect(mockRouter.push).toHaveBeenCalledWith('/home/map');
+});
+
+test('the map is hidden from accessibility and the summary covers all 280', async () => {
+  await renderLot();
+  const grid = await screen.findByTestId('space-grid', hidden);
+  expect(grid.props.importantForAccessibility).toBe('no-hide-descendants');
+  expect(grid.props.accessibilityElementsHidden).toBe(true);
+  expect(screen.getByText('Sensores — libres: 211, ocupados: 66, fuera de servicio: 3.')).toBeOnTheScreen();
+});
+
+test('the preview dims with Actualizando el mapa… when the stream drops, but not on the server data alone', async () => {
+  await renderLot();
+  await screen.findByTestId('space-grid', hidden);
+  expect(screen.queryByText('Actualizando el mapa…')).toBeNull(); // connecting: the snapshot is all there is
+  await act(async () => stream.push(sseText('heartbeat', heartbeatFixture)));
+  await act(async () => stream.fail());
+  expect(screen.getByText('Actualizando el mapa…')).toBeOnTheScreen();
 });

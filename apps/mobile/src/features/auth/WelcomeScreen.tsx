@@ -40,6 +40,7 @@ export function WelcomeScreen() {
       {notice === 'logout_all_failed' ? <Banner tone="info">{t('session.logoutAllFailed')}</Banner> : null}
       <HeroPlaceholder tagline />
       <LotLive
+        mapHref="/map"
         cardClassName="-mt-14"
         actions={
           <>

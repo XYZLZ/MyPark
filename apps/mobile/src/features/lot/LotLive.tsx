@@ -7,17 +7,26 @@ import { FreshnessLine } from './components/FreshnessLine';
 import { LotErrorPanel } from './components/LotErrorPanel';
 import { LotInfo } from './components/LotInfo';
 import { LotSkeleton } from './components/LotSkeleton';
+import { MapPreviewCard } from './components/MapPreviewCard';
 import { RatesList } from './components/RatesList';
 import { useAnnouncer } from './useAnnouncer';
 import { useLotData } from './useLotData';
 
 /**
- * The live block (design §4.3). Order: count card, the caller's actions right under it, the map slot (Task 12), then the lot
+ * The live block (design §4.3). Order: count card, the caller's actions right under it, the map preview, then the lot
  * info and the rates. The figures come only from availability, never from the map (M2B-15). `cardClassName` lets the screen overlap the count card onto the banner above it. Without figures it shows a
  * skeleton while connecting and the error panel when nothing can be loaded; the actions stay on screen either way.
  */
-export function LotLive({ actions, cardClassName = '' }: { actions?: ReactNode; cardClassName?: string }) {
-  const { lot, availability, tariff, connection, loadError, retry, snapshotAt } = useLotData();
+export function LotLive({
+  actions,
+  mapHref,
+  cardClassName = '',
+}: {
+  actions?: ReactNode;
+  mapHref: '/map' | '/home/map';
+  cardClassName?: string;
+}) {
+  const { lot, availability, spaces, tariff, connection, mapReady, loadError, retry, snapshotAt } = useLotData();
   const figures = availability ? availabilityFigures(availability) : null;
   useAnnouncer(
     availability ? { available: availability.available, status: availability.status, connection: connection.status } : null,
@@ -47,7 +56,7 @@ export function LotLive({ actions, cardClassName = '' }: { actions?: ReactNode; 
         </View>
       </View>
       {actions}
-      {/* The map preview slot (Task 12). */}
+      <MapPreviewCard spaces={spaces ?? null} ready={mapReady} mapHref={mapHref} />
       {lot ? <LotInfo lot={lot} /> : null}
       {tariff ? <RatesList tariff={tariff} /> : null}
     </>

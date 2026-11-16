@@ -8,8 +8,12 @@ import { TabLabel } from '@/components/ui/TabLabel';
 import { tabBarStyle } from '@/design/layout';
 import { tokens } from '@/design/tokens';
 import { StorageNotice } from '@/features/session/StorageNotice';
+import { TAB_ORDER } from '@/features/session/tabs';
 
-/** Signed in and clear of the gate: the tabs, each with its own stack (Task 12 sets their order). */
+// Open on Inicio, whatever deep link or restore put the user in the tabs (M2B-48).
+export const unstable_settings = { initialRouteName: 'home' };
+
+/** Signed in and clear of the gate: the tabs, each with its own stack, in `TAB_ORDER`. */
 export default function TabsLayout() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -24,30 +28,17 @@ export default function TabsLayout() {
           tabBarStyle: { ...tabBarStyle(insets), backgroundColor: tokens.surface, borderTopColor: tokens.hairline },
         }}
       >
-        <Tabs.Screen
-          name="home"
-          options={{
-            title: t('nav.home'),
-            tabBarIcon: ({ focused }) => <TabIcon name="home" focused={focused} />,
-            tabBarLabel: ({ focused }) => <TabLabel focused={focused} label={t('nav.home')} />,
-          }}
-        />
-        <Tabs.Screen
-          name="vehicles"
-          options={{
-            title: t('nav.vehicles'),
-            tabBarIcon: ({ focused }) => <TabIcon name="vehicles" focused={focused} />,
-            tabBarLabel: ({ focused }) => <TabLabel focused={focused} label={t('nav.vehicles')} />,
-          }}
-        />
-        <Tabs.Screen
-          name="profile"
-          options={{
-            title: t('nav.profile'),
-            tabBarIcon: ({ focused }) => <TabIcon name="profile" focused={focused} />,
-            tabBarLabel: ({ focused }) => <TabLabel focused={focused} label={t('nav.profile')} />,
-          }}
-        />
+        {TAB_ORDER.map((name) => (
+          <Tabs.Screen
+            key={name}
+            name={name}
+            options={{
+              title: t(`nav.${name}`),
+              tabBarIcon: ({ focused }) => <TabIcon name={name} focused={focused} />,
+              tabBarLabel: ({ focused }) => <TabLabel focused={focused} label={t(`nav.${name}`)} />,
+            }}
+          />
+        ))}
       </Tabs>
     </View>
   );
