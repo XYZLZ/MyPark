@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RefreshOutcome, TokenPair } from '@/lib/session/cookies';
 import { guardPublicAndProtected } from './lib/session/page-guard';
-import proxy from './proxy';
+import proxy, { config } from './proxy';
 
 // The real guard, wrapped so a test can see whether the proxy called it.
 vi.mock('./lib/session/page-guard', async (importOriginal) => {
@@ -150,5 +150,15 @@ describe('proxy page guard', () => {
     // Without the reason, the same live session is sent to Vehicles.
     const bounced = await proxy(get('/es-DO/login', EXPIRED));
     expect(new URL(bounced.headers.get('location') ?? '').pathname).toBe('/es-DO/vehicles');
+  });
+});
+
+describe('proxy matcher', () => {
+  test('the matcher covers /api/admin and refreshes for it', async () => {
+    expect(config.matcher).toContain('/api/admin/:path*');
+    const res = await proxy(get('/api/admin/simulator/status', EXPIRED));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('x-middleware-request-cookie')).toContain('mp_access=access-1');
+    expect(res.headers.get('location')).toBeNull();
   });
 });
