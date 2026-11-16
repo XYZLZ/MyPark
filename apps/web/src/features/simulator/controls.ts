@@ -1,18 +1,28 @@
 import { ApiError, type SimulatorStatus } from '@mypark/contracts';
 import type { StatusResult } from './api';
 
-export type ConsoleMode = 'notConfigured' | 'unreachable' | 'idle' | 'running' | 'draining';
+export type ConsoleMode = 'loading' | 'notConfigured' | 'forbidden' | 'unreachable' | 'error' | 'idle' | 'running' | 'draining';
 
 /** Not configured: the route answers 404, or the simulator rejects the token (401). Neither is a session end. */
-function isNotConfigured(error: ApiError): boolean {
-  return error.code === 'http.not_found' || error.code === 'simulator.unauthorized';
+export function isNotConfigured(error: unknown): boolean {
+  return error instanceof ApiError && (error.code === 'http.not_found' || error.code === 'simulator.unauthorized');
+}
+
+/** Network failures, timeouts and a bad or slow gateway: the simulator could not be reached. */
+function isUnreachable(error: ApiError): boolean {
+  return error.code === 'client.network' || error.code === 'client.timeout' || error.status === 502 || error.status === 504;
 }
 
 export function consoleMode(result: { data?: StatusResult; error?: unknown }, draining: boolean): ConsoleMode {
   const { data, error } = result;
-  if (error instanceof ApiError && isNotConfigured(error)) return 'notConfigured';
-  if (error !== undefined) return 'unreachable';
-  if (!data?.status.running) return 'idle';
+  if (isNotConfigured(error)) return 'notConfigured';
+  if (error !== undefined && error !== null) {
+    if (error instanceof ApiError && error.code === 'auth.forbidden') return 'forbidden';
+    if (error instanceof ApiError && !isUnreachable(error) && (error.status ?? 0) >= 500) return 'error';
+    return 'unreachable';
+  }
+  if (!data) return 'loading';
+  if (!data.status.running) return 'idle';
   return draining ? 'draining' : 'running';
 }
 

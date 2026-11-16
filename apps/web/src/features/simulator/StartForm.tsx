@@ -3,24 +3,34 @@
 import { CONSOLE_SCENARIOS } from '@mypark/contracts';
 import type { ReactElement } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import { Field, inputClass } from '@/components/ui/Field';
 import { useApiForm } from '@/lib/forms/use-api-form';
 import { simulatorKeys, startScenario } from './api';
+import { isNotConfigured } from './controls';
 import { startFormSchema } from './seed';
 
 type Name = 'scenario' | 'speed' | 'seed' | 'start_at';
 
 /** The disabled reason is text next to the button, not only a dimmed button. */
-export function StartForm({ disabled, reason }: { disabled: boolean; reason?: string }) {
+export function StartForm({ disabled, reason, onStarted }: { disabled: boolean; reason?: string; onStarted?: () => void }) {
   const queryClient = useQueryClient();
+  const translate = useTranslations();
   const { form, t, bannerRef, serverError, fieldMessage, onSubmit, submitting } = useApiForm({
     schema: startFormSchema,
     defaultValues: { scenario: 'weekday', speed: 30, seed: '', start_at: '' },
     submit: async (values) => {
       await startScenario(values);
       await queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
+      onStarted?.();
+    },
+    onError: (error, _values, formApi) => {
+      if (!isNotConfigured(error)) return false;
+      formApi.setError('root.serverError', { type: 'server', message: translate('simulator.notConfigured') });
+      void queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
+      return true;
     },
   });
   const { register } = form;

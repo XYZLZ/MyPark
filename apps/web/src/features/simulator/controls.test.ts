@@ -56,6 +56,8 @@ describe('consoleMode', () => {
     expect(consoleMode({ error: apiError('simulator.unauthorized', 401) }, false)).toBe('notConfigured');
     expect(consoleMode({ error: apiError('client.network', 0) }, false)).toBe('unreachable');
     expect(consoleMode({ error: apiError('internal.unexpected', 502) }, false)).toBe('unreachable');
+    expect(consoleMode({ error: apiError('client.timeout', 0) }, false)).toBe('unreachable');
+    expect(consoleMode({ error: apiError('internal.unexpected', 504) }, false)).toBe('unreachable');
   });
 
   test('derives idle, running and draining from the data', () => {
@@ -68,8 +70,9 @@ describe('consoleMode', () => {
     expect(consoleMode({ data: result(weekday), error: apiError('client.network', 0) }, false)).toBe('unreachable');
   });
 
-  test('another error with no data counts as unreachable', () => {
-    expect(consoleMode({ error: apiError('internal.unexpected', 500) }, false)).toBe('unreachable');
-    expect(consoleMode({}, false)).toBe('idle');
+  test('403 is forbidden, another 5xx is a server error, and no answer yet is loading', () => {
+    expect(consoleMode({ error: apiError('auth.forbidden', 403) }, false)).toBe('forbidden');
+    expect(consoleMode({ error: apiError('internal.unexpected', 500) }, false)).toBe('error');
+    expect(consoleMode({}, false)).toBe('loading');
   });
 });

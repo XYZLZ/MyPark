@@ -2,7 +2,7 @@
 
 import { CONSOLE_SCENARIOS } from '@mypark/contracts';
 import { useLocale, useTranslations } from 'next-intl';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import { Button } from '@/components/ui/Button';
 import type { Locale } from '@/i18n/routing';
 import { formatClock } from '@/lib/format/time';
@@ -24,38 +24,55 @@ function Row({ label, children, wide = false }: { label: string; children: React
   );
 }
 
+type CopyState = 'idle' | 'copied' | 'failed';
+
+/** Remounted per seed (`key`), so a new seed never shows "Copied". The note is also read out by its own live region. */
 function CopySeed({ seed }: { seed: string }) {
   const t = useTranslations('simulator.status');
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<CopyState>('idle');
+
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = setTimeout(() => setState('idle'), 2_000);
+    return () => clearTimeout(timer);
+  }, [state]);
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(seed);
-      setCopied(true);
+      setState('copied');
     } catch {
-      setCopied(false);
+      setState('failed');
     }
   }
 
+  const note = state === 'copied' ? t('copied') : state === 'failed' ? t('copyFailed') : '';
   return (
-    <Button variant="outline" className="h-9 px-4 text-sm" onClick={() => void copy()}>
-      {copied ? t('copied') : t('copySeed')}
-    </Button>
+    <>
+      <Button variant="outline" className="h-9 px-4 text-sm" onClick={() => void copy()}>
+        {state === 'copied' ? t('copied') : t('copySeed')}
+      </Button>
+      {state === 'failed' ? <span className="text-sm text-danger">{note}</span> : null}
+      <span role="status" className="sr-only">
+        {note}
+      </span>
+    </>
   );
 }
 
-export function StatusPanel({ mode, result }: { mode: ConsoleMode; result?: StatusResult }) {
+/** `headingRef` lets the console move focus here after an action (WCAG 2.4.3). */
+export function StatusPanel({ mode, result, headingRef }: { mode: ConsoleMode; result?: StatusResult; headingRef?: Ref<HTMLHeadingElement> }) {
   const t = useTranslations('simulator.status');
   const ts = useTranslations('simulator.scenario');
   const locale = useLocale() as Locale;
   const status = result?.status;
-  const badge = mode === 'draining' ? t('draining') : mode === 'running' ? t('running') : mode === 'idle' && status ? t('idle') : null;
+  const badge = mode === 'draining' ? t('draining') : mode === 'running' ? t('running') : mode === 'idle' ? t('idle') : null;
   const known = (CONSOLE_SCENARIOS as readonly string[]).includes(status?.scenario ?? '');
 
   return (
     <section aria-labelledby="sim-status-title" className="rounded-panel bg-surface p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 id="sim-status-title" className="text-lg font-bold text-ink">
+        <h2 ref={headingRef} tabIndex={-1} id="sim-status-title" className="text-lg font-bold text-ink outline-none">
           {t('title')}
         </h2>
         {badge ? <span className="rounded-full bg-brand-sky px-3 py-1 text-sm font-semibold text-brand-navy">{badge}</span> : null}
@@ -69,7 +86,7 @@ export function StatusPanel({ mode, result }: { mode: ConsoleMode; result?: Stat
           <Row label={t('seed')} wide>
             <span className="flex items-center gap-3">
               <code className="font-mono">{result.rawSeed}</code>
-              <CopySeed seed={result.rawSeed} />
+              <CopySeed key={result.rawSeed} seed={result.rawSeed} />
             </span>
           </Row>
           <Row label={t('virtualTime')}>{formatClock(status.virtual_now, locale)}</Row>
@@ -81,6 +98,8 @@ export function StatusPanel({ mode, result }: { mode: ConsoleMode; result?: Stat
             <p className="col-span-2 text-sm font-semibold text-status-full">{t('reachedFull')}</p>
           ) : null}
         </dl>
+      ) : mode === 'loading' ? (
+        <p className="text-ink-muted">{t('loading')}</p>
       ) : null}
     </section>
   );

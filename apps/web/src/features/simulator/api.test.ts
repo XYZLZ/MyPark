@@ -1,5 +1,4 @@
-import { errorBody, successBody } from '@mypark/contracts/fixtures';
-import { simulatorStatusRunningFixture } from '@mypark/contracts/fixtures';
+import { errorBody, simulatorStatusRunningFixture, successBody } from '@mypark/contracts/fixtures';
 import { describe, expect, test } from 'vitest';
 import { jsonResponse, stubFetch } from '@/testing/fetch';
 import { fetchStatus, startScenario, stopScenario } from './api';
@@ -27,7 +26,7 @@ describe('simulator api', () => {
     await startScenario({ scenario: 'weekday', speed: 30, seed: '9007199254740993', start_at: '' });
 
     const [url, init] = fetchMock.mock.calls[0]!;
-    if (!init) throw new Error("no init");
+    if (!init) throw new Error('the request had no init');
     expect(url).toBe('/api/admin/simulator/scenarios/start');
     expect(init.method).toBe('POST');
     expect(init.body).toBe('{"scenario":"weekday","speed":30,"seed":9007199254740993}');

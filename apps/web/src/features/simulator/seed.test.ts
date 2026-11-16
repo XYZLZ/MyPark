@@ -1,3 +1,4 @@
+import { startScenarioSchema } from '@mypark/contracts';
 import { describe, expect, test } from 'vitest';
 import { extractRawSeed, startFormSchema, toStartBody } from './seed';
 
@@ -22,6 +23,17 @@ describe('seed', () => {
     expect(toStartBody({ scenario: 'weekday', speed: 30, seed: '', start_at: '2026-11-24T07:00' })).toContain(
       '"start_at":"2026-11-24T07:00:00-04:00"',
     );
+  });
+
+  test('a seed with leading zeros is normalized, so the JSON stays valid', () => {
+    expect(issueOf({ seed: '007' })).toEqual([]);
+    expect(toStartBody({ scenario: 'idle', speed: 1, seed: '007', start_at: '' })).toBe('{"scenario":"idle","speed":1,"seed":7}');
+  });
+
+  test('start_at round trips to the same instant through the contract schema', () => {
+    const body = JSON.parse(toStartBody({ scenario: 'idle', speed: 1, seed: '', start_at: '2026-11-24T07:00' })) as unknown;
+    const parsed = startScenarioSchema.parse(body);
+    expect(new Date(parsed.start_at!).toISOString()).toBe('2026-11-24T11:00:00.000Z');
   });
 
   test('empty seed and start_at are omitted', () => {

@@ -4,7 +4,7 @@ import { buttonClass } from '@/components/ui/Button';
 import { Link } from '@/i18n/navigation';
 import { LogoutButtons } from '@/features/profile/LogoutButtons';
 
-/** Greeting and Log out only: no links to features that arrive in M4 (decision 3). */
+/** Greeting, the simulator console link and Log out. */
 export function AdminLanding({ user }: { user: User }) {
   const t = useTranslations('admin');
   const tSim = useTranslations('simulator');

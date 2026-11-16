@@ -210,7 +210,9 @@
       "carsInside": "Cars inside",
       "startedAt": "Started",
       "reachedFull": "Lot reached full",
-      "none": "None"
+      "none": "None",
+      "loading": "Loading status…",
+      "copyFailed": "Could not copy the seed."
     },
     "scenario": {
       "idle": "Idle",
@@ -231,14 +233,18 @@
       "startAtHint": "Santo Domingo time (−04:00)",
       "submit": "Start",
       "disabledRunning": "Disabled: a scenario is running.",
-      "disabledDraining": "Disabled: the simulator is draining."
+      "disabledDraining": "Disabled: the simulator is draining.",
+      "disabledLoading": "Disabled: the status is not known yet."
     },
     "stop": {
       "title": "Stop",
       "now": "Stop now",
       "drain": "Stop after cars leave",
-      "drainingHint": "While the lot drains, only “Stop now” is available."
-    }
+      "drainingHint": "While the lot drains, only “Stop now” is available.",
+      "notRunning": "No scenario is running."
+    },
+    "forbidden": "You do not have permission to use the simulator console.",
+    "serverError": "The simulator reported an error. Still trying."
   },
   "acceptInvitation": {
     "title": "Activate your administrator account",

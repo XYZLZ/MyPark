@@ -210,7 +210,9 @@
       "carsInside": "Carros dentro",
       "startedAt": "Iniciado",
       "reachedFull": "El parqueo llegó a estar lleno",
-      "none": "Ninguno"
+      "none": "Ninguno",
+      "loading": "Cargando el estado…",
+      "copyFailed": "No se pudo copiar la semilla."
     },
     "scenario": {
       "idle": "Inactivo",
@@ -231,14 +233,18 @@
       "startAtHint": "Hora de Santo Domingo (−04:00)",
       "submit": "Iniciar",
       "disabledRunning": "Deshabilitado: hay un escenario en ejecución.",
-      "disabledDraining": "Deshabilitado: el simulador se está vaciando."
+      "disabledDraining": "Deshabilitado: el simulador se está vaciando.",
+      "disabledLoading": "Deshabilitado: aún no se conoce el estado."
     },
     "stop": {
       "title": "Detener",
       "now": "Detener ahora",
       "drain": "Detener cuando salgan los carros",
-      "drainingHint": "Mientras se vacía, solo queda “Detener ahora”."
-    }
+      "drainingHint": "Mientras se vacía, solo queda “Detener ahora”.",
+      "notRunning": "No hay ningún escenario en ejecución."
+    },
+    "forbidden": "No tienes permiso para usar la consola del simulador.",
+    "serverError": "El simulador informó un error. Seguimos intentando."
   },
   "acceptInvitation": {
     "title": "Activa tu cuenta de administración",

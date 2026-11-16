@@ -1,18 +1,23 @@
 'use client';
 
+import { ApiError } from '@mypark/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef } from 'react';
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
-import { useConsoleStore } from '@/providers/simulator-store-provider';
 import { translateError, type Translator } from '@/lib/i18n/translate-error';
-import { ApiError } from '@mypark/contracts';
+import { useConsoleStore } from '@/providers/simulator-store-provider';
 import { simulatorKeys, stopScenario } from './api';
+import { isNotConfigured } from './controls';
 
-/** "Stop after cars leave" sets `draining` on 202 (M2B-45); "Stop now" stays enabled to escalate. */
-export function StopControls({ canStopNow, canDrain }: { canStopNow: boolean; canDrain: boolean }) {
+/**
+ * "Stop after cars leave" sets `draining` on 202 (M2B-45); "Stop now" stays enabled to escalate.
+ * `onStopped` runs after a successful stop, so the console can move focus off a button that is now disabled.
+ */
+export function StopControls({ canStopNow, canDrain, onStopped }: { canStopNow: boolean; canDrain: boolean; onStopped?: () => void }) {
   const t = useTranslations('simulator.stop');
+  const tSim = useTranslations('simulator');
   const tAll: Translator = useTranslations();
   const queryClient = useQueryClient();
   const setDraining = useConsoleStore((state) => state.setDraining);
@@ -23,35 +28,64 @@ export function StopControls({ canStopNow, canDrain }: { canStopNow: boolean; ca
     onSuccess: async (_result, drain) => {
       if (drain) setDraining(true);
       await queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
+      onStopped?.();
+    },
+    // A missing configuration shows in the panel too once the status refetches.
+    onError: (error) => {
+      if (isNotConfigured(error)) void queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
     },
   });
 
   useEffect(() => {
     if (stop.isError) bannerRef.current?.focus();
-  }, [stop.isError, stop.failureCount, stop.submittedAt]);
+  }, [stop.isError, stop.submittedAt]);
 
   const busy = stop.isPending;
-  const error = stop.error instanceof ApiError ? stop.error : stop.error ? new ApiError({ code: 'internal.unexpected', message: 'unknown' }) : null;
+  const failure = stop.error;
+  const message = !failure
+    ? null
+    : isNotConfigured(failure)
+      ? tSim('notConfigured')
+      : translateError(tAll, failure instanceof ApiError ? failure : new ApiError({ code: 'internal.unexpected', message: 'unknown' }));
+
+  // The reason a button is disabled is text tied to it, not only a dimmed button.
+  const reason = !canStopNow ? t('notRunning') : !canDrain ? t('drainingHint') : null;
 
   return (
     <section aria-labelledby="sim-stop-title" className="rounded-panel bg-surface p-5">
       <h2 id="sim-stop-title" className="mb-3 text-lg font-bold text-ink">
         {t('title')}
       </h2>
-      {error ? (
+      {message ? (
         <Banner tone="error" ref={bannerRef}>
-          {translateError(tAll, error)}
+          {message}
         </Banner>
       ) : null}
       <div className="flex flex-wrap gap-3">
-        <Button variant="danger" disabled={!canStopNow} loading={busy && stop.variables === false} onClick={() => stop.mutate(false)}>
+        <Button
+          variant="danger"
+          disabled={!canStopNow}
+          aria-describedby={!canStopNow ? 'sim-stop-reason' : undefined}
+          loading={busy && stop.variables === false}
+          onClick={() => stop.mutate(false)}
+        >
           {t('now')}
         </Button>
-        <Button variant="outline" disabled={!canDrain} loading={busy && stop.variables === true} onClick={() => stop.mutate(true)}>
+        <Button
+          variant="outline"
+          disabled={!canDrain}
+          aria-describedby={!canDrain ? 'sim-stop-reason' : undefined}
+          loading={busy && stop.variables === true}
+          onClick={() => stop.mutate(true)}
+        >
           {t('drain')}
         </Button>
       </div>
-      <p className="mt-3 text-sm text-ink-muted">{t('drainingHint')}</p>
+      {reason ? (
+        <p id="sim-stop-reason" className="mt-3 text-sm text-ink-muted">
+          {reason}
+        </p>
+      ) : null}
     </section>
   );
 }

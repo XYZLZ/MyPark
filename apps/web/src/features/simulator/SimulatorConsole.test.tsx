@@ -53,14 +53,14 @@ describe('SimulatorConsole', () => {
   test('shows the not configured panel on 404', async () => {
     stubFetch(jsonResponse(404, errorBody('http.not_found')));
     await renderConsole('es-DO');
-    expect(screen.getByText(esDO.simulator.notConfigured)).toBeInTheDocument();
-    expect(screen.getByText('El simulador no está configurado en este servidor.')).toBeInTheDocument();
+    expect(screen.getAllByText(esDO.simulator.notConfigured)).toHaveLength(2);
+    expect(screen.getAllByText('El simulador no está configurado en este servidor.')).toHaveLength(2);
   });
 
   test('an upstream 401 simulator.unauthorized shows the same panel and does not end the session', async () => {
     stubFetch(jsonResponse(401, errorBody('simulator.unauthorized')));
     await renderConsole();
-    expect(screen.getByText(S.notConfigured)).toBeInTheDocument();
+    expect(screen.getAllByText(S.notConfigured)).toHaveLength(2);
   });
 
   test('polls status every 2 s while visible', async () => {
@@ -174,5 +174,184 @@ describe('SimulatorConsole', () => {
     stubFetch(idle());
     await renderConsole();
     expect(screen.getByText('lot panel')).toBeInTheDocument();
+  });
+});
+
+describe('SimulatorConsole accessibility and states', () => {
+  const heading = () => screen.getByRole('heading', { name: S.status.title });
+  const liveText = () => screen.getAllByRole('status').map((el) => el.textContent ?? '');
+
+  test('focus moves to the status heading after a successful start', async () => {
+    route({ status: [idle, running], post: () => jsonResponse(202, successBody(simulatorStatusRunningFixture)) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.start.submit }));
+    await settle();
+    expect(heading()).toHaveFocus();
+  });
+
+  test('focus moves to the status heading after Stop now', async () => {
+    route({ status: [running, stopped], post: () => jsonResponse(202, successBody(simulatorStatusRunningFixture)) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.stop.now }));
+    await settle();
+    expect(heading()).toHaveFocus();
+  });
+
+  test('focus moves to the status heading after Stop after cars leave', async () => {
+    route({ status: [running], post: () => jsonResponse(202, successBody(simulatorStatusRunningFixture)) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.stop.drain }));
+    await settle();
+    expect(heading()).toHaveFocus();
+  });
+
+  test('one live region stays mounted and announces every mode change', async () => {
+    stubFetch(idle());
+    renderWithProviders(<SimulatorConsole lot={null} />, { locale: 'en' });
+    const region = screen.getAllByRole('status')[0]!;
+    expect(region.textContent).toBe('');
+
+    await settle();
+
+    expect(region.isConnected).toBe(true);
+    expect(region).toHaveTextContent(S.status.idle);
+  });
+
+  test('the live region announces unreachable and not configured', async () => {
+    stubFetch(async () => {
+      throw new TypeError('offline');
+    });
+    await renderConsole();
+    expect(liveText()).toContain(S.unreachable);
+    expect(screen.getByRole('alert')).toHaveTextContent(S.unreachable);
+  });
+
+  test('the live region announces not configured, and the panel itself is not a live region', async () => {
+    stubFetch(jsonResponse(404, errorBody('http.not_found')));
+    await renderConsole();
+    expect(liveText()).toContain(S.notConfigured);
+    expect(screen.getAllByText(S.notConfigured).filter((el) => el.getAttribute('role') === 'status')).toHaveLength(1);
+  });
+
+  test('a 403 and a 500 each show their own message', async () => {
+    stubFetch(jsonResponse(403, errorBody('auth.forbidden')));
+    await renderConsole();
+    expect(screen.getByRole('alert')).toHaveTextContent(S.forbidden);
+  });
+
+  test('a 500 shows the server error message', async () => {
+    stubFetch(jsonResponse(500, errorBody('internal.unexpected')));
+    await renderConsole();
+    expect(screen.getByRole('alert')).toHaveTextContent(S.serverError);
+  });
+
+  test('the last badge stays while a later poll fails', async () => {
+    let calls = 0;
+    stubFetch(async () => {
+      if (calls++ === 0) return running();
+      throw new TypeError('offline');
+    });
+    await renderConsole();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(S.unreachable);
+    expect(screen.getAllByText(S.status.running).length).toBeGreaterThan(0);
+  });
+
+  test('before the first answer Start is disabled and says the status is unknown', () => {
+    stubFetch(() => new Promise<Response>(() => undefined));
+    renderWithProviders(<SimulatorConsole lot={null} />, { locale: 'en' });
+    expect(screen.getByRole('button', { name: S.start.submit })).toBeDisabled();
+    expect(screen.getByText(S.start.disabledLoading)).toBeInTheDocument();
+    expect(screen.getByText(S.status.loading)).toBeInTheDocument();
+  });
+
+  test('disabled stop buttons give a visible reason tied with aria-describedby, and the drain hint only shows while draining', async () => {
+    route({ status: [idle], post: () => jsonResponse(202, successBody(simulatorStatusRunningFixture)) });
+    await renderConsole();
+    const now = screen.getByRole('button', { name: S.stop.now });
+    expect(now).toBeDisabled();
+    expect(screen.getByText(S.stop.notRunning)).toHaveAttribute('id', now.getAttribute('aria-describedby'));
+    expect(screen.queryByText(S.stop.drainingHint)).not.toBeInTheDocument();
+  });
+
+  test('while draining the drain button is described by the hint', async () => {
+    route({ status: [running], post: () => jsonResponse(202, successBody(simulatorStatusRunningFixture)) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.stop.drain }));
+    await settle();
+    const drain = screen.getByRole('button', { name: S.stop.drain });
+    expect(screen.getByText(S.stop.drainingHint)).toHaveAttribute('id', drain.getAttribute('aria-describedby'));
+  });
+
+  test('stops polling when it is not configured', async () => {
+    const fetchMock = stubFetch(jsonResponse(404, errorBody('http.not_found')));
+    await renderConsole();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(statusCalls(fetchMock)).toHaveLength(1);
+  });
+
+  test('unmounting stops polling', async () => {
+    const fetchMock = stubFetch(idle());
+    const view = renderWithProviders(<SimulatorConsole lot={null} />, { locale: 'en' });
+    await settle();
+    view.unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(statusCalls(fetchMock)).toHaveLength(1);
+  });
+
+  test.each([
+    ['404', 404, 'http.not_found'],
+    ['401 simulator.unauthorized', 401, 'simulator.unauthorized'],
+  ])('a stop that gets %s shows the configuration message', async (_name, status, code) => {
+    route({ status: [running], post: () => jsonResponse(status, errorBody(code)) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.stop.now }));
+    await settle();
+    expect(screen.getByRole('alert')).toHaveTextContent(S.notConfigured);
+  });
+
+  test('a start that gets 404 shows the configuration message', async () => {
+    route({ status: [idle], post: () => jsonResponse(404, errorBody('http.not_found')) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.start.submit }));
+    await settle();
+    expect(screen.getAllByText(S.notConfigured).length).toBeGreaterThan(0);
+  });
+
+  describe('copy seed', () => {
+    function stubClipboard(writeText: () => Promise<void>) {
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    }
+
+    test('shows Copied, announces it, and resets after a moment', async () => {
+      stubClipboard(() => Promise.resolve());
+      stubFetch(running());
+      await renderConsole();
+      fireEvent.click(screen.getByRole('button', { name: S.status.copySeed }));
+      await settle();
+      expect(screen.getByRole('button', { name: S.status.copied })).toBeInTheDocument();
+      expect(liveText()).toContain(S.status.copied);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_500);
+      });
+      expect(screen.getByRole('button', { name: S.status.copySeed })).toBeInTheDocument();
+    });
+
+    test('tells the admin when the clipboard write fails', async () => {
+      stubClipboard(() => Promise.reject(new Error('denied')));
+      stubFetch(running());
+      await renderConsole();
+      fireEvent.click(screen.getByRole('button', { name: S.status.copySeed }));
+      await settle();
+      expect(liveText()).toContain(S.status.copyFailed);
+      expect(screen.getAllByText(S.status.copyFailed).length).toBeGreaterThan(0);
+    });
   });
 });
