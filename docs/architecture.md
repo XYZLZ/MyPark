@@ -462,16 +462,19 @@ src/
 │  ├─ [locale]/(driver)/       # dashboard, reserve, reservations, vehicles, payments, profile
 │  ├─ [locale]/(admin)/admin/  # dashboard, lot, reservations, stays, tariffs, devices, cards, users, analytics, reconciliation, audit, simulator
 │  └─ api/                     # BFF route handlers (auth, proxy, SSE proxy)
-├─ components/                 # presentational primitives (Button, Card, KpiCard, Table, ...)
+├─ components/                 # presentational primitives (ui/: Button, Card, ...) and shell/ (AppShell, Sidebar, TopBar, nav-items)
 ├─ design/                     # tokens (CSS @theme: --color-brand-primary, --color-brand-accent = TODO(brand) placeholders), typography, logo slot
-├─ features/<feature>/         # containers, hooks, API calls, zod schemas
+├─ features/<feature>/         # containers, hooks, API calls, zod schemas; lot/ (live block, map, stream) and simulator/ (admin console) are M2
 ├─ store/                      # zustand: client-only UI state (simulator console, filters, UI prefs)
 ├─ hooks/  lib/  i18n/{es-DO.json,en.json}  testing/
 └─ proxy.ts                    # locale + session refresh (Next 16)
 ```
 
 - **Server Components by default.** Data reads for first paint happen in RSC through the BFF server client. Interactive and live parts are client components using **TanStack Query** (cache, retries) plus an SSE hook that writes into the query cache **(our call)**.
-- **State split:** TanStack Query owns server state. **zustand** (`store/`) owns client-only state such as UI preferences, filters and simulator console controls. Server data is never copied into zustand, and the stores are created per request/provider so nothing leaks between users during SSR.
+- **State split:** TanStack Query owns server state. **zustand** (`store/`) owns client-only state such as UI preferences, filters and simulator console controls. Server data is not copied into zustand, with one exception: the simulator console keeps its event log rows and held cars in its store, because the log is cumulative and outlives a single poll (design §7.3, M2B-32). The stores are created per request/provider so nothing leaks between users during SSR.
+- **Shell (M2).** Driver and admin pages sit in `components/shell/AppShell`: a navy sidebar and a top bar. `nav-items.ts` picks the items by variant (`guest`, `driver`, `admin`). Admins get Inicio, Administración, Simulador and Cerrar sesión, because `requireDriver` redirects admins away from the driver pages. On `(public)` pages the cookie hint cannot tell an admin from a driver, so an admin sees the driver items there.
+- **Features (M2).** `features/lot` holds the live block (`LotLive`, `LotSection`), the lot map, `api.ts`/`server.ts` and `live/` (the stream manager and `useLiveLot`). `features/simulator` holds the console (`SimulatorConsole`, forms, `EventLog`, the log cursor rules and its zustand store).
+- **i18n namespaces (M2).** Shared with mobile and key-for-key identical (`check:i18n`): `lot`, `availability`, `spaces`, `tariff`, `money`. Web only: `simulator`, and the `common.nav` additions (`home`, `vehicle`, `profile`, `admin`, `simulator`, `logout`, `menu`). Navigation extends `common.nav`, not a new `nav`.
 - **Container / presentational:** `features/*` own data and state. `components/*` are pure and props-driven.
 - Validation: shared zod schemas per feature, matching the OpenAPI types from `packages/contracts`.
 - i18n: **next-intl** with a `[locale]` segment (`es-DO` default, `en`). Error codes map to `errors.<code>` keys.
@@ -511,7 +514,8 @@ src/
 ├─ hooks/  design/tokens.ts  global.css (@import 'tailwindcss'; @import 'uniwind'; @theme ...)
 ```
 
-- **Navigation (M2):** the tabs are Inicio, Vehículos and Perfil, in that order (`TAB_ORDER`), and Inicio is the landing after login (`rootHref('tabs')` is `/home`). Signed out, Welcome shows the live lot with Log in and Sign up. Inicio and Welcome show a 40-space map preview, and "View full map" opens a full-map screen of all 280 spaces (`/home/map` in the tabs, `/map` before login). The map is 10 columns on mobile, hidden from screen readers, and backed by a text summary and a list of free spaces.
+- **Navigation (M2):** the tabs are Inicio, Vehículos and Perfil, in that order (`TAB_ORDER`), and Inicio is the landing after login (`rootHref('tabs')` is `/home`). The tab label is the `nav.home` key (the existing `nav` namespace gains `home`; there is no separate `tabs` namespace). Signed out, Welcome shows the live lot with Log in and Sign up. Inicio and Welcome show a 40-space map preview, and "View full map" opens a full-map screen of all 280 spaces (`/home/map` in the tabs, `/map` before login). The map is 10 columns on mobile, hidden from screen readers, and backed by a text summary and a list of free spaces.
+- **Layout guard.** `npm run check:layout` (`scripts/check-mobile-layout.mjs`) statically checks `apps/mobile/src` for the M2B-52 rules: no horizontal scrolling, no fixed width above 328 dp (360 dp minus two 16 dp gutters), and every `*Screen.tsx` scrolls through `ScreenScroll`. The device pass at 360 x 640 and at font scale 1.3 is still manual.
 - **Brand tokens** are the same names on web and mobile (`brand-primary`, `brand-primary-contrast`, `brand-accent`, `brand-accent-contrast`). Phase 1 ships placeholder values marked `TODO(brand)` in `src/global.css` `@theme` and `src/design/tokens.ts`. They are replaced from official Banreservas assets supplied by the team, and an AA contrast check runs on replacement. The app display name is "MyPark · Banreservas Zona Colonial".
 - `metro.config.js` uses `withUniwindConfig(config, { cssEntryFile: './src/global.css', dtsFile: './src/types/uniwind-types.d.ts' })`.
 - The QR is rendered locally from the token (`react-native-qrcode-svg` or similar) and the last active QR is cached in secure storage for offline display.
@@ -545,8 +549,10 @@ src/
 | App | Unit | Integration | E2E |
 |---|---|---|---|
 | server | Domain rules table-driven (fees, availability, state machines), fake clock | Real Postgres (compose/CI service) per package with transactional fixtures; concurrency test for the cap; device API signature/idempotency tests | Simulator-driven scenario tests in CI (`fill_to_full`, `no_show`) |
-| web | vitest + Testing Library for components and hooks | Typed fixtures stubbed at the fetch boundary (X9, CC-14) | Playwright: register→reserve→cancel, admin tariff change |
-| mobile | jest-expo + RN Testing Library | Typed fixtures stubbed at the fetch boundary (X9, CC-14) | Manual demo script + Maestro (optional, M5) |
+| web | vitest + Testing Library for components and hooks | Typed fixtures stubbed at the fetch boundary (X9, CC-14); `FakeEventSource` (`testing/event-source.ts`) stands in for the stream | Playwright: register→reserve→cancel, admin tariff change |
+| mobile | jest-expo + RN Testing Library | Typed fixtures stubbed at the fetch boundary (X9, CC-14); `controllableStream` (`testing/stream.ts`) stands in for the stream | Manual demo script + Maestro (optional, M5) |
+
+**M2 client tests.** The stream is faked with `FakeEventSource` (web) and `controllableStream` (mobile) instead of MSW (M2B-41); both feed the real manager. Each client has a *frame to screen* pair: a pushed `availability` frame changes the count, and a `spaces` delta changes a cell state, with no timer advanced (M2B-42). With `TestAvailability_PassToSSELatency` on the server (p95 < 2 s) this covers the "< 2 s" criterion until Playwright measures it end to end in M5.
 
 ---
 

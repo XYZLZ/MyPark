@@ -607,7 +607,7 @@ git commit -m "feat(mobile): add screen gutter, safe-area tab bar, wavy header a
   - `SHARED_NAMESPACES = ['lot', 'availability', 'spaces', 'tariff', 'money']` and `checkSharedNamespaces(dirs?: typeof LOCALE_DIRS): string[]` in `check-i18n-parity.mjs`. The function reports any key in these namespaces that exists in one app's locale file but not the other's, and the CLI runs it after `checkCatalog()`.
   - New keys in both apps. Copy comes from design §10 and the mockup (web copy from mockup 1a and 2, mobile copy from 3 and 4):
     - `lot`: `title`, `info`, `address`, `location`, `openInMaps`, `opensInNewTab`, `hours.label`, `hours.alwaysOpen`, `hours.varies`, `hero.title`, `hero.subtitle`, `hero.photoAlt`, `error.title`, `error.retry`, `unavailable.closedBody`.
-    - `availability`: `title`, `total`, `available`, `availableLong`, `occupied`, `of`, `outOfService`, `status.open`, `status.full`, `status.closed`, `live`, `lastChange`, `stale`, `reconnecting`, `connecting`, `unavailable`, `unavailableAt`, `announce.count`, `announce.status`, `announce.live`, `announce.stale`.
+    - `availability`: `title`, `total`, `available`, `availableLong`, `occupied`, `of`, `outOfService`, `status.open`, `status.full`, `status.closed`, `live`, `lastChange`, `stale`, `reconnecting`, `connecting`, `unavailable`, `unavailableAt`, `announce.count`, `announce.open`, `announce.full`, `announce.closed`, `announce.live`, `announce.stale`, `announce.stale`.
     - `spaces`: `title`, `sensorsLive`, `legend.free`, `legend.occupied`, `legend.outOfService`, `summary`, `note`, `updating`, `listFree`, `viewFull`, `previewCount`, `zoomIn`, `zoomOut`.
     - `tariff`: `title`, `firstHour`, `additionalHour`, `dailyCap`, `grace`, `postPayment`, `lostTicket`.
     - `money`: `dop` ("RD${amount}" on web, "RD${{amount}}" on mobile).
@@ -923,7 +923,7 @@ test('frame to screen: a spaces delta changes the cell state without a timer (M2
 // -> container.querySelector('[data-code="E100"]').dataset.state === 'occupied' in the same act; no timers advanced
 // SpaceMap.test.tsx
 test('the grid is hidden from assistive tech and the summary reads the counts')
-// aria-hidden 'true'; 'Los sensores reportan 211 libres, 66 ocupados y 3 fuera de servicio.'
+// aria-hidden 'true'; 'Sensores — libres: 211, ocupados: 66, fuera de servicio: 3.'
 test('each state has its own shape, not only color')    // E067 no [data-shape]; E001 has [data-shape="car"]; E278 contains '×'
 test('the legend repeats each shape with text')         // 'Disponible', 'Ocupado', 'Fuera de servicio'
 test('the free list gives codes as text')               // summary 'Ver espacios libres'; contains 'E067', not 'E001'
@@ -1178,7 +1178,7 @@ test('frame to screen: a spaces delta changes the cell without a timer (M2B-42)'
 // -> within(getByTestId('space-E100', {includeHiddenElements: true})).getByTestId('shape-car', {includeHiddenElements: true})
 test('the preview shows the first 40 spaces and says 40 de 280 espacios') // space-E040 present, space-E041 absent
 test('Ver mapa completo opens the full map')                        // router.push('/home/map'); on Welcome '/map'
-test('the map is hidden from accessibility and the summary covers all 280') // grid importantForAccessibility 'no-hide-descendants'; 'Los sensores reportan 211 libres, 66 ocupados y 3 fuera de servicio.'
+test('the map is hidden from accessibility and the summary covers all 280') // grid importantForAccessibility 'no-hide-descendants'; 'Sensores — libres: 211, ocupados: 66, fuera de servicio: 3.'
 // LotMapScreen.test.tsx
 test('the full map shows 280 cells in code order')
 test('List free spaces expands a text list')                        // contains 'E067'
