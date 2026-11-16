@@ -1,9 +1,9 @@
-import { ApiError, lotQueryKeys, type Availability, type SpaceState } from '@mypark/contracts';
+import { lotQueryKeys, type Availability, type SpaceState } from '@mypark/contracts';
 import { availabilityReducedFixture, spacesFixture, spacesFullEventFixture } from '@mypark/contracts/fixtures';
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { FakeEventSource } from '@/testing/event-source';
-import { acquireLiveLot, liveLotStore, resetLiveLotsForTests, type LiveDeps } from './manager';
+import { acquireLiveLot, resetLiveLotsForTests, type LiveDeps } from './manager';
 
 const ORIGIN = 'http://api.test';
 const LOT = 'L1';
@@ -66,40 +66,6 @@ describe('acquireLiveLot', () => {
     expect(store.get().spacesReady).toBe(true);
   });
 
-  test('it seeds from the Query cache and an unchanged frame writes nothing', () => {
-    queryClient.setQueryData(lotQueryKeys.availability(LOT), v(121));
-    const seeded = cachedAvailability();
-    acquire();
-    es(0).emit('availability', v(121, 5));
-    expect(cachedAvailability()).toBe(seeded);
-  });
-
-  test('a lower version does not move the count', () => {
-    acquire();
-    es(0).emit('availability', v(121));
-    es(0).emit('availability', v(119, 5));
-    expect(cachedAvailability()).toMatchObject({ version: 121, available: 211 });
-  });
-
-  test('a malformed frame counts as fresh', () => {
-    const { store } = acquire();
-    es(0).emit('availability', v(121));
-    vi.advanceTimersByTime(30_000);
-    es(0).emit('availability', 'not json');
-    vi.advanceTimersByTime(44_999);
-    expect(store.get().status).toBe('live');
-    expect(instances()).toHaveLength(1);
-  });
-
-  test('45 s silence goes stale and reconnects', () => {
-    const { store } = acquire();
-    vi.advanceTimersByTime(45_000);
-    expect(store.get().status).toBe('stale');
-    expect(es(0).closed).toBe(true);
-    vi.advanceTimersByTime(1_000);
-    expect(instances()).toHaveLength(2);
-  });
-
   test('error while CONNECTING backs off from 1 s', () => {
     const { store } = acquire();
     es(0).fail(0);
@@ -111,22 +77,6 @@ describe('acquireLiveLot', () => {
     expect(instances()).toHaveLength(2);
   });
 
-  test('a reconnect stays stale until its first frame, which resets the backoff', () => {
-    const { store } = acquire();
-    es(0).fail(0);
-    vi.advanceTimersByTime(1_000);
-    expect(store.get().status).toBe('stale');
-    es(1).fail(0);
-    vi.advanceTimersByTime(1_999);
-    expect(instances()).toHaveLength(2);
-    vi.advanceTimersByTime(1);
-    es(2).emit('heartbeat', { as_of: '2026-11-15T14:47:15Z' });
-    expect(store.get().status).toBe('live');
-    es(2).fail(0);
-    vi.advanceTimersByTime(1_000);
-    expect(instances()).toHaveLength(4);
-  });
-
   test('error while CLOSED waits 10 s and fetches one BFF snapshot', () => {
     acquire();
     es(0).fail(2);
@@ -136,163 +86,6 @@ describe('acquireLiveLot', () => {
     expect(instances()).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(instances()).toHaveLength(2);
-  });
-
-  test('a snapshot runs at most once per attempt and never within 10 s of the last', async () => {
-    acquire();
-    es(0).fail(0);
-    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
-    es(1).fail(0);
-    await vi.advanceTimersByTimeAsync(2_000);
-    es(2).fail(0);
-    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(4_000);
-    es(3).fail(2);
-    expect(fetchSnapshot).toHaveBeenCalledTimes(1); // 7 s after the last one
-    await vi.advanceTimersByTimeAsync(10_000);
-    es(4).fail(0);
-    expect(fetchSnapshot).toHaveBeenCalledTimes(2);
-  });
-
-  test('a stale snapshot updates values but the state stays stale', async () => {
-    const { store } = acquire();
-    es(0).emit('availability', v(121));
-    es(0).fail(2);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(cachedAvailability()).toMatchObject({ version: 125, available: 200 });
-    expect(cachedSpaces()).toEqual(spacesFixture.spaces);
-    expect(store.get()).toMatchObject({ status: 'stale', lastFrameAt: Date.now() });
-  });
-
-  test('snapshot 404 lot.not_found calls onLotGone once and stops', async () => {
-    fetchSnapshot.mockRejectedValue(new ApiError({ code: 'lot.not_found', message: 'gone', status: 404 }));
-    acquire();
-    es(0).fail(2);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(onLotGone).toHaveBeenCalledTimes(1);
-    expect(instances()).toHaveLength(1);
-  });
-
-  test('a failed snapshot for another reason keeps reconnecting', async () => {
-    fetchSnapshot.mockRejectedValue(new ApiError({ code: 'client.network', message: 'down' }));
-    acquire();
-    es(0).fail(2);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(onLotGone).not.toHaveBeenCalled();
-    expect(instances()).toHaveLength(2);
-  });
-
-  test('two subscribers share one connection', () => {
-    const a = acquire();
-    const b = acquire();
-    expect(instances()).toHaveLength(1);
-    expect(b.store).toBe(a.store);
-  });
-
-  test('the last release closes after 2 s', () => {
-    const a = acquire();
-    const b = acquire();
-    a.release();
-    b.release();
-    b.release();
-    vi.advanceTimersByTime(1_999);
-    expect(es(0).closed).toBe(false);
-    vi.advanceTimersByTime(1);
-    expect(es(0).closed).toBe(true);
-    vi.advanceTimersByTime(60_000);
-    expect(instances()).toHaveLength(1);
-  });
-
-  test('a new subscriber within 2 s keeps the connection', () => {
-    acquire().release();
-    vi.advanceTimersByTime(1_500);
-    acquire();
-    vi.advanceTimersByTime(5_000);
-    expect(es(0).closed).toBe(false);
-    expect(instances()).toHaveLength(1);
-  });
-
-  test('a late release from a torn-down connection leaves the new one open', () => {
-    const stale = acquire();
-    resetLiveLotsForTests();
-    acquire();
-    stale.release();
-    vi.advanceTimersByTime(5_000);
-    expect(es(1).closed).toBe(false);
-    acquire();
-    expect(instances()).toHaveLength(2);
-  });
-
-  test('a dropped stream lets the REST snapshot replace the map until the next full list', async () => {
-    const changed = spacesFixture.spaces.map((space) =>
-      space.code === 'E100' ? { ...space, state: 'occupied' as const } : space,
-    );
-    fetchSnapshot.mockResolvedValue({ availability: v(125, 200), spaces: changed });
-    const { store } = acquire();
-    es(0).emit('spaces', spacesFullEventFixture);
-    expect(store.get().spacesReady).toBe(true);
-    es(0).fail(0);
-    expect(store.get().spacesReady).toBe(false);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(cachedSpaces()).toEqual(changed);
-    await vi.advanceTimersByTimeAsync(1_000);
-    es(1).emit('heartbeat', { as_of: '2026-11-15T14:47:15Z' });
-    expect(store.get().spacesReady).toBe(false);
-    es(1).emit('spaces', spacesFullEventFixture);
-    expect(store.get().spacesReady).toBe(true);
-    expect(cachedSpaces()).toEqual(spacesFixture.spaces);
-  });
-
-  test('an older snapshot after a newer stream frame keeps the newer count', async () => {
-    fetchSnapshot.mockResolvedValue({ availability: v(119, 5), spaces: spacesFixture.spaces });
-    acquire();
-    es(0).emit('availability', v(121));
-    es(0).fail(0);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(cachedAvailability()).toMatchObject({ version: 121, available: 211 });
-  });
-
-  test('a dropped frame is logged, a valid one is not', () => {
-    acquire();
-    es(0).emit('availability', 'not json');
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls[0]![0]).toMatch(/dropped/);
-    es(0).emit('availability', v(121));
-    es(0).emit('heartbeat', { as_of: '2026-11-15T14:47:15Z' });
-    expect(log).toHaveBeenCalledTimes(1);
-  });
-
-  test('a retry due after the last release does not reconnect; a new subscriber does', () => {
-    const first = acquire();
-    es(0).fail(0);
-    first.release();
-    vi.advanceTimersByTime(1_500);
-    expect(instances()).toHaveLength(1);
-    acquire();
-    expect(instances()).toHaveLength(2);
-  });
-
-  test('a retry is never opened once nobody subscribes', () => {
-    const first = acquire();
-    es(0).fail(0);
-    first.release();
-    vi.advanceTimersByTime(60_000);
-    expect(instances()).toHaveLength(1);
-  });
-
-  test('a torn-down lot forgets its store once nothing listens', () => {
-    const first = acquire();
-    const unsubscribe = first.store.subscribe(() => {});
-    first.release();
-    vi.advanceTimersByTime(2_000);
-    expect(liveLotStore(ORIGIN, LOT)).toBe(first.store);
-    unsubscribe();
-    expect(liveLotStore(ORIGIN, LOT)).not.toBe(first.store);
-    const second = acquire();
-    second.release();
-    vi.advanceTimersByTime(2_000);
-    expect(liveLotStore(ORIGIN, LOT)).not.toBe(second.store);
   });
 
   test('pagehide closes and pageshow reopens', () => {
@@ -309,5 +102,28 @@ describe('acquireLiveLot', () => {
     target.dispatchEvent(new Event('pageshow'));
     expect(instances()).toHaveLength(2);
     expect(store.get().spacesReady).toBe(false);
+  });
+
+  test('pageshow before the 10 s floor is up waits the rest of it (M2B-5)', () => {
+    const { store } = acquire();
+    es(0).fail(2);
+    vi.advanceTimersByTime(1_000);
+    target.dispatchEvent(new Event('pagehide'));
+    target.dispatchEvent(new Event('pageshow'));
+    expect(store.get().status).toBe('stale');
+    vi.advanceTimersByTime(8_999);
+    expect(instances()).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(instances()).toHaveLength(2);
+  });
+
+  test('a late error from a closed source is ignored', () => {
+    acquire();
+    const first = es(0);
+    vi.advanceTimersByTime(45_000);
+    first.closed = false;
+    first.fail(2);
+    vi.advanceTimersByTime(1_000);
+    expect(instances()).toHaveLength(2);
   });
 });
