@@ -44,14 +44,18 @@ export function useSimulatorEvents() {
   const store = useConsoleStoreApi();
   return useQuery({
     queryKey: simulatorKeys.events,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const after = nextAfter(store.getState().log);
       try {
-        const events = await fetchEvents(after);
-        const { log, setLog } = store.getState();
-        setLog(applyEvents(log, after, events));
+        const events = await fetchEvents(after, signal);
+        // A cancelled fetch can still resolve; its page belongs to a request that was replaced.
+        if (!signal.aborted) {
+          const { log, setLog } = store.getState();
+          setLog(applyEvents(log, after, events));
+        }
         return events.length;
       } catch (error) {
+        if (signal.aborted) throw error;
         const { log, setLog } = store.getState();
         setLog(markPollFailed(log));
         throw error;

@@ -16,11 +16,13 @@ export type LogState = {
   /** A poll failed, so the next request asks from 0 in case the simulator restarted. */
   resetPending: boolean;
   startedAt: string | null;
+  /** Every event ever added, so the log can say how many are new even when the cap drops rows. */
+  received: number;
   /** Newest first. */
   rows: LogRow[];
 };
 
-export const initialLogState: LogState = { cursor: 0, resetPending: false, startedAt: null, rows: [] };
+export const initialLogState: LogState = { cursor: 0, resetPending: false, startedAt: null, received: 0, rows: [] };
 
 /** The `after` value for the next events request. */
 export function nextAfter(state: LogState): number {
@@ -37,24 +39,30 @@ function prepend(rows: LogRow[], ascending: LogRow[]): LogRow[] {
 }
 
 /**
- * Folds one events response into the log. After a failed poll the request was `after=0` (M2B-31), and
- * the answer is read two ways (PF2): the same process still holds the rows already shown, so those are
- * dropped and no gap is reported; a restarted process starts over, so a separator is added instead.
+ * Folds one events response into the log. `after` is the cursor the request was sent with.
+ * - Events at or below the cursor are always dropped: overlapping polls can return the same page twice.
+ * - Only an answer to `after=0` that follows a failed poll can reveal a restart (PF2): the same process
+ *   still holds the rows already shown (nothing new is added, no gap), a restarted one starts over, so a
+ *   separator is added. A normal answer to a non-zero `after` never means a restart and keeps the reset pending.
  */
 export function applyEvents(state: LogState, after: number, events: SimulatorEvent[]): LogState {
-  const recovering = state.resetPending && state.cursor > 0;
+  const resetAnswer = after === 0;
+  const recovering = resetAnswer && state.resetPending && state.cursor > 0;
+  const resetPending = resetAnswer ? false : state.resetPending;
   if (events.length === 0) {
-    if (!recovering) return state.resetPending ? { ...state, resetPending: false } : state;
-    return { ...state, cursor: 0, resetPending: false, rows: prepend(state.rows, [{ kind: 'restart', before: state.cursor }]) };
+    if (recovering) {
+      return { ...state, cursor: 0, resetPending, rows: prepend(state.rows, [{ kind: 'restart', before: state.cursor }]) };
+    }
+    return resetPending === state.resetPending ? state : { ...state, resetPending };
   }
 
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const max = sorted[sorted.length - 1]!.seq;
   const restarted = recovering && max < state.cursor;
-  const base = restarted ? 0 : recovering ? state.cursor : after;
-  const fresh = recovering && !restarted ? sorted.filter((event) => event.seq > state.cursor) : sorted;
-  if (fresh.length === 0) return { ...state, resetPending: false };
+  const fresh = restarted ? sorted : sorted.filter((event) => event.seq > state.cursor);
+  if (fresh.length === 0) return resetPending === state.resetPending ? state : { ...state, resetPending };
 
+  const base = restarted ? 0 : state.cursor;
   const ascending: LogRow[] = [];
   if (restarted) ascending.push({ kind: 'restart', before: state.cursor });
   const first = fresh[0]!.seq;
@@ -65,7 +73,8 @@ export function applyEvents(state: LogState, after: number, events: SimulatorEve
   return {
     ...state,
     cursor: restarted ? max : Math.max(state.cursor, max),
-    resetPending: false,
+    resetPending,
+    received: state.received + fresh.length,
     rows: prepend(state.rows, ascending),
   };
 }
@@ -73,6 +82,8 @@ export function applyEvents(state: LogState, after: number, events: SimulatorEve
 /** A run separator when `started_at` changes. It never touches the cursor (M2B-31). */
 export function noteRun(state: LogState, status: SimulatorStatus): LogState {
   if (!status.started_at || status.started_at === state.startedAt) return state;
+  // The first one seen is not a change: a reload into a running scenario is not a new run.
+  if (state.startedAt === null) return { ...state, startedAt: status.started_at };
   const row: LogRow = { kind: 'run', scenario: status.scenario, startedAt: status.started_at };
   return { ...state, startedAt: status.started_at, rows: prepend(state.rows, [row]) };
 }

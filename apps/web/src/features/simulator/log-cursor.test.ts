@@ -10,7 +10,8 @@ const withCursor = (cursor: number): LogState => applyEvents(initialLogState, 0,
 
 describe('log cursor', () => {
   test('the cursor is kept across started_at changes', () => {
-    const state = noteRun(withCursor(1846), { ...simulatorStatusRunningFixture, started_at: '2026-11-15T15:00:00Z' });
+    const first = noteRun(withCursor(1846), { ...simulatorStatusRunningFixture, started_at: '2026-11-15T14:00:00Z' });
+    const state = noteRun(first, { ...simulatorStatusRunningFixture, started_at: '2026-11-15T15:00:00Z' });
     expect(state.cursor).toBe(1846);
     expect(nextAfter(state)).toBe(1846);
     expect(state.rows[0]).toEqual({ kind: 'run', scenario: 'weekday', startedAt: '2026-11-15T15:00:00Z' });
@@ -20,6 +21,40 @@ describe('log cursor', () => {
     const status = { ...simulatorStatusRunningFixture, started_at: '2026-11-15T15:00:00Z' };
     const once = noteRun(initialLogState, status);
     expect(noteRun(once, status)).toBe(once);
+  });
+
+  test('the first started_at seen is recorded without a run row (a reload is not a new run)', () => {
+    const state = noteRun(initialLogState, { ...simulatorStatusRunningFixture, started_at: '2026-11-15T15:00:00Z' });
+    expect(state.startedAt).toBe('2026-11-15T15:00:00Z');
+    expect(state.rows).toEqual([]);
+  });
+
+  test('two responses for the same after (overlapping polls) add each event once', () => {
+    const shown = applyEvents(initialLogState, 0, range(1, 3));
+    const a = applyEvents(shown, 3, range(4, 6));
+    const b = applyEvents(a, 3, range(4, 6));
+    expect(seqs(b)).toEqual([6, 5, 4, 3, 2, 1]);
+    expect(b.cursor).toBe(6);
+  });
+
+  test('a normal empty answer to a request sent before the failure is not a restart', () => {
+    const failed = markPollFailed(withCursor(1846));
+    const answer = applyEvents(failed, 1846, []);
+    expect(answer.rows.some((row) => row.kind === 'restart')).toBe(false);
+    expect(answer.cursor).toBe(1846);
+    expect(answer.resetPending).toBe(true);
+    expect(nextAfter(answer)).toBe(0);
+  });
+
+  test('a non-zero answer with new events keeps the reset pending', () => {
+    const answer = applyEvents(markPollFailed(withCursor(5)), 5, range(6, 7));
+    expect(answer.cursor).toBe(7);
+    expect(answer.resetPending).toBe(true);
+  });
+
+  test('counts every event received, whatever the cap drops', () => {
+    const state = applyEvents(applyEvents(initialLogState, 0, range(1, 400)), 400, range(401, 700));
+    expect(state.received).toBe(700);
   });
 
   test('a failed poll then a success restarts from 0', () => {

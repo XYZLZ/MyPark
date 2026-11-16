@@ -1,14 +1,14 @@
 'use client';
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef } from 'react';
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
 import type { Translator } from '@/lib/i18n/translate-error';
 import { useConsoleStore } from '@/providers/simulator-store-provider';
-import { failureMessage } from './action-support';
-import { simulatorKeys, stopScenario } from './api';
+import { failureMessage, useRefreshConsole } from './action-support';
+import { stopScenario } from './api';
 import { isNotConfigured } from './controls';
 
 /**
@@ -31,7 +31,7 @@ export function StopControls({
 }) {
   const t = useTranslations('simulator.stop');
   const tAll: Translator = useTranslations();
-  const queryClient = useQueryClient();
+  const refresh = useRefreshConsole();
   const setDraining = useConsoleStore((state) => state.setDraining);
   const bannerRef = useRef<HTMLDivElement>(null);
 
@@ -39,14 +39,14 @@ export function StopControls({
     mutationFn: stopScenario,
     onSuccess: async (_result, drain) => {
       if (drain) setDraining(true);
-      await queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
+      await refresh();
       onStopped?.();
     },
     // A missing configuration shows in the panel too once the status refetches.
     onError: (error) => {
       if (!isNotConfigured(error)) return;
       onNotConfigured?.();
-      void queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
+      void refresh();
     },
   });
 

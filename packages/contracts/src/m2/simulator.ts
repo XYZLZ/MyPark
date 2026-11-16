@@ -28,7 +28,7 @@ export const simulatorEventSchema = z.strictObject({
   car_id: z.string().optional(),
 });
 
-export const injectCarResultSchema = z.strictObject({ car_id: z.string() });
+export const injectCarResultSchema = z.strictObject({ car_id: z.string().regex(CAR_ID_PATTERN) });
 /** Body of the `leave` 202 response. */
 export const emptyDataSchema = z.strictObject({});
 

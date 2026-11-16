@@ -207,6 +207,24 @@ describe('held cars', () => {
     expect(bodyOf(posts(fetchMock, 'cars/car-000123/leave')[0]!)).toEqual({ lose_ticket: false });
   });
 
+  test('every Leave control is disabled while one leave is pending', async () => {
+    let finish: (response: Response) => void = () => undefined;
+    route({
+      status: [running],
+      posts: { ...injected, 'cars/car-000012/leave': () => new Promise<Response>((resolve) => (finish = resolve)) as unknown as Response },
+    });
+    await renderConsole();
+    await injectHeld();
+    fireEvent.click(screen.getByRole('button', { name: 'Leave car-000012' }));
+    await settle();
+    expect(screen.getByRole('button', { name: S.held.leaveOther })).toBeDisabled();
+    await act(async () => {
+      finish(jsonResponse(202, successBody({})));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole('button', { name: S.held.leaveOther })).toBeEnabled();
+  });
+
   test('leave is disabled while nothing runs', async () => {
     route({ status: [idle] });
     await renderConsole();
@@ -293,6 +311,36 @@ describe('sensor fault', () => {
     const button = screen.getByRole('button', { name: S.fault.submit });
     expect(button).toBeDisabled();
     expect(button.getAttribute('aria-describedby')).toBeTruthy();
+  });
+});
+
+describe('overlapping and cancelled polls', () => {
+  test('an events response from a cancelled fetch writes nothing and no row repeats', async () => {
+    const row = (seq: number) => ({ seq, at: '2026-11-15T14:46:55Z', device: 'd', type: 't', result: 'ack' });
+    let release: (response: Response) => void = () => undefined;
+    let calls = 0;
+    route({
+      status: [running],
+      posts: injected,
+      events: () => {
+        calls++;
+        if (calls === 1) return jsonResponse(200, successBody([row(1)]));
+        if (calls === 2) return new Promise<Response>((resolve) => (release = resolve)) as unknown as Response;
+        return jsonResponse(200, successBody([row(1), row(2)]));
+      },
+    });
+    await renderConsole();
+    // Poll 2 is in flight when the inject refresh cancels it and sends poll 3 with the same cursor.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    await submit(S.inject.submit);
+    await act(async () => {
+      release(jsonResponse(200, successBody([row(2), row(3)])));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const shown = screen.getAllByRole('row').slice(1).map((r) => r.firstElementChild?.textContent);
+    expect(shown).toEqual(['2', '1']);
   });
 });
 

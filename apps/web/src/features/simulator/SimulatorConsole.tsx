@@ -69,8 +69,14 @@ function ConsoleBody({ lot }: { lot: ReactNode }) {
   const dataMode = data ? consoleMode({ data }, draining) : mode;
   const controls = deriveControls(data?.status, draining);
   const startReason = !data ? t('start.disabledLoading') : draining ? t('start.disabledDraining') : t('start.disabledRunning');
-  const reasonFor = (allowed: boolean, notRunning: boolean) =>
-    !data ? t('start.disabledLoading') : draining && !allowed ? t('start.disabledDraining') : notRunning ? t('stop.notRunning') : undefined;
+  /** Why a control is disabled, or undefined when it is enabled. */
+  const disabledReason = (control: 'inject' | 'leave' | 'fault'): string | undefined => {
+    const enabled = { inject: controls.canInject, leave: controls.canLeave, fault: controls.canFault }[control];
+    if (enabled) return undefined;
+    if (!data) return t('start.disabledLoading');
+    if (control === 'inject' || (data.status.running && draining)) return t('start.disabledDraining');
+    return t('stop.notRunning');
+  };
   const bannerText = mode === 'unreachable' ? t('unreachable') : mode === 'forbidden' ? t('forbidden') : mode === 'error' ? t('serverError') : null;
   const focusStatus = () => headingRef.current?.focus();
   // A failed action can end in the not configured panel, which replaces the pressed button: land on its heading.
@@ -108,19 +114,19 @@ function ConsoleBody({ lot }: { lot: ReactNode }) {
               />
               <InjectForm
                 disabled={!controls.canInject}
-                reason={reasonFor(controls.canInject, false)}
+                reason={disabledReason('inject')}
                 onDone={focusStatus}
                 onNotConfigured={onNotConfigured}
               />
               <HeldCars
                 disabled={!controls.canLeave}
-                reason={reasonFor(controls.canLeave, true)}
+                reason={disabledReason('leave')}
                 onDone={focusStatus}
                 onNotConfigured={onNotConfigured}
               />
               <FaultForm
                 disabled={!controls.canFault}
-                reason={reasonFor(controls.canFault, true)}
+                reason={disabledReason('fault')}
                 onDone={focusStatus}
                 onNotConfigured={onNotConfigured}
               />

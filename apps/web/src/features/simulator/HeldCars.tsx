@@ -72,6 +72,8 @@ export function HeldCars({ disabled, reason, onDone, onNotConfigured }: { disabl
     },
   });
   const idError = fieldMessage('car_id');
+  // One leave at a time: while any is pending, the others wait (the pressed button shows its own spinner).
+  const leaving = leave.isPending || typedSubmitting;
   const describedBy = disabled && reason ? 'sim-held-reason' : undefined;
 
   return (
@@ -103,7 +105,7 @@ export function HeldCars({ disabled, reason, onDone, onNotConfigured }: { disabl
               </label>
               <Button
                 className="ml-auto h-11 px-5 text-sm"
-                disabled={disabled}
+                disabled={disabled || (leaving && !(leave.isPending && leave.variables.carId === id))}
                 aria-label={t('leaveCar', { id })}
                 aria-describedby={describedBy}
                 loading={leave.isPending && leave.variables.carId === id}
@@ -143,7 +145,7 @@ export function HeldCars({ disabled, reason, onDone, onNotConfigured }: { disabl
             type="submit"
             variant="outline"
             className="mb-4 h-12"
-            disabled={disabled}
+            disabled={disabled || leave.isPending}
             aria-describedby={describedBy}
             loading={typedSubmitting}
             loadingLabel={t('leaveOther')}

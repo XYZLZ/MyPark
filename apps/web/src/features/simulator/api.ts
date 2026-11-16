@@ -55,7 +55,7 @@ export async function injectCar(values: InjectCarValues): Promise<string> {
 
 /** `202 {data: {}}`. The id is validated by the caller against CAR_ID_PATTERN and again by the BFF allow-list. */
 export function leaveCar(carId: string, loseTicket: boolean): Promise<void> {
-  return apiFetch(`${BASE}/cars/${carId}/leave`, (body, status) => void parseEmpty(body, status), {
+  return apiFetch(`${BASE}/cars/${encodeURIComponent(carId)}/leave`, (body, status) => void parseEmpty(body, status), {
     method: 'POST',
     body: { lose_ticket: loseTicket },
   });
@@ -63,10 +63,10 @@ export function leaveCar(carId: string, loseTicket: boolean): Promise<void> {
 
 /** `204`. */
 export function setFault(code: string, fault: SensorFaultValues['fault']): Promise<void> {
-  return apiFetch(`${BASE}/sensors/${code}/fault`, parseNoContentBody, { method: 'POST', body: { fault } });
+  return apiFetch(`${BASE}/sensors/${encodeURIComponent(code)}/fault`, parseNoContentBody, { method: 'POST', body: { fault } });
 }
 
 /** Events after the cursor. This envelope has no `meta.page`, so it is not a list envelope. */
-export function fetchEvents(after: number): Promise<SimulatorEvent[]> {
-  return apiFetch(`${BASE}/events?after=${after}`, parseEvents);
+export function fetchEvents(after: number, signal?: AbortSignal): Promise<SimulatorEvent[]> {
+  return apiFetch(`${BASE}/events?after=${after}`, parseEvents, { signal });
 }

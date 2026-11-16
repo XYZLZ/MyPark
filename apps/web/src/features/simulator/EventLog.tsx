@@ -24,12 +24,6 @@ function hasErrorMessage(messages: unknown, reason: string): boolean {
   return typeof node === 'string';
 }
 
-/** Events above the last announced row, newest first. A row object stays the same across polls, so identity marks what was seen. */
-function countUnseen(rows: LogRow[], seen: LogRow | null): number {
-  const stop = seen ? rows.indexOf(seen) : -1;
-  return rows.slice(0, stop === -1 ? rows.length : stop).filter((row) => row.kind === 'event').length;
-}
-
 /** `seq` starts over after a simulator restart, so each row's key carries the number of restarts below it. */
 function rowKeys(rows: LogRow[]): string[] {
   const keys: string[] = new Array<string>(rows.length);
@@ -43,24 +37,32 @@ function rowKeys(rows: LogRow[]): string[] {
   return keys;
 }
 
-/** One polite sentence, at most every LOG_ANNOUNCE_INTERVAL_MS. The table is never a live region. */
-function useNewEventsMessage(rows: LogRow[]): string {
+/**
+ * One polite sentence, at most every LOG_ANNOUNCE_INTERVAL_MS. The table is never a live region.
+ * It counts events received since the last announcement, not rows, so the 500-row cap and a restart
+ * cannot inflate it. The first load only sets the baseline.
+ */
+function useNewEventsMessage(received: number): string {
   const t = useTranslations('simulator.log');
   const [message, setMessage] = useState('');
-  const seen = useRef<LogRow | null>(null);
+  const announced = useRef<number | null>(null);
   const lastAt = useRef<number | null>(null);
 
   useEffect(() => {
-    const count = countUnseen(rows, seen.current);
-    if (count === 0) return;
+    if (announced.current === null) {
+      if (received > 0) announced.current = received;
+      return;
+    }
+    const count = received - announced.current;
+    if (count <= 0) return;
     const wait = lastAt.current === null ? 0 : Math.max(0, lastAt.current + LOG_ANNOUNCE_INTERVAL_MS - Date.now());
     const timer = setTimeout(() => {
-      seen.current = rows[0] ?? null;
+      announced.current = received;
       lastAt.current = Date.now();
       setMessage(t('newEvents', { count }));
     }, wait);
     return () => clearTimeout(timer);
-  }, [rows, t]);
+  }, [received, t]);
 
   return message;
 }
@@ -115,7 +117,8 @@ export function EventLog() {
   const messages = useMessages();
   const locale = useLocale() as Locale;
   const rows = useConsoleStore((state) => state.log.rows);
-  const announcement = useNewEventsMessage(rows);
+  const received = useConsoleStore((state) => state.log.received);
+  const announcement = useNewEventsMessage(received);
   const keys = useMemo(() => rowKeys(rows), [rows]);
 
   return (

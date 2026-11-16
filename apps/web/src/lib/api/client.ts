@@ -9,6 +9,8 @@ type ApiInit = {
   body?: unknown;
   /** A request body sent verbatim (for numbers JSON.stringify would round). Cannot be combined with `body`. */
   bodyText?: string;
+  /** Aborts the request, for example the signal TanStack Query passes to a query function. */
+  signal?: AbortSignal;
 };
 
 /** The CSRF token the BFF set for this browser, or an empty string. It is readable by script on purpose (spec 5.4). */
@@ -55,7 +57,7 @@ export async function apiFetch<T>(
   parse: (body: unknown, status?: number, text?: string) => T,
   init: ApiInit = {},
 ): Promise<T> {
-  const { method = 'GET', body, bodyText } = init;
+  const { method = 'GET', body, bodyText, signal } = init;
   if (body !== undefined && bodyText !== undefined) throw new Error('apiFetch: body and bodyText are mutually exclusive');
   const headers = new Headers({ Accept: 'application/json' });
   if (body !== undefined || bodyText !== undefined) headers.set('Content-Type', 'application/json');
@@ -68,6 +70,7 @@ export async function apiFetch<T>(
       headers,
       body: bodyText ?? (body === undefined ? undefined : JSON.stringify(body)),
       credentials: 'same-origin',
+      signal,
       cache: 'no-store',
     });
   } catch {

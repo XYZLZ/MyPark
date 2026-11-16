@@ -100,6 +100,7 @@ describe('EventLog', () => {
     act(() => {
       let log = applyEvents(initialLogState, 0, [ev(1)]);
       log = applyEvents(log, 1, [ev(5)]);
+      log = noteRun(log, { ...simulatorStatusRunningFixture, started_at: '2026-11-15T13:00:00Z' });
       log = noteRun(log, { ...simulatorStatusRunningFixture, started_at: '2026-11-15T14:30:00Z' });
       store.getState().setLog(applyEvents(log, 5, [ev(6)]));
     });
@@ -114,15 +115,22 @@ describe('EventLog', () => {
     expect(table.closest('[role="status"],[role="alert"],[aria-live]')).toBeNull();
   });
 
-  test('new events are announced at most every 10 s', () => {
+  test('the first load is the baseline and is not announced', () => {
+    mount();
+    push(...Array.from({ length: 500 }, (_, i) => ev(i + 1)));
+    act(() => void vi.advanceTimersByTime(LOG_ANNOUNCE_INTERVAL_MS));
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
+  test('new events are announced at most every 10 s, and the cap does not inflate the count', () => {
     mount();
     const region = screen.getByRole('status');
-    expect(region).toHaveTextContent('');
-    push(ev(1), ev(2));
+    push(...Array.from({ length: 500 }, (_, i) => ev(i + 1)));
+    push(ev(501), ev(502));
     act(() => void vi.advanceTimersByTime(0));
     expect(region).toHaveTextContent('2 new events');
 
-    push(ev(3));
+    push(ev(503));
     act(() => void vi.advanceTimersByTime(LOG_ANNOUNCE_INTERVAL_MS - 1_000));
     expect(region).toHaveTextContent('2 new events');
 
