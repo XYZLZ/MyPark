@@ -18,7 +18,7 @@ cd apps/mobile && EXPO_PUBLIC_API_URL=http://<LAN-IP>:8080 npx expo start
 | Console | `http://localhost:3000/es-DO/admin/simulator` (the Simulator item in the admin sidebar) |
 | Phone | Expo Go on the same network. Allow port 8080 through the firewall |
 | Admin | `admin@mypark.local` / `mypark-dev-admin-2026` at `/es-DO/admin/login` |
-| Driver | Any verified account (the M1 script, steps 2 to 4, creates one). Optional: step 1 needs none |
+| Driver | Not needed for the phone half: the live lot is public and Welcome is signed out. Any verified account works for the signed-in home |
 
 The console needs `SIMULATOR_INTERNAL_URL` and `SIMULATOR_CONTROL_TOKEN` on the `web` service. The compose file sets both. Without them the console says the simulator is not configured.
 
@@ -42,7 +42,7 @@ The console needs `SIMULATOR_INTERNAL_URL` and `SIMULATOR_CONTROL_TOKEN` on the 
 - **The map and the count can differ on purpose.** The count is the entry and exit counter. The map shows what each sensor reads. Step 4 shows it.
 - **Step 6 is slow on purpose.** The tariff has a 10 minute grace, and the server clock drives it. Start step 3 early and do steps 4, 5 and 8 while you wait.
 - **Event log limits.** The log keeps the last 500 events. It cannot tell that the simulator restarted between two successful polls, so after a restart you may see no "The simulator restarted." row. Reload the page to reset it.
-- **Notice banner (web, wide screens).** The logout-failed notice is first in the page order but sits below the hero and counter at the `lg` breakpoint. It is not hidden.
+- **Notice banner (web).** The logout-failed notice sits at the top of the page, above the hero, at every width.
 
 ## Accessibility check
 
@@ -51,6 +51,8 @@ The console needs `SIMULATOR_INTERNAL_URL` and `SIMULATOR_CONTROL_TOKEN` on the 
 - [ ] Keyboard only on the console: every action reachable and visible focus
 - [ ] TalkBack on the phone Welcome, Inicio and the full map: the map is skipped and the summary and free-space list are read
 - [ ] 360 dp phone at font scale 1.0 and 1.3, and a large phone (430 x 932) at 1.3: no horizontal scroll and no clipped text (M2B-52)
+- [ ] TalkBack pass on the tab bar (Inicio · Vehículos · Perfil)
+- [ ] M1 session notices (session_ended / logout failed) still route correctly from /home/map and /map
 - [ ] Web at 200 % zoom and at 320 px wide: no horizontal scroll, the map reflows to 10 columns
 
 ## Device and browser checks still pending
@@ -58,13 +60,13 @@ The console needs `SIMULATOR_INTERNAL_URL` and `SIMULATOR_CONTROL_TOKEN` on the 
 Nothing below has been run. Tick each one only after you did it.
 
 **Phone**
-- [ ] `expo/fetch` streams incrementally in Expo Go on Hermes, `abort()` ends the read, and `TextDecoder` works (otherwise the 5 s polling fallback applies)
+- [ ] `expo/fetch` streams incrementally in Expo Go on Hermes, `abort()` ends the read, and `TextDecoder` works (if this check fails, implement a polling fallback; design §14 contingency)
 - [ ] iPhone with a notch: the header is full-bleed under the status bar, with no surface strip
 - [ ] The Button focus ring shows on a device. It relies on Uniwind `outline` support. If it does not, switch to a `focus:ring-*` or a contrasting border
-- [ ] Hermes `Intl` with `America/Santo_Domingo` and `DOP` formats the time and the price (otherwise the fixed -04:00 offset and `money.dop` apply)
+- [ ] Hermes `Intl` with `America/Santo_Domingo` and `DOP` formats the time and the price (if this check fails, implement a fixed UTC-4 offset for the time, and keep the `money.dop` fallback for the price; design §14 contingency)
 
 **Web**
-- [ ] `pagehide` and `pageshow` close and reopen the stream under the Next router (otherwise close on hidden after 60 s)
+- [ ] `pagehide` and `pageshow` close and reopen the stream under the Next router (if this check fails, implement closing the stream when the page is hidden; design §14 contingency)
 - [ ] SSE client IP in the API log (see Notes)
 - [ ] The production build on port 3001 works against the compose API (`curl`), since compose owns 3000
 

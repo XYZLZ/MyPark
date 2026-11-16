@@ -630,7 +630,7 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
     6. There is no draining fixture: draining is client memory (M2B-45) and status reports `running: true` while it lasts.
     7. Held cars clear when the status goes from running to not running, not "on a new run" as M2B-32 says (PF10), because a Start that takes over an implicit idle session keeps its cars (M2B-44).
     8. Navigation keys extend existing namespaces: web `common.nav.*` and mobile `nav.*`, not the design's `nav` and `tabs` (PF8).
-    9. Known limits: the console event log cannot detect a simulator restart between two successful polls; the web notice banner (`lg:col-span-full`, no `lg:row-start`) sits below the grid at `lg` though it is first in the DOM; the mobile Button focus outline relies on Uniwind `outline` support (device check pending).
+    9. Known limits: the console event log cannot detect a simulator restart between two successful polls; the mobile Button focus outline relies on Uniwind `outline` support (device check pending).
 
 ### 10.3 Open questions
 
