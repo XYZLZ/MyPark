@@ -44,6 +44,9 @@ export const BFF_ENTRIES: readonly Entry[] = [
   { method: 'GET', path: `vehicles/${ID}`, auth: 'bearer' },
   { method: 'PATCH', path: `vehicles/${ID}`, auth: 'bearer' },
   { method: 'DELETE', path: `vehicles/${ID}`, auth: 'bearer' },
+  // M2B-18: REST fallback while the live stream is down. Anonymous reads; the bearer is never sent.
+  { method: 'GET', path: `lots/${ID}/availability`, auth: 'public' },
+  { method: 'GET', path: `lots/${ID}/spaces`, auth: 'public' },
 ];
 
 /**

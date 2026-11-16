@@ -7,8 +7,18 @@
     "dismiss": "Descartar"
   },
   "nav": {
+    "home": "Inicio",
     "vehicles": "Vehículos",
     "profile": "Perfil"
+  },
+  "home": {
+    "location": "Zona Colonial, Santo Domingo",
+    "openInMapsHint": "Abre Maps",
+    "cardLabel": "Espacios disponibles: {{count}} de {{total}}. {{status}}",
+    "cardLabelOos": "Espacios disponibles: {{count}} de {{total}}, {{outOfService}}. {{status}}",
+    "cardLabelClosed": "Espacios disponibles: {{status}}. {{body}}",
+    "detailOos": "{{capacity}} · {{outOfService}}",
+    "rate": "{{label}}: {{value}}"
   },
   "errors": {
     "fallback": "Algo salió mal. Inténtalo de nuevo.",
@@ -248,5 +258,88 @@
   "restoreFailed": {
     "title": "No pudimos verificar tu sesión",
     "body": "Revisa tu conexión e inténtalo de nuevo. Tu sesión sigue guardada en este dispositivo hasta que cierres sesión."
+  },
+  "lot": {
+    "title": "Parqueo Banreservas",
+    "info": "Información del parqueo",
+    "address": "Dirección",
+    "location": "Ubicación",
+    "openInMaps": "Abrir en Maps",
+    "opensInNewTab": "(se abre en una pestaña nueva)",
+    "hours": {
+      "label": "Horario",
+      "alwaysOpen": "Abierto 24 horas",
+      "varies": "El horario varía"
+    },
+    "hero": {
+      "title": "Consulta la disponibilidad del parqueo en tiempo real",
+      "subtitle": "Mira cuántos espacios hay libres antes de llegar.",
+      "photoAlt": "Fachada del parqueo Banreservas en la Zona Colonial"
+    },
+    "error": {
+      "title": "La disponibilidad no está cargando ahora",
+      "retry": "Reintentar"
+    },
+    "unavailable": {
+      "closedBody": "El parqueo no recibe vehículos ahora."
+    }
+  },
+  "availability": {
+    "title": "Disponibilidad",
+    "total": "Espacios totales",
+    "available": "Disponibles",
+    "availableLong": "Espacios disponibles",
+    "occupied": "Ocupados",
+    "of": "de {{total}} espacios",
+    "outOfService": "{{count}} fuera de servicio",
+    "status": {
+      "open": "Abierto",
+      "full": "Lleno",
+      "closed": "Cerrado"
+    },
+    "live": "En tiempo real",
+    "lastChange": "Último cambio {{time}}",
+    "stale": "Desactualizado — última actualización {{time}}",
+    "reconnecting": "Reconectando…",
+    "connecting": "Conectando…",
+    "unavailable": "Actualizaciones en vivo no disponibles",
+    "unavailableAt": "Actualizaciones en vivo no disponibles · datos de las {{time}}",
+    "announce": {
+      "count": "Espacios disponibles: {{count}} de {{total}}.",
+      "open": "El parqueo está abierto.",
+      "full": "El parqueo está lleno.",
+      "closed": "El parqueo está cerrado.",
+      "live": "Actualizaciones en tiempo real activas.",
+      "stale": "Los datos están desactualizados. Última actualización {{time}}."
+    }
+  },
+  "spaces": {
+    "title": "Mapa de espacios",
+    "sensorsLive": "Sensores en vivo",
+    "legend": {
+      "free": "Disponible",
+      "occupied": "Ocupado",
+      "outOfService": "Fuera de servicio"
+    },
+    "summary": "Sensores — libres: {{free}}, ocupados: {{occupied}}, fuera de servicio: {{oos}}.",
+    "note": "El mapa muestra lo que leen los sensores.",
+    "updating": "Actualizando el mapa…",
+    "listFree": "Ver espacios libres",
+    "viewFull": "Ver mapa completo",
+    "previewCount": "{{shown}} de {{total}} espacios",
+    "zoomIn": "Acercar mapa",
+    "zoomOut": "Alejar mapa"
+  },
+  "tariff": {
+    "title": "Tarifas",
+    "firstHour": "Primera hora",
+    "additionalHour": "Hora adicional",
+    "dailyCap": "Máximo por día",
+    "grace": "Salida sin costo",
+    "postPayment": "Salir tras pagar",
+    "lostTicket": "Ticket perdido"
+  },
+  "money": {
+    "dop": "RD${{amount}}"
   }
 }

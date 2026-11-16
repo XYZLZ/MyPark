@@ -7,14 +7,21 @@
       "es-DO": "Español",
       "en": "English"
     },
+    "location": "Parqueo Banreservas · Zona Colonial, Santo Domingo",
+    "greeting": "Hello, {name}",
     "nav": {
       "label": "Main navigation",
-      "vehicles": "Vehicles",
-      "profile": "Profile"
+      "home": "Home",
+      "vehicle": "My Vehicle",
+      "profile": "Profile",
+      "admin": "Administration",
+      "simulator": "Simulator",
+      "logout": "Log out",
+      "menu": "Menu"
     }
   },
   "home": {
-    "title": "Parking in the Zona Colonial",
+    "mapLabel": "Parking map, scrollable",
     "subtitle": "Create your account and register your vehicles to reserve a space.",
     "signedInSubtitle": "Manage the vehicles on your account.",
     "logIn": "Log in",
@@ -183,6 +190,119 @@
     "greeting": "Hello, {name}.",
     "body": "You are in the MyPark administration area."
   },
+  "simulator": {
+    "title": "Simulator console",
+    "refreshNote": "Updates every 2 s",
+    "adminLink": "Simulator console",
+    "notConfigured": "The simulator is not configured on this server.",
+    "unreachable": "We could not reach the simulator. Still trying.",
+    "status": {
+      "title": "Status",
+      "running": "Running",
+      "idle": "Idle",
+      "draining": "Draining",
+      "scenario": "Scenario",
+      "speed": "Speed",
+      "seed": "Seed",
+      "copySeed": "Copy seed",
+      "copied": "Copied",
+      "virtualTime": "Virtual time",
+      "carsInside": "Cars inside",
+      "startedAt": "Started",
+      "reachedFull": "Lot reached full",
+      "none": "None",
+      "loading": "Loading status…",
+      "copyFailed": "Could not copy the seed."
+    },
+    "scenario": {
+      "idle": "Idle",
+      "weekday": "Weekday",
+      "weekend_peak": "Weekend peak",
+      "fill_to_full": "Fill to full",
+      "sensor_drift": "Sensor drift"
+    },
+    "start": {
+      "title": "Start scenario",
+      "scenario": "Scenario",
+      "speed": "Speed",
+      "speedRange": "(1–120)",
+      "seed": "Seed",
+      "startAt": "Start time",
+      "optional": "(optional)",
+      "seedPlaceholder": "Random",
+      "startAtHint": "Santo Domingo time (−04:00)",
+      "submit": "Start",
+      "disabledRunning": "Disabled: a scenario is running.",
+      "disabledDraining": "Disabled: the simulator is draining.",
+      "disabledLoading": "Disabled: the status is not known yet."
+    },
+    "stop": {
+      "title": "Stop",
+      "now": "Stop now",
+      "drain": "Stop after cars leave",
+      "drainingHint": "While the lot drains, only “Stop now” is available.",
+      "notRunning": "No scenario is running.",
+      "unknown": "The status is not known yet."
+    },
+    "forbidden": "You do not have permission to use the simulator console.",
+    "serverError": "The simulator reported an error. Still trying.",
+    "inject": {
+      "title": "Add car",
+      "credential": "Credential",
+      "ticket": "Ticket",
+      "employeeCard": "Employee card",
+      "card": "Card number",
+      "cardPlaceholder": "EMP-001",
+      "hold": "Hold inside until released",
+      "dwell": "Minutes inside",
+      "dwellRange": "(1–600)",
+      "dwellPlaceholder": "Random",
+      "submit": "Add car",
+      "added": "Car {id} added."
+    },
+    "held": {
+      "title": "Held cars",
+      "empty": "No cars are being held.",
+      "lostTicket": "Lost ticket",
+      "lostTicketFor": "Lost ticket for {id}",
+      "leave": "Leave",
+      "leaveCar": "Leave {id}",
+      "other": "Another car",
+      "otherHint": "(id)",
+      "otherPlaceholder": "car-000123",
+      "leaveOther": "Leave"
+    },
+    "fault": {
+      "title": "Sensor fault",
+      "code": "Space",
+      "fault": "Fault",
+      "submit": "Apply",
+      "applied": "Fault applied on {code}",
+      "kind": {
+        "stuck_occupied": "Stuck occupied",
+        "stuck_free": "Stuck free",
+        "silent": "No signal",
+        "none": "Clear fault"
+      }
+    },
+    "log": {
+      "title": "Event log",
+      "caption": "Last 500 events, newest first. Santo Domingo time.",
+      "seq": "#",
+      "time": "Time",
+      "device": "Device",
+      "type": "Type",
+      "result": "Result",
+      "reason": "Reason",
+      "car": "Car",
+      "denied": "Denied",
+      "empty": "No events yet. Start a scenario.",
+      "gap": "Some events were skipped ({from}–{to}).",
+      "run": "New run · {scenario} · {time}",
+      "restarted": "The simulator restarted.",
+      "newEvents": "{count, plural, one {# new event} other {# new events}}"
+    }
+  },
   "acceptInvitation": {
     "title": "Activate your administrator account",
     "intro": "Enter the code from your invitation and choose a password.",
@@ -300,5 +420,88 @@
     "pattern": "The format is not valid.",
     "integer": "Enter a whole number.",
     "unknown": "Check this field."
+  },
+  "lot": {
+    "title": "Banreservas Parking",
+    "info": "Parking information",
+    "address": "Address",
+    "location": "Location",
+    "openInMaps": "Open in Maps",
+    "opensInNewTab": "(opens in a new tab)",
+    "hours": {
+      "label": "Hours",
+      "alwaysOpen": "Open 24 hours",
+      "varies": "Hours vary"
+    },
+    "hero": {
+      "title": "Check parking availability in real time",
+      "subtitle": "See how many spaces are free before you arrive.",
+      "photoAlt": "Front of the Banreservas parking lot in the Colonial Zone"
+    },
+    "error": {
+      "title": "Availability is not loading right now",
+      "retry": "Try again"
+    },
+    "unavailable": {
+      "closedBody": "The parking lot is not accepting vehicles right now."
+    }
+  },
+  "availability": {
+    "title": "Availability",
+    "total": "Total spaces",
+    "available": "Available",
+    "availableLong": "Available spaces",
+    "occupied": "Occupied",
+    "of": "of {total} spaces",
+    "outOfService": "{count} out of service",
+    "status": {
+      "open": "Open",
+      "full": "Full",
+      "closed": "Closed"
+    },
+    "live": "Live",
+    "lastChange": "Last change {time}",
+    "stale": "Stale — last updated {time}",
+    "reconnecting": "Reconnecting…",
+    "connecting": "Connecting…",
+    "unavailable": "Live updates unavailable",
+    "unavailableAt": "Live updates unavailable · data as of {time}",
+    "announce": {
+      "count": "Available spaces: {count} of {total}.",
+      "open": "The parking lot is open.",
+      "full": "The parking lot is full.",
+      "closed": "The parking lot is closed.",
+      "live": "Live updates are active.",
+      "stale": "The data is stale. Last updated {time}."
+    }
+  },
+  "spaces": {
+    "title": "Space map",
+    "sensorsLive": "Live sensors",
+    "legend": {
+      "free": "Available",
+      "occupied": "Occupied",
+      "outOfService": "Out of service"
+    },
+    "summary": "Sensors — free: {free}, occupied: {occupied}, out of service: {oos}.",
+    "note": "The map shows sensor readings.",
+    "updating": "Updating the map…",
+    "listFree": "View free spaces",
+    "viewFull": "View full map",
+    "previewCount": "{shown} of {total} spaces",
+    "zoomIn": "Zoom in on the map",
+    "zoomOut": "Zoom out of the map"
+  },
+  "tariff": {
+    "title": "Rates",
+    "firstHour": "First hour",
+    "additionalHour": "Additional hour",
+    "dailyCap": "Daily maximum",
+    "grace": "Free exit window",
+    "postPayment": "Exit after paying",
+    "lostTicket": "Lost ticket"
+  },
+  "money": {
+    "dop": "RD${amount}"
   }
 }

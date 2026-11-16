@@ -114,7 +114,9 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: *app-url
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      # Browsers that may open the public SSE stream directly (M2B-2, M2B-39): the
+      # web origins, mirroring the web service's WEB_ALLOWED_ORIGINS default.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:${WEB_PORT:-3000},http://127.0.0.1:${WEB_PORT:-3000}}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
       # Dev-only defaults (config.DevJWTSigningKey / DevAuthCodePepper); the API
       # refuses them when APP_ENV=production.
@@ -230,6 +232,10 @@ services:
       # Origins the BFF accepts on POST, PATCH and DELETE (CSRF check, spec 5.4).
       # The default follows the published port, so a custom WEB_PORT keeps mutations working.
       WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:${WEB_PORT:-3000},http://127.0.0.1:${WEB_PORT:-3000}}
+      # The API origin as the browser sees it, for the live stream (M2B-16). Read at
+      # runtime by Server Components, never inlined into the bundle. Unlike
+      # API_INTERNAL_URL it follows the published port, not the compose network.
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:${API_PORT:-8080}}
       # Simulator console (Track B): the BFF calls the control API with the
       # simulator's token. Same dev-only default as the simulator service.
       SIMULATOR_INTERNAL_URL: http://simulator:8090

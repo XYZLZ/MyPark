@@ -4,7 +4,14 @@ import { resolveLocale } from '@/i18n/routing';
 
 const CSRF_COOKIE = 'mp_csrf';
 
-type ApiInit = { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown };
+type ApiInit = {
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  body?: unknown;
+  /** A request body sent verbatim (for numbers JSON.stringify would round). Cannot be combined with `body`. */
+  bodyText?: string;
+  /** Aborts the request, for example the signal TanStack Query passes to a query function. */
+  signal?: AbortSignal;
+};
 
 /** The CSRF token the BFF set for this browser, or an empty string. It is readable by script on purpose (spec 5.4). */
 export function readCsrfToken(): string {
@@ -47,12 +54,13 @@ function withRetryAfter(error: unknown, response: Response): unknown {
  */
 export async function apiFetch<T>(
   path: string,
-  parse: (body: unknown, status?: number) => T,
+  parse: (body: unknown, status?: number, text?: string) => T,
   init: ApiInit = {},
 ): Promise<T> {
-  const { method = 'GET', body } = init;
+  const { method = 'GET', body, bodyText, signal } = init;
+  if (body !== undefined && bodyText !== undefined) throw new Error('apiFetch: body and bodyText are mutually exclusive');
   const headers = new Headers({ Accept: 'application/json' });
-  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  if (body !== undefined || bodyText !== undefined) headers.set('Content-Type', 'application/json');
   if (method !== 'GET') headers.set('X-CSRF-Token', readCsrfToken());
 
   let response: Response;
@@ -60,8 +68,9 @@ export async function apiFetch<T>(
     response = await fetch(path, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: bodyText ?? (body === undefined ? undefined : JSON.stringify(body)),
       credentials: 'same-origin',
+      signal,
       cache: 'no-store',
     });
   } catch {
@@ -69,15 +78,16 @@ export async function apiFetch<T>(
   }
 
   let parsed: unknown;
+  let text = '';
   try {
-    const text = await response.text();
+    text = await response.text();
     parsed = text === '' ? undefined : JSON.parse(text);
   } catch {
     parsed = undefined;
   }
 
   try {
-    return parse(parsed, response.status);
+    return parse(parsed, response.status, text);
   } catch (error) {
     throw withRetryAfter(error, response);
   }

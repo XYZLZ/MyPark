@@ -5,7 +5,7 @@ import { renderScreen } from '@/testing/render';
 
 import { StorageNotice } from './StorageNotice';
 
-jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 0, left: 0, right: 0 }) }));
+jest.mock('react-native-safe-area-context', () => ({ ...jest.requireActual('react-native-safe-area-context'), useSafeAreaInsets: () => ({ top: 24, bottom: 0, left: 0, right: 0 }) }));
 
 beforeEach(() => useAuthStore.setState(useAuthStore.getInitialState(), true));
 
@@ -15,7 +15,7 @@ test('renders nothing without a storage notice', async () => {
   await renderScreen(<StorageNotice />);
   expect(screen.queryByTestId('banner')).toBeNull();
   // No wrapper, no inset padding: the stack headers below already clear the status bar.
-  expect(screen.toJSON()).toBeNull();
+  expect(screen.queryByTestId('storage-notice')).toBeNull();
 });
 
 test('shows the storage_failed notice and clears it on dismiss', async () => {

@@ -21,7 +21,7 @@ function VehicleRow({ vehicle, onPress }: { vehicle: Vehicle; onPress: () => voi
       accessibilityRole="button"
       accessibilityLabel={t('vehicles.editFor', { plate: vehicle.plate })}
       onPress={onPress}
-      className="min-h-12 gap-2 rounded-panel border border-hairline bg-surface p-4 active:bg-brand-primary-tint focus:border-2 focus:border-brand-primary"
+      className="min-h-12 gap-2 rounded-panel border border-hairline bg-surface p-4 active:bg-brand-primary-tint focus:border-2 focus:border-brand-navy"
     >
       <Plate value={vehicle.plate} />
       <AppText>{`${vehicle.make} ${vehicle.model} · ${vehicle.color}`}</AppText>
@@ -37,7 +37,7 @@ export function VehiclesScreen() {
 
   if (list.isPending) {
     return (
-      <ScreenScroll>
+      <ScreenScroll edge="tabBar" header="stack">
         <View accessible accessibilityRole="progressbar" accessibilityLabel={t('vehicles.loading')} className="gap-3">
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-28 w-full" />
@@ -48,7 +48,7 @@ export function VehiclesScreen() {
 
   if (list.isError) {
     return (
-      <ScreenScroll>
+      <ScreenScroll edge="tabBar" header="stack">
         <Banner tone="error">{t('vehicles.loadError.title')}</Banner>
         <Button variant="primary" label={t('common.retry')} loading={list.isFetching} onPress={() => void list.refetch()} />
       </ScreenScroll>
@@ -61,7 +61,7 @@ export function VehiclesScreen() {
 
   if (items.length === 0) {
     return (
-      <ScreenScroll>
+      <ScreenScroll edge="tabBar" header="stack">
         <EmptyState
           title={t('vehicles.empty.title')}
           body={t('vehicles.empty.body')}
@@ -72,7 +72,7 @@ export function VehiclesScreen() {
   }
 
   return (
-    <ScreenScroll>
+    <ScreenScroll edge="tabBar" header="stack">
       <AppText variant="caption">{t('vehicles.count', { used: items.length, limit: page.limit })}</AppText>
       {items.map((vehicle) => (
         <VehicleRow key={vehicle.id} vehicle={vehicle} onPress={() => router.push(`/vehicles/${vehicle.id}`)} />

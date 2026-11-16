@@ -41,7 +41,8 @@ export default async function proxy(request: NextRequest): Promise<NextResponse>
 
 export const config = {
   // Pages (everything except API routes, Next internals and files with an
-  // extension), the BFF catch-all and the session routes. `/api/auth/login`
+  // extension), the BFF catch-all, the admin console BFF (refreshed like the
+  // rest, so an admin session survives) and the session routes. `/api/auth/login`
   // stays out on purpose: a login needs no session.
-  matcher: ['/((?!api|trpc|_next|_vercel|.*\\..*).*)', '/api/v1/:path*', '/api/session/:path*'],
+  matcher: ['/((?!api|trpc|_next|_vercel|.*\\..*).*)', '/api/v1/:path*', '/api/admin/:path*', '/api/session/:path*'],
 };

@@ -12,11 +12,11 @@ function useField(): FieldContext {
   return ctx;
 }
 
-/** Classes for a text input inside a Field: 2 px `brand-primary` border on focus (CC-11), `danger` when invalid. */
+/** Classes for a text input inside a Field: 2 px `brand-navy` border on focus (CC-11), `danger` when invalid. */
 export const inputClass =
   'block h-12 w-full rounded-control border border-control-line bg-surface px-4 text-ink outline-none ' +
   'transition-[border-color,box-shadow] duration-(--motion-duration) hover:border-ink-muted ' +
-  'focus:border-2 focus:border-brand-primary focus:px-[15px] focus:shadow-[0_0_0_3px_var(--color-brand-primary-tint)] ' +
+  'focus:border-2 focus:border-brand-navy focus:px-[15px] focus:shadow-[0_0_0_3px_var(--color-brand-sky-strong)] ' +
   'aria-invalid:border-2 aria-invalid:border-danger aria-invalid:px-[15px] ' +
   'disabled:border-hairline disabled:bg-disabled-bg disabled:text-disabled-ink';
 

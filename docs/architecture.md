@@ -204,7 +204,7 @@ Pagination is **keyset**: `?limit=50&cursor=<opaque>`, where the cursor encodes 
 | Refresh token | 256-bit random opaque value. Only the SHA-256 hash is stored. 30-day lifetime, **rotated on every use** |
 | Reuse detection | Each refresh token belongs to a `family_id`. Presenting a rotated token revokes the family and writes an audit entry |
 | Verification / reset codes | 6 digits, stored hashed, 15-min TTL, max 5 attempts, single use |
-| Web (BFF) | The browser talks only to Next.js. Next.js route handlers (`app/api/*`) call Go with the bearer token and keep `access` and `refresh` in `httpOnly; SameSite=Lax` cookies, `Secure` only when `APP_ENV=production` (CC-4). Next 16 `proxy.ts` is the only place a session is refreshed (CC-1); RSC and route handlers never refresh. Mutating requests require `Origin` check + double-submit CSRF token |
+| Web (BFF) | The browser talks only to Next.js, with one exception: the public availability stream (§12). Next.js route handlers (`app/api/*`) call Go with the bearer token and keep `access` and `refresh` in `httpOnly; SameSite=Lax` cookies, `Secure` only when `APP_ENV=production` (CC-4). Next 16 `proxy.ts` is the only place a session is refreshed (CC-1); RSC and route handlers never refresh. Mutating requests require `Origin` check + double-submit CSRF token |
 | Mobile | Access token in memory (zustand), refresh token in `expo-secure-store`. The HTTP client does single-flight refresh on 401 |
 | Per-request session check | Every authenticated request runs `Authenticator.Authenticate`: verify the JWT, then **one indexed query** joins the session and its user. A revoked or absolutely expired session, a suspended, deleted or unverified user, and a role that differs from the database all fail at once, so logout, password reset and account deletion take effect immediately, not after the 15-min token expiry (spec 7.3, OC-4). The database role is authoritative. Failures are `401 auth.unauthenticated` or `auth.session_revoked`, and `403 auth.account_suspended` |
 | No refresh grace window | Presenting a rotated refresh token revokes the whole session (OC-5). Clients must single-flight refresh. The mobile HTTP client does, and the **web BFF must single-flight per session** too: concurrent `proxy.ts` or RSC refreshes with one cookie trip reuse detection and log the user out |
@@ -212,8 +212,9 @@ Pagination is **keyset**: `?limit=50&cursor=<opaque>`, where the cursor encodes 
 | Legal gate | A driver whose accepted terms or privacy version is not the current one gets `403 legal.acceptance_required` (with the current versions in `details`) on every route except those registered `LegalExempt`: `GET /v1/me`, `DELETE /v1/me`, `POST /v1/me/legal-acceptance`, logout and logout-all (spec §8.5). Admins are exempt (OC-15). The current versions are cached for 60 s and refreshed by one shared query |
 | Logout | `POST /v1/auth/logout` revokes the session in the token (`logout`). `POST /v1/auth/logout-all` revokes every live session of the user (`logout_all`). Both answer 204 and are audited. A second logout with the same token is rejected by the session check with 401 |
 | Authorization | Role check in middleware (`driver` / `admin`) + ownership check in each use case (a driver only sees their own resources) |
+| Simulator console (M2) | `/api/admin/simulator/*` is a web BFF route for admins only. On **every** request it asks Go `GET /v1/me` with the bearer and refuses any role but `admin`. The simulator's `SIMULATOR_CONTROL_TOKEN` stays on the web server: the BFF adds it to the upstream call and never logs, returns or bundles it (§12) |
 
-**Why a BFF on web (our call):** tokens never reach browser JavaScript (XSS can't steal them), Go stays a pure bearer API for both clients, and the cookie domain matches the web origin, so CORS is avoided for authenticated calls. Public SSE availability can be read directly from Go because it is anonymous.
+**Why a BFF on web (our call):** tokens never reach browser JavaScript (XSS can't steal them), Go stays a pure bearer API for both clients, and the cookie domain matches the web origin, so CORS is avoided for authenticated calls. Public SSE availability is read directly from Go because it is anonymous: the one exception to "the browser never calls Go" (M2). It carries no credentials, and its REST fallback still goes through the BFF (§12).
 
 ---
 
@@ -461,34 +462,50 @@ src/
 │  ├─ [locale]/(driver)/       # dashboard, reserve, reservations, vehicles, payments, profile
 │  ├─ [locale]/(admin)/admin/  # dashboard, lot, reservations, stays, tariffs, devices, cards, users, analytics, reconciliation, audit, simulator
 │  └─ api/                     # BFF route handlers (auth, proxy, SSE proxy)
-├─ components/                 # presentational primitives (Button, Card, KpiCard, Table, ...)
+├─ components/                 # presentational primitives (ui/: Button, Card, ...) and shell/ (AppShell, Sidebar, TopBar, nav-items)
 ├─ design/                     # tokens (CSS @theme: --color-brand-primary, --color-brand-accent = TODO(brand) placeholders), typography, logo slot
-├─ features/<feature>/         # containers, hooks, API calls, zod schemas
+├─ features/<feature>/         # containers, hooks, API calls, zod schemas; lot/ (live block, map, stream) and simulator/ (admin console) are M2
 ├─ store/                      # zustand: client-only UI state (simulator console, filters, UI prefs)
 ├─ hooks/  lib/  i18n/{es-DO.json,en.json}  testing/
 └─ proxy.ts                    # locale + session refresh (Next 16)
 ```
 
 - **Server Components by default.** Data reads for first paint happen in RSC through the BFF server client. Interactive and live parts are client components using **TanStack Query** (cache, retries) plus an SSE hook that writes into the query cache **(our call)**.
-- **State split:** TanStack Query owns server state. **zustand** (`store/`) owns client-only state such as UI preferences, filters and simulator console controls. Server data is never copied into zustand, and the stores are created per request/provider so nothing leaks between users during SSR.
+- **State split:** TanStack Query owns server state. **zustand** (`store/`) owns client-only state such as UI preferences, filters and simulator console controls. Server data is not copied into zustand, with one exception: the simulator console keeps its event log rows and held cars in its store, because the log is cumulative and outlives a single poll (design §7.3, M2B-32). The stores are created per request/provider so nothing leaks between users during SSR.
+- **Shell (M2).** Driver and admin pages sit in `components/shell/AppShell`: a navy sidebar and a top bar. `nav-items.ts` picks the items by variant (`guest`, `driver`, `admin`). Admins get Inicio, Administración, Simulador and Cerrar sesión, because `requireDriver` redirects admins away from the driver pages. On `(public)` pages the cookie hint cannot tell an admin from a driver, so an admin sees the driver items there.
+- **Features (M2).** `features/lot` holds the live block (`LotLive`, `LotSection`), the lot map, `api.ts`/`server.ts` and `live/` (the stream manager and `useLiveLot`). `features/simulator` holds the console (`SimulatorConsole`, forms, `EventLog`, the log cursor rules and its zustand store).
+- **i18n namespaces (M2).** Shared with mobile and key-for-key identical (`check:i18n`): `lot`, `availability`, `spaces`, `tariff`, `money`. Web only: `simulator`, and the `common.nav` additions (`home`, `vehicle`, `profile`, `admin`, `simulator`, `logout`, `menu`). Navigation extends `common.nav`, not a new `nav`.
 - **Container / presentational:** `features/*` own data and state. `components/*` are pure and props-driven.
 - Validation: shared zod schemas per feature, matching the OpenAPI types from `packages/contracts`.
 - i18n: **next-intl** with a `[locale]` segment (`es-DO` default, `en`). Error codes map to `errors.<code>` keys.
 - Charts: one charting library for analytics (decided during M4 with the dataviz guidelines).
 - Role guard: `(admin)` layout checks the role server-side. `(driver)` requires a session.
-- **BFF and session (M1).** The browser never sees a token and never calls the Go API directly.
-  - `proxy.ts` is the only place a session is refreshed. It runs for pages, `/api/v1/*` and `/api/session/*`. When `mp_access` is absent and `mp_refresh` is present it calls `POST /v1/auth/refresh` through a single-flight coordinator (`lib/session/refresh.ts`, one in-flight call per refresh token plus a 30 s result cache keyed by the caller's `mp_csrf`), then rewrites the forwarded `Cookie` header so the same request already sees the new tokens. Refresh tokens are single-use, so a second refresh outside this module would revoke the session; ESLint allows only `proxy.ts` to import it.
+- **BFF and session (M1).** The browser never sees a token and never calls the Go API directly, except for the public availability stream (below).
+  - `proxy.ts` is the only place a session is refreshed. It runs for pages, `/api/v1/*`, `/api/admin/*` and `/api/session/*`. When `mp_access` is absent and `mp_refresh` is present it calls `POST /v1/auth/refresh` through a single-flight coordinator (`lib/session/refresh.ts`, one in-flight call per refresh token plus a 30 s result cache keyed by the caller's `mp_csrf`), then rewrites the forwarded `Cookie` header so the same request already sees the new tokens. Refresh tokens are single-use, so a second refresh outside this module would revoke the session; ESLint allows only `proxy.ts` to import it.
   - `app/api/v1/[...path]/route.ts` is an allow-list proxy (`lib/bff/allowlist.ts`): known method and path pairs only, ids must be UUIDs, everything else is `404 http.not_found`. It adds the bearer from the cookie, passes status, body, `Retry-After` and `X-Request-Id` through, never forwards `Set-Cookie`, and uses a 20 s timeout on argon2 routes and 5 s elsewhere. Logout always clears the cookies. Logout-all answers `502 session.logout_unconfirmed` (cookies still cleared) unless Go answered 2xx, and the client lands home with the `logout_all_failed` notice (`lib/bff/logout-all.ts`).
   - `app/api/auth/login/route.ts` forces `client_kind: "web"`, stores the tokens in cookies and returns only `{user, legal_acceptance_required}`. It sits outside the proxy matcher because a login needs no session.
   - `/api/session/end` (added with the guards) is the redirect target when a Server Component finds the session over.
   - Cookies: `mp_access` and `mp_refresh` (httpOnly, SameSite=Lax), and `mp_csrf` (readable by JS, 30 days, rotated at login). `Secure` only when `APP_ENV=production`. POST, PATCH and DELETE need an `Origin` listed in `WEB_ALLOWED_ORIGINS` and an `X-CSRF-Token` equal to `mp_csrf`.
+  - `app/api/admin/simulator/[...path]/route.ts` is the simulator console BFF (M2, `lib/simulator/`). Its checks run in this order:
+    1. `SIMULATOR_INTERNAL_URL` and `SIMULATOR_CONTROL_TOKEN` are both set, else `404 http.not_found`.
+    2. The request is one of exactly seven control operations: `GET status`, `POST scenarios/start`, `scenarios/stop`, `cars`, `cars/{car_id}/leave`, `sensors/{code}/fault` and `GET events`. Ids must match the contract patterns. Only a single int64 `after` is forwarded, and every other query parameter is dropped.
+    3. The caller is an admin, asked of Go `GET /v1/me` on every request, so a demoted or revoked admin loses the console at once.
+    4. A POST passes the CSRF and `Origin` check, and its body is a JSON object of at most 4 KB. The body is forwarded byte for byte, so seed digits survive.
+
+    The upstream call to `http://simulator:8090/control/*` carries `X-Simulator-Token`, plus `Content-Type: application/json` on POST. It has a 5 s timeout and never carries client cookies. The token is a server-only runtime variable (never `NEXT_PUBLIC_*`), and is never logged or echoed. Responses pass through as for `/api/v1/*`. An unreachable simulator is `502 internal.unexpected`.
   - Server Components call Go only through `lib/api/server.ts` (`serverFetch`, `getMe`, `getLegalCurrent`). Run a single `web` replica: the lock is per process.
+- **Live availability (M2).** The public availability stream is the one exception to "the browser never calls Go": the browser opens `EventSource` straight to `API_PUBLIC_URL` (`…/v1/lots/{id}/availability/stream?include=spaces`), anonymous and without `withCredentials`.
+  - `API_PUBLIC_URL` is a runtime, server-only variable (no `NEXT_PUBLIC_` prefix, which Next would freeze at build). `lib/env/public-api.ts` validates it (absolute `http(s)`, origin only) and the Server Component passes it to the client live island as a prop. Missing or invalid: the page shows the server snapshot with "Live updates unavailable" and opens no stream. The API's `CORS_ALLOWED_ORIGINS` must list the web origin.
+  - The manager rules live once in `packages/contracts` (`createLiveLotRegistry` in `m2/registry.ts`), shared with mobile. Each app supplies adapters: the transport, how a transport end is classified, and the page or app lifecycle. On web, `features/lot/live/manager.ts` adapts `EventSource` and `pagehide`/`pageshow`; on mobile, it adapts `expo/fetch` and `AppState`.
+  - The registry keeps one connection per `(origin, lotId)`, reference-counted and closed 2 s after the last subscriber, so StrictMode and route changes reuse it. `pagehide` closes it. `pageshow` reopens it, but never before a pending backoff or `Retry-After` is due (M2B-5). It writes frames into the Query cache through the shared `reduceLive` (version guard, snapshot first) and the connection state into a small store read with `useSyncExternalStore` (`useLiveLot`).
+  - The manager owns reconnection, because `EventSource` never retries after an HTTP failure (429, 404) and retries a drop with no jitter: every `error` closes the source and schedules `nextDelay` (1 s → 30 s, jittered; 10 s floor when `readyState` was `CLOSED`). Any frame, heartbeat included, keeps it fresh; 45 s of silence marks it stale and reconnects.
+  - While stale, the REST fallback reads `lots/{id}/availability` and `lots/{id}/spaces` through the BFF (public allow-list entries), at most once per attempt and never within 10 s. A `lot.not_found` stops the stream and refreshes the route once.
 
 ## 13. Mobile architecture (Expo SDK 58)
 
 ```
 src/
-├─ app/                 # expo-router: (auth)/, (tabs)/{availability,reserve,reservations,vehicles,profile}, _layout.tsx. M1 ships the Vehicles and Profile tabs only (X11)
+├─ app/                 # expo-router: (auth)/, (auth)/{welcome,map,...}, (tabs)/{home/{index,map},vehicles,profile}, _layout.tsx. M2 tabs are Inicio, Vehículos, Perfil (X11)
 ├─ components/          # presentational
 ├─ features/<feature>/  # screens' containers, hooks
 ├─ services/            # httpClient (refresh single-flight), tokenStorage (secure-store), sse
@@ -497,6 +514,8 @@ src/
 ├─ hooks/  design/tokens.ts  global.css (@import 'tailwindcss'; @import 'uniwind'; @theme ...)
 ```
 
+- **Navigation (M2):** the tabs are Inicio, Vehículos and Perfil, in that order (`TAB_ORDER`), and Inicio is the landing after login (`rootHref('tabs')` is `/home`). The tab label is the `nav.home` key (the existing `nav` namespace gains `home`; there is no separate `tabs` namespace). Signed out, Welcome shows the live lot with Log in and Sign up. Inicio and Welcome show a 40-space map preview, and "View full map" opens a full-map screen of all 280 spaces (`/home/map` in the tabs, `/map` before login). The map is 10 columns on mobile, hidden from screen readers, and backed by a text summary and a list of free spaces.
+- **Layout guard.** `npm run check:layout` (`scripts/check-mobile-layout.mjs`) statically checks `apps/mobile/src` for the M2B-52 rules: no horizontal scrolling, no fixed width above 328 dp (360 dp minus two 16 dp gutters), and every `*Screen.tsx` scrolls through `ScreenScroll`. The device pass at 360 x 640 and at font scale 1.3 is still manual.
 - **Brand tokens** are the same names on web and mobile (`brand-primary`, `brand-primary-contrast`, `brand-accent`, `brand-accent-contrast`). Phase 1 ships placeholder values marked `TODO(brand)` in `src/global.css` `@theme` and `src/design/tokens.ts`. They are replaced from official Banreservas assets supplied by the team, and an AA contrast check runs on replacement. The app display name is "MyPark · Banreservas Zona Colonial".
 - `metro.config.js` uses `withUniwindConfig(config, { cssEntryFile: './src/global.css', dtsFile: './src/types/uniwind-types.d.ts' })`.
 - The QR is rendered locally from the token (`react-native-qrcode-svg` or similar) and the last active QR is cached in secure storage for offline display.
@@ -530,8 +549,10 @@ src/
 | App | Unit | Integration | E2E |
 |---|---|---|---|
 | server | Domain rules table-driven (fees, availability, state machines), fake clock | Real Postgres (compose/CI service) per package with transactional fixtures; concurrency test for the cap; device API signature/idempotency tests | Simulator-driven scenario tests in CI (`fill_to_full`, `no_show`) |
-| web | vitest + Testing Library for components and hooks | Typed fixtures stubbed at the fetch boundary (X9, CC-14) | Playwright: register→reserve→cancel, admin tariff change |
-| mobile | jest-expo + RN Testing Library | Typed fixtures stubbed at the fetch boundary (X9, CC-14) | Manual demo script + Maestro (optional, M5) |
+| web | vitest + Testing Library for components and hooks | Typed fixtures stubbed at the fetch boundary (X9, CC-14); `FakeEventSource` (`testing/event-source.ts`) stands in for the stream | Playwright: register→reserve→cancel, admin tariff change |
+| mobile | jest-expo + RN Testing Library | Typed fixtures stubbed at the fetch boundary (X9, CC-14); `controllableStream` (`testing/stream.ts`) stands in for the stream | Manual demo script + Maestro (optional, M5) |
+
+**M2 client tests.** The stream is faked with `FakeEventSource` (web) and `controllableStream` (mobile) instead of MSW (M2B-41); both feed the real manager. Each client has a *frame to screen* pair: a pushed `availability` frame changes the count, and a `spaces` delta changes a cell state, with no timer advanced (M2B-42). With `TestAvailability_PassToSSELatency` on the server (p95 < 2 s) this covers the "< 2 s" criterion until Playwright measures it end to end in M5.
 
 ---
 

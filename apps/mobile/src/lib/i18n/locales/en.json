@@ -7,8 +7,18 @@
     "dismiss": "Dismiss"
   },
   "nav": {
+    "home": "Home",
     "vehicles": "Vehicles",
     "profile": "Profile"
+  },
+  "home": {
+    "location": "Colonial Zone, Santo Domingo",
+    "openInMapsHint": "Opens Maps",
+    "cardLabel": "Available spaces: {{count}} of {{total}}. {{status}}",
+    "cardLabelOos": "Available spaces: {{count}} of {{total}}, {{outOfService}}. {{status}}",
+    "cardLabelClosed": "Available spaces: {{status}}. {{body}}",
+    "detailOos": "{{capacity}} · {{outOfService}}",
+    "rate": "{{label}}: {{value}}"
   },
   "errors": {
     "fallback": "Something went wrong. Please try again.",
@@ -248,5 +258,88 @@
   "restoreFailed": {
     "title": "We could not check your session",
     "body": "Check your connection and try again. Your session stays saved on this device until you log out."
+  },
+  "lot": {
+    "title": "Banreservas Parking",
+    "info": "Parking information",
+    "address": "Address",
+    "location": "Location",
+    "openInMaps": "Open in Maps",
+    "opensInNewTab": "(opens in a new tab)",
+    "hours": {
+      "label": "Hours",
+      "alwaysOpen": "Open 24 hours",
+      "varies": "Hours vary"
+    },
+    "hero": {
+      "title": "Check parking availability in real time",
+      "subtitle": "See how many spaces are free before you arrive.",
+      "photoAlt": "Front of the Banreservas parking lot in the Colonial Zone"
+    },
+    "error": {
+      "title": "Availability is not loading right now",
+      "retry": "Try again"
+    },
+    "unavailable": {
+      "closedBody": "The parking lot is not accepting vehicles right now."
+    }
+  },
+  "availability": {
+    "title": "Availability",
+    "total": "Total spaces",
+    "available": "Available",
+    "availableLong": "Available spaces",
+    "occupied": "Occupied",
+    "of": "of {{total}} spaces",
+    "outOfService": "{{count}} out of service",
+    "status": {
+      "open": "Open",
+      "full": "Full",
+      "closed": "Closed"
+    },
+    "live": "Live",
+    "lastChange": "Last change {{time}}",
+    "stale": "Stale — last updated {{time}}",
+    "reconnecting": "Reconnecting…",
+    "connecting": "Connecting…",
+    "unavailable": "Live updates unavailable",
+    "unavailableAt": "Live updates unavailable · data as of {{time}}",
+    "announce": {
+      "count": "Available spaces: {{count}} of {{total}}.",
+      "open": "The parking lot is open.",
+      "full": "The parking lot is full.",
+      "closed": "The parking lot is closed.",
+      "live": "Live updates are active.",
+      "stale": "The data is stale. Last updated {{time}}."
+    }
+  },
+  "spaces": {
+    "title": "Space map",
+    "sensorsLive": "Live sensors",
+    "legend": {
+      "free": "Available",
+      "occupied": "Occupied",
+      "outOfService": "Out of service"
+    },
+    "summary": "Sensors — free: {{free}}, occupied: {{occupied}}, out of service: {{oos}}.",
+    "note": "The map shows sensor readings.",
+    "updating": "Updating the map…",
+    "listFree": "View free spaces",
+    "viewFull": "View full map",
+    "previewCount": "{{shown}} of {{total}} spaces",
+    "zoomIn": "Zoom in on the map",
+    "zoomOut": "Zoom out of the map"
+  },
+  "tariff": {
+    "title": "Rates",
+    "firstHour": "First hour",
+    "additionalHour": "Additional hour",
+    "dailyCap": "Daily maximum",
+    "grace": "Free exit window",
+    "postPayment": "Exit after paying",
+    "lostTicket": "Lost ticket"
+  },
+  "money": {
+    "dop": "RD${{amount}}"
   }
 }

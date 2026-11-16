@@ -1,13 +1,23 @@
 import 'server-only';
 import {
   ApiError,
+  availabilitySchema,
   legalCurrentSchema,
+  lotSchema,
+  lotSpacesSchema,
+  lotSummarySchema,
   parseListEnvelope,
   parseEnvelope,
+  tariffSchema,
   userSchema,
   vehicleSchema,
+  type Availability,
   type LegalCurrent,
+  type Lot,
+  type LotSummary,
   type Page,
+  type SpaceState,
+  type Tariff,
   type User,
   type Vehicle,
 } from '@mypark/contracts';
@@ -87,4 +97,30 @@ export async function listVehicles(): Promise<{ items: Vehicle[]; page: Page }> 
 
 export async function getVehicle(id: string): Promise<Vehicle> {
   return serverFetch(`/v1/vehicles/${encodeURIComponent(id)}`, parseEnvelope(vehicleSchema));
+}
+
+// Public lot reads (design §6.1): no bearer, 5 s each, so a hung API cannot hold the home for long.
+const PUBLIC_LOT_READ = { auth: false, timeoutMs: 5_000 } as const;
+const lotPath = (id: string) => `/v1/lots/${encodeURIComponent(id)}`;
+
+export async function listLots(): Promise<LotSummary[]> {
+  const { items } = await serverFetch('/v1/lots', parseListEnvelope(lotSummarySchema), PUBLIC_LOT_READ);
+  return items;
+}
+
+export async function getLot(id: string): Promise<Lot> {
+  return serverFetch(lotPath(id), parseEnvelope(lotSchema), PUBLIC_LOT_READ);
+}
+
+export async function getAvailability(id: string): Promise<Availability> {
+  return serverFetch(`${lotPath(id)}/availability`, parseEnvelope(availabilitySchema), PUBLIC_LOT_READ);
+}
+
+export async function getSpaces(id: string): Promise<SpaceState[]> {
+  const { spaces } = await serverFetch(`${lotPath(id)}/spaces`, parseEnvelope(lotSpacesSchema), PUBLIC_LOT_READ);
+  return spaces;
+}
+
+export async function getTariff(id: string): Promise<Tariff> {
+  return serverFetch(`${lotPath(id)}/tariff`, parseEnvelope(tariffSchema), PUBLIC_LOT_READ);
 }

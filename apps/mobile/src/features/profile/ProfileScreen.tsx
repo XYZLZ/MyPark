@@ -110,7 +110,7 @@ export function ProfileScreen() {
   const me = useQuery({ queryKey: ME_QUERY_KEY, queryFn: getMe });
 
   return (
-    <ScreenScroll>
+    <ScreenScroll edge="tabBar" header="stack">
       {me.data ? (
         <ProfileFields key={me.data.id} user={me.data} />
       ) : me.isError ? (

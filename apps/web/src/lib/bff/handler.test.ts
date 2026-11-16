@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { errorBody, successBody, vehicleFixture } from '@mypark/contracts/fixtures';
-import type { NextResponse } from 'next/server';
+import { NextRequest, type NextResponse } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { bffRequest } from '@/testing/bff-request';
 import { BFF_ENTRIES } from './allowlist';
@@ -9,6 +9,7 @@ import { LOGOUT_ALL_UNCONFIRMED, LOGOUT_ALL_UNCONFIRMED_STATUS } from './logout-
 
 const fetchMock = vi.fn<typeof fetch>();
 const SESSION = { mp_access: 'access-1', mp_refresh: 'refresh-1' };
+const LOT = '0b6f6f4e-8f2e-4c8e-9d63-5f1f0a1b2c3d';
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -96,6 +97,48 @@ describe('proxying', () => {
     await handleBff(bffRequest('/api/v1/legal/current', { cookies: SESSION }), ['legal', 'current']);
     expect(upstreamCall(1).url).toBe('http://api.test/v1/legal/current');
     expect(upstreamCall(1).headers.has('authorization')).toBe(false);
+  });
+
+  test('an anonymous lot GET (no cookies, no Origin) reaches the API', async () => {
+    fetchMock.mockImplementation(async () => upstreamOk());
+    for (const [n, leaf] of ['availability', 'spaces'].entries()) {
+      const res = await handleBff(new NextRequest(`http://localhost:3000/api/v1/lots/${LOT}/${leaf}`), ['lots', LOT, leaf]);
+      expect(res.status).toBe(200);
+      expect(upstreamCall(n).url).toBe(`http://api.test/v1/lots/${LOT}/${leaf}`);
+      expect(upstreamCall(n).headers.has('authorization')).toBe(false);
+    }
+  });
+
+  test('a public lot GET forwards no Authorization even with a session', async () => {
+    fetchMock.mockImplementation(async () => upstreamOk());
+    const spoof = { authorization: 'Bearer attacker' };
+    for (const [n, leaf] of ['availability', 'spaces'].entries()) {
+      const res = await handleBff(
+        bffRequest(`/api/v1/lots/${LOT}/${leaf}`, { cookies: SESSION, csrf: null, origin: null, headers: spoof }),
+        ['lots', LOT, leaf],
+      );
+      expect(res.status).toBe(200);
+      expect(upstreamCall(n).url).toBe(`http://api.test/v1/lots/${LOT}/${leaf}`);
+      expect(upstreamCall(n).headers.has('authorization')).toBe(false);
+      expect(upstreamCall(n).headers.has('cookie')).toBe(false);
+    }
+  });
+
+  test('crafted lot paths return 404 http.not_found without calling upstream', async () => {
+    const crafted: Array<[string, string[]]> = [
+      ['GET', ['lots', 'zona-colonial', 'availability']],
+      ['GET', ['lots', '..', 'availability']],
+      ['GET', ['lots', `${LOT}%2F..%2Fadmin`, 'spaces']],
+      ['GET', ['lots', LOT, 'availability', 'stream']],
+      ['GET', ['lots', LOT, 'tariff']],
+      ['DELETE', ['lots', LOT, 'spaces']],
+    ];
+    for (const [method, segments] of crafted) {
+      const res = await handleBff(bffRequest(`/api/v1/${segments.join('/')}`, { method, cookies: SESSION }), segments);
+      expect(res.status, `${method} ${segments.join('/')}`).toBe(404);
+      expect((await res.json()).error.code).toBe('http.not_found');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test('forwards the body and content type, and never the query string', async () => {

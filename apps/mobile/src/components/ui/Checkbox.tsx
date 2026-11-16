@@ -17,7 +17,7 @@ export function Checkbox({ label, checked, onChange, error }: Props) {
         accessibilityLabel={error ? `${label}, ${error}` : label}
         accessibilityState={{ checked }}
         onPress={() => onChange(!checked)}
-        className="min-h-12 flex-row items-center gap-3 py-2 focus:rounded-control focus:border-2 focus:border-brand-primary"
+        className="min-h-12 flex-row items-center gap-3 py-2 focus:rounded-control focus:border-2 focus:border-brand-navy"
       >
         <View
           accessible={false}

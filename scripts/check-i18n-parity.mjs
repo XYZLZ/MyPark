@@ -151,14 +151,17 @@ function placeholders(app, text) {
   return [...new Set(names)].sort();
 }
 
+const isCatalogKey = (key) => key.startsWith('errors.') || key.startsWith('validation.');
+const isSharedKey = (key) => SHARED_NAMESPACES.some((root) => key.startsWith(`${root}.`));
+
 /** Placeholder names must match across all four files, in each app's own brace style. */
-function checkPlaceholders(apps) {
+function checkPlaceholders(apps, isChecked = isCatalogKey) {
   const problems = [];
   const byKey = new Map();
   for (const [app, locales] of Object.entries(apps)) {
     for (const [file, messages] of Object.entries(locales)) {
       for (const [key, text] of flattenEntries(messages)) {
-        if (!key.startsWith('errors.') && !key.startsWith('validation.')) continue;
+        if (!isChecked(key)) continue;
         const names = placeholders(app, text);
         const label = `${app}/${file}`;
         if (names === null) {
@@ -183,9 +186,34 @@ function checkPlaceholders(apps) {
   return problems;
 }
 
+export const SHARED_NAMESPACES = ['lot', 'availability', 'spaces', 'tariff', 'money'];
+
+/** Keys in the shared namespaces that exist in one app's locale file but not the other's. */
+export function checkSharedNamespaces(dirs = LOCALE_DIRS) {
+  const [web, mobile] = dirs;
+  if (!web || !mobile || !existsSync(web.dir) || !existsSync(mobile.dir)) return [];
+  const webLocales = readLocales(web.dir);
+  const mobileLocales = readLocales(mobile.dir);
+  const problems = [];
+  for (const [file, webMessages] of Object.entries(webLocales)) {
+    const mobileMessages = mobileLocales[file];
+    if (!mobileMessages) continue;
+    for (const root of SHARED_NAMESPACES) {
+      const webKeys = scopedKeys(webMessages, root);
+      const mobileKeys = scopedKeys(mobileMessages, root);
+      const webOnly = [...webKeys].filter((key) => !mobileKeys.has(key)).sort();
+      const mobileOnly = [...mobileKeys].filter((key) => !webKeys.has(key)).sort();
+      if (webOnly.length) problems.push(`${file} ${root}.* only on web: ${webOnly.join(', ')}`);
+      if (mobileOnly.length) problems.push(`${file} ${root}.* only on mobile: ${mobileOnly.join(', ')}`);
+    }
+  }
+  problems.push(...checkPlaceholders({ web: webLocales, mobile: mobileLocales }, isSharedKey));
+  return problems;
+}
+
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isCli) {
-  const problems = [...checkParity(), ...checkCatalog()];
+  const problems = [...checkParity(), ...checkCatalog(), ...checkSharedNamespaces()];
   if (problems.length) {
     console.error(`i18n check failed:\n${problems.map((p) => `  - ${p}`).join('\n')}`);
     process.exit(1);

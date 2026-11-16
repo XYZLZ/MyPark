@@ -11,6 +11,7 @@
   "scripts": {
     "test:scripts": "node --test \"scripts/**/*.test.*\"",
     "gen:contracts": "npm run gen -w packages/contracts",
+    "check:layout": "node scripts/check-mobile-layout.mjs",
     "check:i18n": "node scripts/check-i18n-parity.mjs",
     "check:react": "node scripts/check-single-react.mjs",
     "check:tokens": "node scripts/check-design-tokens.mjs"

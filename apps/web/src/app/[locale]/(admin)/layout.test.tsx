@@ -27,7 +27,11 @@ describe('AdminLayout', () => {
     vi.mocked(requireAdmin).mockResolvedValue({ state: 'ready', user: adminFixture });
     renderWithProviders(await AdminLayout(props), { locale: 'en' });
 
-    expect(screen.getByText('admin content')).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveTextContent('admin content');
+    expect(screen.getByRole('link', { name: en.common.nav.admin })).toHaveAttribute('href', '/en/admin');
+    expect(screen.getByRole('link', { name: en.common.nav.simulator })).toHaveAttribute('href', '/en/admin/simulator');
+    expect(screen.queryByRole('link', { name: en.common.nav.vehicle })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.common.nav.logout })).toBeInTheDocument();
   });
 
   test('suspended renders the blocked panel with Log out, not children', async () => {

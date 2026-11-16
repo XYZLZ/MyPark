@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checks that the design tokens match in web and mobile and that the
-// documented contrast pairs still hold (spec §9.1 and §9.2).
+// documented contrast pairs still hold (spec §9.1, §9.1b and §9.2).
 //
 //   node scripts/check-design-tokens.mjs     (or: npm run check:tokens)
 //
@@ -47,6 +47,26 @@ export const REQUIRED_TOKENS = [
   'danger-tint',
   'disabled-bg',
   'disabled-ink',
+  'status-open',
+  'status-open-tint',
+  'status-full',
+  'status-full-tint',
+  'status-closed',
+  'status-closed-tint',
+  'status-stale',
+  'status-stale-tint',
+  'brand-navy',
+  'brand-navy-deep',
+  'brand-orange',
+  'brand-sky',
+  'brand-sky-strong',
+  'nav-active',
+  'on-navy-muted',
+  'space-occupied',
+  'space-occupied-tint',
+  'lot-concrete',
+  'lot-lawn',
+  'lot-tree',
   'radius-control',
   'radius-panel',
   'radius-plate',
@@ -77,6 +97,35 @@ export const MUST_PASS = [
   ['brand-primary', 'surface', 4.5],
   ['brand-primary', 'surface-sunken', 4.5],
   ['brand-primary', 'brand-primary-tint', 4.5],
+  // M2 status pairs (design 9.1)
+  ['status-open', 'status-open-tint', 4.5],
+  ['status-open', 'surface', 4.5],
+  ['status-open', 'surface-sunken', 4.5],
+  ['status-full', 'status-full-tint', 4.5],
+  ['status-full', 'surface', 4.5],
+  ['status-closed', 'status-closed-tint', 4.5],
+  ['status-closed', 'surface', 4.5],
+  ['status-closed', 'surface-sunken', 4.5],
+  ['status-stale', 'status-stale-tint', 4.5],
+  ['status-stale', 'surface', 4.5],
+  ['status-stale', 'surface-sunken', 4.5],
+  ['surface', 'status-open', 4.5],
+  ['surface', 'status-closed', 4.5],
+  // M2 brand pairs (design 9.1b, M2B-50)
+  ['brand-primary-contrast', 'brand-navy', 4.5],
+  ['brand-primary-contrast', 'brand-navy-deep', 4.5],
+  ['brand-primary-contrast', 'nav-active', 4.5],
+  ['brand-navy', 'brand-sky', 4.5],
+  ['brand-navy', 'brand-sky-strong', 4.5],
+  ['brand-navy', 'surface', 4.5],
+  ['on-navy-muted', 'brand-navy', 4.5],
+  ['on-navy-muted', 'brand-navy-deep', 4.5],
+  // Graphics on the lot map need 3:1
+  ['space-occupied', 'lot-concrete', 3],
+  ['space-occupied', 'surface', 3],
+  ['space-occupied', 'space-occupied-tint', 3],
+  ['status-open', 'lot-concrete', 3],
+  ['ink-muted', 'lot-concrete', 3],
 ];
 
 // Pairs the spec documents as failing. They must keep failing as text, which
@@ -84,6 +133,10 @@ export const MUST_PASS = [
 export const MUST_FAIL = [
   ['brand-primary-contrast', 'brand-action', 4.5],
   ['brand-accent', 'surface', 4.5],
+  // Decorative or never-text pairs (design 9.1b); max is the ratio they must stay under.
+  ['brand-orange', 'surface', 3],
+  ['status-open', 'brand-primary-strong', 3],
+  ['lot-tree', 'lot-lawn', 3],
 ];
 
 function stripComments(text) {

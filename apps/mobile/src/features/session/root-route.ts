@@ -28,6 +28,6 @@ export function rootHref(route: RootRoute): string | null {
     case 'gate':
       return '/legal-acceptance';
     case 'tabs':
-      return '/vehicles';
+      return '/home';
   }
 }

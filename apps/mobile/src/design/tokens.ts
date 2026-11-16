@@ -45,6 +45,46 @@ export const tokens = {
   disabledBg: '#e3e7ee',
   /* TODO(brand): replace with official Banreservas value */
   disabledInk: '#5f6c83',
+  /* TODO(brand): replace with official Banreservas value */
+  statusOpen: '#1e7a46',
+  /* TODO(brand): replace with official Banreservas value */
+  statusOpenTint: '#e7f4ec',
+  /* TODO(brand): replace with official Banreservas value */
+  statusFull: '#b3261e',
+  /* TODO(brand): replace with official Banreservas value */
+  statusFullTint: '#fbeae9',
+  /* TODO(brand): replace with official Banreservas value */
+  statusClosed: '#4f5d76',
+  /* TODO(brand): replace with official Banreservas value */
+  statusClosedTint: '#eceff4',
+  /* TODO(brand): replace with official Banreservas value */
+  statusStale: '#8a5300',
+  /* TODO(brand): replace with official Banreservas value */
+  statusStaleTint: '#fdf1dc',
+  /* TODO(brand): replace with official Banreservas value */
+  brandNavy: '#0b3a75',
+  /* TODO(brand): replace with official Banreservas value */
+  brandNavyDeep: '#072a57',
+  /* TODO(brand): replace with official Banreservas value */
+  brandOrange: '#f39a1e',
+  /* TODO(brand): replace with official Banreservas value */
+  brandSky: '#eef4fb',
+  /* TODO(brand): replace with official Banreservas value */
+  brandSkyStrong: '#dce9f8',
+  /* TODO(brand): replace with official Banreservas value */
+  navActive: '#1769c9',
+  /* TODO(brand): replace with official Banreservas value */
+  onNavyMuted: '#c6d4ea',
+  /* TODO(brand): replace with official Banreservas value */
+  spaceOccupied: '#c4610a',
+  /* TODO(brand): replace with official Banreservas value */
+  spaceOccupiedTint: '#fdeedd',
+  /* TODO(brand): replace with official Banreservas value */
+  lotConcrete: '#e3e8ef',
+  /* TODO(brand): replace with official Banreservas value */
+  lotLawn: '#d3e9c8',
+  /* TODO(brand): replace with official Banreservas value */
+  lotTree: '#5c9f62',
   radiusControl: '12px',
   radiusPanel: '16px',
   radiusPlate: '10px',

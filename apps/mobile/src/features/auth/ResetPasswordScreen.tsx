@@ -35,7 +35,7 @@ export function ResetPasswordScreen() {
   const { control, setFocus } = form;
 
   return (
-    <ScreenScroll>
+    <ScreenScroll header="stack">
       <AppText>{t('auth.reset.intro')}</AppText>
       {serverError ? <Banner tone="error">{serverError}</Banner> : null}
       <FormField

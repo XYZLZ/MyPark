@@ -1,10 +1,9 @@
-import { getTranslations } from 'next-intl/server';
 import type { ReactNode } from 'react';
-import { SiteHeader } from '@/components/SiteHeader';
+import { AppShell } from '@/components/shell/AppShell';
 import { LanguageSwitch } from '@/components/ui/LanguageSwitch';
 import { AccountBlocked } from '@/features/account/AccountBlocked';
 import { LegalGate } from '@/features/legal/LegalGate';
-import { DriverNav } from '@/features/session/DriverNav';
+import { LogoutButtons } from '@/features/profile/LogoutButtons';
 import { PersistedLanguageSwitch } from '@/features/session/PersistedLanguageSwitch';
 import { SessionUnavailable } from '@/features/session/SessionUnavailable';
 import { resolveLocale } from '@/i18n/routing';
@@ -15,43 +14,37 @@ import { requireDriver } from '@/lib/auth/guards';
 // `ready` returns before `children`, so a gated or blocked driver sees no app content.
 export default async function DriverLayout({ children, params }: { children: ReactNode; params: Promise<{ locale: string }> }) {
   const { locale } = await params;
-  const [gate, t] = await Promise.all([requireDriver(resolveLocale(locale)), getTranslations('common')]);
+  const gate = await requireDriver(resolveLocale(locale));
 
   // PATCH /v1/me is not legal-exempt, so behind the gate the language switch stays local.
-  const switcher = gate.state === 'ready' ? <PersistedLanguageSwitch /> : <LanguageSwitch />;
+  const switcher =
+    gate.state === 'ready' ? <PersistedLanguageSwitch appearance="on-light" /> : <LanguageSwitch appearance="on-light" />;
 
   let body: ReactNode;
   switch (gate.state) {
     case 'ready':
-      body = <main id="main" className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>;
+      body = <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</div>;
       break;
     case 'legal':
-      body = (
-        <main id="main" className="flex flex-1 flex-col">
-          <LegalGate legal={gate.legal} user={gate.user} />
-        </main>
-      );
+      body = <LegalGate legal={gate.legal} user={gate.user} />;
       break;
     case 'suspended':
-      body = (
-        <main id="main" className="flex flex-1 flex-col">
-          <AccountBlocked />
-        </main>
-      );
+      body = <AccountBlocked />;
       break;
     case 'unavailable':
-      body = (
-        <main id="main" className="flex flex-1 flex-col">
-          <SessionUnavailable />
-        </main>
-      );
+      body = <SessionUnavailable />;
       break;
   }
 
+  // A gated or blocked user sees the guest items only; the panels carry their own log out.
   return (
-    <>
-      <SiteHeader appName={t('appName')} nav={gate.state === 'ready' ? <DriverNav /> : undefined} languageSwitch={switcher} />
+    <AppShell
+      variant={gate.state === 'ready' ? 'driver' : 'guest'}
+      greetingName={gate.state === 'ready' ? gate.user.first_name : undefined}
+      languageSwitch={switcher}
+      sidebarFooter={gate.state === 'ready' ? <LogoutButtons scope="this" appearance="sidebar" /> : null}
+    >
       {body}
-    </>
+    </AppShell>
   );
 }

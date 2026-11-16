@@ -21,6 +21,10 @@ test('each route has a landing href and restoring has none', () => {
   expect(rootHref('restore-failed')).toBe('/restore-failed');
   expect(rootHref('auth')).toBe('/welcome');
   expect(rootHref('gate')).toBe('/legal-acceptance');
-  expect(rootHref('tabs')).toBe('/vehicles');
+  expect(rootHref('tabs')).toBe('/home'); // Inicio is the landing (M2B-48)
   expect(rootHref('restoring')).toBeNull();
+});
+
+test('a signed-in driver lands on Inicio', () => {
+  expect(rootHref(selectRootRoute('signedIn', false))).toBe('/home');
 });

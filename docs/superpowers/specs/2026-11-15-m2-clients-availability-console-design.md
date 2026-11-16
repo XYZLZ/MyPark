@@ -462,13 +462,13 @@ The map is drawn as an illustrated top-down lot (concrete, lawn and trees from t
 | Namespace | App | Example keys |
 |---|---|---|
 | `lot` | both | `title`, `address`, `openInMaps`, `opensInNewTab`, `hours.alwaysOpen`, `hours.varies`, `error.title`, `error.retry` |
-| `availability` | both | `of`, `outOfService`, `status.open`, `status.full`, `status.closed`, `live`, `lastChange`, `stale`, `reconnecting`, `connecting`, `unavailable`, `announce.count`, `announce.status` |
+| `availability` | both | `of`, `outOfService`, `status.open`, `status.full`, `status.closed`, `live`, `lastChange`, `stale`, `reconnecting`, `connecting`, `unavailable`, `announce.count`, `announce.open`, `announce.full`, `announce.closed`, `announce.live`, `announce.stale` |
 | `spaces` | both | `legend.free`, `legend.occupied`, `legend.outOfService`, `summary`, `note`, `updating`, `listFree` |
 | `tariff` | both | `title`, `firstHour`, `additionalHour`, `dailyCap`, `grace`, `postPayment`, `lostTicket` |
 | `money` | both | `dop` (fallback, M2B-26) |
-| `nav` | web | `home` (Inicio), `vehicle` (Mi Vehículo), `profile`, `logout`, `simulator` (Simulador, admin only) |
+| `common.nav` | web | `home` (Inicio), `vehicle` (Mi Vehículo), `profile`, `admin`, `logout`, `simulator` (Simulador, admin only), `menu`. Extends the existing namespace instead of a new `nav` (preflight PF8) |
 | `simulator` | web | `title`, `status.*`, `scenario.idle`, `scenario.weekday`, `scenario.weekend_peak`, `scenario.fill_to_full`, `scenario.sensor_drift`, `start.*`, `stop.*`, `inject.*`, `held.*`, `fault.*`, `fault.kind.*`, `log.*`, `notConfigured`, `unreachable` |
-| `tabs` | mobile | `home` (Inicio), `vehicles`, `profile` |
+| `nav` | mobile | `home` (Inicio), `vehicles`, `profile`. Extends the existing namespace instead of a new `tabs` (PF8) |
 | `spaces` (additions) | both | `viewFull` (Ver mapa completo), `previewCount` ("40 de 280 espacios"), `zoomIn`, `zoomOut`; stat tile labels reuse `availability.*` and `spaces.legend.*` |
 
 `errors.simulator.*`, `errors.lot.*` and `errors.gate.*` already exist in both apps. Copy examples:
@@ -477,7 +477,7 @@ The map is drawn as an illustrated top-down lot (concrete, lawn and trees from t
 |---|---|---|
 | `availability.of` | de {total} espacios | of {total} spaces |
 | `availability.stale` | Desactualizado — última actualización {time} | Stale — last updated {time} |
-| `spaces.summary` | Los sensores reportan {free} libres, {occupied} ocupados y {oos} fuera de servicio. | Sensors report {free} free, {occupied} occupied and {oos} out of service. |
+| `spaces.summary` | Sensores — libres: {free}, ocupados: {occupied}, fuera de servicio: {oos}. | Sensors — free: {free}, occupied: {occupied}, out of service: {oos}. |
 | `spaces.note` | El mapa muestra lo que leen los sensores. | The map shows sensor readings. |
 | `simulator.notConfigured` | El simulador no está configurado en este servidor. | The simulator is not configured on this server. |
 

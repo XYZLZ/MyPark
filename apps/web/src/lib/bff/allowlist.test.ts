@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { ARGON2_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, matchBffRoute } from './allowlist';
 
 const ID = '7d8e9f0a-1b2c-4d3e-8f4a-5b6c7d8e9f0a';
+const LOT = '0b6f6f4e-8f2e-4c8e-9d63-5f1f0a1b2c3d';
 
 // Spec section 5.5, minus the two dedicated handlers (login, session/end).
 const rows: Array<[string, string[], string, 'public' | 'bearer']> = [
@@ -56,6 +57,30 @@ describe('matchBffRoute', () => {
     expect(matchBffRoute('GET', ['vehicles', `${ID}%2F..`])).toBeNull();
     expect(matchBffRoute('GET', ['vehicles', ID, 'extra'])).toBeNull();
     expect(matchBffRoute('GET', ['vehicles', ''])).toBeNull();
+  });
+
+  test('public lot GETs are allowed without a bearer', () => {
+    for (const leaf of ['availability', 'spaces']) {
+      expect(matchBffRoute('GET', ['lots', LOT, leaf])).toEqual({
+        upstreamPath: `/v1/lots/${LOT}/${leaf}`,
+        auth: 'public',
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        after: 'none',
+        signalUnconfirmed: false,
+      });
+    }
+  });
+
+  test('every other lot path stays denied', () => {
+    expect(matchBffRoute('GET', ['lots', LOT, 'tariff'])).toBeNull();
+    expect(matchBffRoute('POST', ['lots', LOT, 'availability'])).toBeNull();
+    expect(matchBffRoute('GET', ['lots', 'zona-colonial', 'availability'])).toBeNull();
+    expect(matchBffRoute('GET', ['lots', LOT, 'availability', 'stream'])).toBeNull();
+    expect(matchBffRoute('GET', ['lots'])).toBeNull();
+    expect(matchBffRoute('GET', ['lots', LOT])).toBeNull();
+    expect(matchBffRoute('GET', ['lots', '..', 'availability'])).toBeNull();
+    expect(matchBffRoute('GET', ['lots', `${LOT}%2F..`, 'spaces'])).toBeNull();
+    expect(matchBffRoute('GET', ['lots', LOT, 'Spaces'])).toBeNull();
   });
 
   test('uses 20 s for argon2 routes and 5 s otherwise', () => {

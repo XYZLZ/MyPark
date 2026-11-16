@@ -44,7 +44,7 @@ export function ForgotPasswordScreen() {
   });
 
   return (
-    <ScreenScroll>
+    <ScreenScroll header="stack">
       <AppText>{t('auth.forgot.intro')}</AppText>
       {sent ? <Banner tone="info">{t('auth.forgot.sent')}</Banner> : null}
       {serverError ? <Banner tone="error">{serverError}</Banner> : null}

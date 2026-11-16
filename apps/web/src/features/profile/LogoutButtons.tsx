@@ -4,6 +4,8 @@ import { ApiError } from '@mypark/contracts';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRef, useState } from 'react';
 import { Banner } from '@/components/ui/Banner';
+import { NavIcon } from '@/components/shell/NavIcon';
+import { SIDEBAR_ITEM_CLASS } from '@/components/shell/sidebar-item';
 import { Button } from '@/components/ui/Button';
 import { apiFetch } from '@/lib/api/client';
 import { LOGOUT_ALL_FAILED_NOTICE, LOGOUT_ALL_UNCONFIRMED } from '@/lib/bff/logout-all';
@@ -29,7 +31,7 @@ function parseLogout(body: unknown, status?: number): LogoutResult {
   return status !== undefined && status >= 200 && status < 300 ? 'confirmed' : 'unconfirmed';
 }
 
-export function LogoutButtons({ scope }: { scope: 'this' | 'both' }) {
+export function LogoutButtons({ scope, appearance = 'button' }: { scope: 'this' | 'both'; appearance?: 'button' | 'sidebar' }) {
   const t = useTranslations();
   const locale = useLocale();
   const [busy, setBusy] = useState(false);
@@ -57,9 +59,16 @@ export function LogoutButtons({ scope }: { scope: 'this' | 'both' }) {
   return (
     <>
       {failure ? <Banner tone="error">{failure}</Banner> : null}
-      <Button variant="quiet" loading={busy} loadingLabel={t('session.loggingOut')} onClick={() => void logout()}>
-        {scope === 'both' ? t('session.logoutAll') : t('session.logout')}
-      </Button>
+      {appearance === 'sidebar' ? (
+        <button type="button" aria-disabled={busy} onClick={() => void logout()} className={`${SIDEBAR_ITEM_CLASS} aria-disabled:opacity-70`}>
+          <NavIcon name="logout" />
+          {busy ? t('session.loggingOut') : t('common.nav.logout')}
+        </button>
+      ) : (
+        <Button variant="quiet" loading={busy} loadingLabel={t('session.loggingOut')} onClick={() => void logout()}>
+          {scope === 'both' ? t('session.logoutAll') : t('session.logout')}
+        </Button>
+      )}
     </>
   );
 }

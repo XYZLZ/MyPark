@@ -7,14 +7,21 @@
       "es-DO": "Español",
       "en": "English"
     },
+    "location": "Parqueo Banreservas · Zona Colonial, Santo Domingo",
+    "greeting": "Hola, {name}",
     "nav": {
       "label": "Navegación principal",
-      "vehicles": "Vehículos",
-      "profile": "Perfil"
+      "home": "Inicio",
+      "vehicle": "Mi Vehículo",
+      "profile": "Perfil",
+      "admin": "Administración",
+      "simulator": "Simulador",
+      "logout": "Cerrar sesión",
+      "menu": "Menú"
     }
   },
   "home": {
-    "title": "Parqueo en la Zona Colonial",
+    "mapLabel": "Mapa del parqueo, desplazable",
     "subtitle": "Crea tu cuenta y registra tus vehículos para reservar un espacio.",
     "signedInSubtitle": "Administra los vehículos de tu cuenta.",
     "logIn": "Iniciar sesión",
@@ -183,6 +190,119 @@
     "greeting": "Hola, {name}.",
     "body": "Estás en el área de administración de MyPark."
   },
+  "simulator": {
+    "title": "Consola del simulador",
+    "refreshNote": "Se actualiza cada 2 s",
+    "adminLink": "Consola del simulador",
+    "notConfigured": "El simulador no está configurado en este servidor.",
+    "unreachable": "No pudimos comunicarnos con el simulador. Seguimos intentando.",
+    "status": {
+      "title": "Estado",
+      "running": "En ejecución",
+      "idle": "Inactivo",
+      "draining": "Vaciando",
+      "scenario": "Escenario",
+      "speed": "Velocidad",
+      "seed": "Semilla",
+      "copySeed": "Copiar semilla",
+      "copied": "Copiada",
+      "virtualTime": "Hora virtual",
+      "carsInside": "Carros dentro",
+      "startedAt": "Iniciado",
+      "reachedFull": "El parqueo llegó a estar lleno",
+      "none": "Ninguno",
+      "loading": "Cargando el estado…",
+      "copyFailed": "No se pudo copiar la semilla."
+    },
+    "scenario": {
+      "idle": "Inactivo",
+      "weekday": "Día laborable",
+      "weekend_peak": "Pico de fin de semana",
+      "fill_to_full": "Llenar hasta completo",
+      "sensor_drift": "Deriva de sensores"
+    },
+    "start": {
+      "title": "Iniciar escenario",
+      "scenario": "Escenario",
+      "speed": "Velocidad",
+      "speedRange": "(1–120)",
+      "seed": "Semilla",
+      "startAt": "Hora de inicio",
+      "optional": "(opcional)",
+      "seedPlaceholder": "Aleatoria",
+      "startAtHint": "Hora de Santo Domingo (−04:00)",
+      "submit": "Iniciar",
+      "disabledRunning": "Deshabilitado: hay un escenario en ejecución.",
+      "disabledDraining": "Deshabilitado: el simulador se está vaciando.",
+      "disabledLoading": "Deshabilitado: aún no se conoce el estado."
+    },
+    "stop": {
+      "title": "Detener",
+      "now": "Detener ahora",
+      "drain": "Detener cuando salgan los carros",
+      "drainingHint": "Mientras se vacía, solo queda “Detener ahora”.",
+      "notRunning": "No hay ningún escenario en ejecución.",
+      "unknown": "Aún no se conoce el estado."
+    },
+    "forbidden": "No tienes permiso para usar la consola del simulador.",
+    "serverError": "El simulador informó un error. Seguimos intentando.",
+    "inject": {
+      "title": "Agregar carro",
+      "credential": "Credencial",
+      "ticket": "Ticket",
+      "employeeCard": "Tarjeta de empleado",
+      "card": "Número de tarjeta",
+      "cardPlaceholder": "EMP-001",
+      "hold": "Mantener dentro hasta liberarlo",
+      "dwell": "Minutos dentro",
+      "dwellRange": "(1–600)",
+      "dwellPlaceholder": "Al azar",
+      "submit": "Agregar carro",
+      "added": "Carro {id} agregado."
+    },
+    "held": {
+      "title": "Carros retenidos",
+      "empty": "No hay carros retenidos.",
+      "lostTicket": "Ticket perdido",
+      "lostTicketFor": "Ticket perdido de {id}",
+      "leave": "Salir",
+      "leaveCar": "Salir {id}",
+      "other": "Otro carro",
+      "otherHint": "(id)",
+      "otherPlaceholder": "car-000123",
+      "leaveOther": "Salir"
+    },
+    "fault": {
+      "title": "Falla de sensor",
+      "code": "Espacio",
+      "fault": "Falla",
+      "submit": "Aplicar",
+      "applied": "Falla aplicada en {code}",
+      "kind": {
+        "stuck_occupied": "Atascado ocupado",
+        "stuck_free": "Atascado libre",
+        "silent": "Sin señal",
+        "none": "Quitar falla"
+      }
+    },
+    "log": {
+      "title": "Registro de eventos",
+      "caption": "Últimos 500 eventos, el más reciente arriba. Hora de Santo Domingo.",
+      "seq": "#",
+      "time": "Hora",
+      "device": "Dispositivo",
+      "type": "Tipo",
+      "result": "Resultado",
+      "reason": "Motivo",
+      "car": "Carro",
+      "denied": "Denegado",
+      "empty": "Aún no hay eventos. Inicia un escenario.",
+      "gap": "Se omitieron algunos eventos ({from}–{to}).",
+      "run": "Nueva ejecución · {scenario} · {time}",
+      "restarted": "El simulador se reinició.",
+      "newEvents": "{count, plural, one {# evento nuevo} other {# eventos nuevos}}"
+    }
+  },
   "acceptInvitation": {
     "title": "Activa tu cuenta de administración",
     "intro": "Ingresa el código de tu invitación y elige una contraseña.",
@@ -300,5 +420,88 @@
     "pattern": "El formato no es válido.",
     "integer": "Escribe un número entero.",
     "unknown": "Revisa este campo."
+  },
+  "lot": {
+    "title": "Parqueo Banreservas",
+    "info": "Información del parqueo",
+    "address": "Dirección",
+    "location": "Ubicación",
+    "openInMaps": "Abrir en Maps",
+    "opensInNewTab": "(se abre en una pestaña nueva)",
+    "hours": {
+      "label": "Horario",
+      "alwaysOpen": "Abierto 24 horas",
+      "varies": "El horario varía"
+    },
+    "hero": {
+      "title": "Consulta la disponibilidad del parqueo en tiempo real",
+      "subtitle": "Mira cuántos espacios hay libres antes de llegar.",
+      "photoAlt": "Fachada del parqueo Banreservas en la Zona Colonial"
+    },
+    "error": {
+      "title": "La disponibilidad no está cargando ahora",
+      "retry": "Reintentar"
+    },
+    "unavailable": {
+      "closedBody": "El parqueo no recibe vehículos ahora."
+    }
+  },
+  "availability": {
+    "title": "Disponibilidad",
+    "total": "Espacios totales",
+    "available": "Disponibles",
+    "availableLong": "Espacios disponibles",
+    "occupied": "Ocupados",
+    "of": "de {total} espacios",
+    "outOfService": "{count} fuera de servicio",
+    "status": {
+      "open": "Abierto",
+      "full": "Lleno",
+      "closed": "Cerrado"
+    },
+    "live": "En tiempo real",
+    "lastChange": "Último cambio {time}",
+    "stale": "Desactualizado — última actualización {time}",
+    "reconnecting": "Reconectando…",
+    "connecting": "Conectando…",
+    "unavailable": "Actualizaciones en vivo no disponibles",
+    "unavailableAt": "Actualizaciones en vivo no disponibles · datos de las {time}",
+    "announce": {
+      "count": "Espacios disponibles: {count} de {total}.",
+      "open": "El parqueo está abierto.",
+      "full": "El parqueo está lleno.",
+      "closed": "El parqueo está cerrado.",
+      "live": "Actualizaciones en tiempo real activas.",
+      "stale": "Los datos están desactualizados. Última actualización {time}."
+    }
+  },
+  "spaces": {
+    "title": "Mapa de espacios",
+    "sensorsLive": "Sensores en vivo",
+    "legend": {
+      "free": "Disponible",
+      "occupied": "Ocupado",
+      "outOfService": "Fuera de servicio"
+    },
+    "summary": "Sensores — libres: {free}, ocupados: {occupied}, fuera de servicio: {oos}.",
+    "note": "El mapa muestra lo que leen los sensores.",
+    "updating": "Actualizando el mapa…",
+    "listFree": "Ver espacios libres",
+    "viewFull": "Ver mapa completo",
+    "previewCount": "{shown} de {total} espacios",
+    "zoomIn": "Acercar mapa",
+    "zoomOut": "Alejar mapa"
+  },
+  "tariff": {
+    "title": "Tarifas",
+    "firstHour": "Primera hora",
+    "additionalHour": "Hora adicional",
+    "dailyCap": "Máximo por día",
+    "grace": "Salida sin costo",
+    "postPayment": "Salir tras pagar",
+    "lostTicket": "Ticket perdido"
+  },
+  "money": {
+    "dop": "RD${amount}"
   }
 }

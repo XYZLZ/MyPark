@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { Field } from './Field';
+import { Field, inputClass } from './Field';
 
 function Sample({ invalid, message }: { invalid: boolean; message?: string }) {
   return (
@@ -52,5 +52,13 @@ describe('Field', () => {
     );
 
     expect(document.querySelector('input')?.getAttribute('aria-describedby')).toMatch(/^extra /);
+  });
+});
+
+describe('inputClass', () => {
+  test('focus border and tint ring are navy, like the buttons', () => {
+    expect(inputClass).toContain('focus:border-brand-navy');
+    expect(inputClass).toContain('var(--color-brand-sky-strong)');
+    expect(inputClass).not.toContain('brand-primary');
   });
 });

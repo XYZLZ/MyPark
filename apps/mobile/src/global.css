@@ -49,6 +49,46 @@
   --color-disabled-bg: #e3e7ee;
   /* TODO(brand): replace with official Banreservas value */
   --color-disabled-ink: #5f6c83;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-open: #1e7a46;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-open-tint: #e7f4ec;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-full: #b3261e;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-full-tint: #fbeae9;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-closed: #4f5d76;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-closed-tint: #eceff4;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-stale: #8a5300;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-status-stale-tint: #fdf1dc;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-navy: #0b3a75;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-navy-deep: #072a57;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-orange: #f39a1e;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-sky: #eef4fb;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-brand-sky-strong: #dce9f8;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-nav-active: #1769c9;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-on-navy-muted: #c6d4ea;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-space-occupied: #c4610a;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-space-occupied-tint: #fdeedd;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-lot-concrete: #e3e8ef;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-lot-lawn: #d3e9c8;
+  /* TODO(brand): replace with official Banreservas value */
+  --color-lot-tree: #5c9f62;
   /* Barlow: one family per weight on native (spec §9.4). Names match @expo-google-fonts exports. */
   --font-barlow-regular: Barlow_400Regular;
   --font-barlow-medium: Barlow_500Medium;
