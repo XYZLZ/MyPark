@@ -3,7 +3,7 @@ import { availabilityReducedFixture, errorBody } from '@mypark/contracts/fixture
 
 import { controllableStream } from '@/testing/stream';
 
-import { openStream, type StreamFetch } from './sse';
+import { openStream, type StreamFetch, type StreamResponse } from './sse';
 
 const URL = 'http://api.test/v1/lots/L1/availability/stream?include=spaces';
 
@@ -100,4 +100,26 @@ test('the reader lock is released when the stream ends', async () => {
   });
   await expect(openStream(URL, { signal: new AbortController().signal, onFrame: () => {}, fetchImpl })).resolves.toEqual({ kind: 'ended' });
   expect(releaseLock).toHaveBeenCalledTimes(1);
+});
+
+test('an abort while the fetch is pending still cancels the stream it returns', async () => {
+  // As on a real stream, a cancelled reader reads done; until then a read never settles.
+  let cancelled = false;
+  const cancel = jest.fn(async () => {
+    cancelled = true;
+  });
+  let respond: (res: StreamResponse) => void = () => {};
+  // A transport that ignores the signal and answers 200 after the abort.
+  const fetchImpl: StreamFetch = () => new Promise((resolve) => (respond = resolve));
+  const controller = new AbortController();
+  const done = openStream(URL, { signal: controller.signal, onFrame: () => {}, fetchImpl });
+  controller.abort();
+  respond({
+    status: 200,
+    headers: { get: () => 'text/event-stream' },
+    body: { getReader: () => ({ read: () => (cancelled ? Promise.resolve({ done: true }) : new Promise(() => {})), cancel, releaseLock: () => {} }) },
+    text: async () => '',
+  });
+  await expect(done).resolves.toEqual({ kind: 'aborted' });
+  expect(cancel).toHaveBeenCalledTimes(1);
 });

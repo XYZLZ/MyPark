@@ -195,7 +195,7 @@ test('a late openStream result after a silence abort is ignored', async () => {
   expect(store.get().status).toBe('stale');
 });
 
-test('background aborts the stream; foreground reconnects as connecting until its first frame', async () => {
+test('background aborts the stream; foreground reconnects and stays stale until its first frame', async () => {
   const { store } = acquire();
   stream.push(sseText('availability', v(121)) + sseText('spaces', spacesFullEventFixture));
   await advance(0);
@@ -207,7 +207,7 @@ test('background aborts the stream; foreground reconnects as connecting until it
 
   setAppState('active');
   expect(calls()).toBe(2);
-  expect(store.get()).toMatchObject({ status: 'connecting', spacesReady: false });
+  expect(store.get()).toMatchObject({ status: 'stale', spacesReady: false });
   stream.push(sseText('availability', v(130, 190)) + sseText('spaces', spacesFullEventFixture));
   await advance(0);
   expect(store.get()).toMatchObject({ status: 'live', spacesReady: true });

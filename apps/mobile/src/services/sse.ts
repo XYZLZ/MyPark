@@ -83,6 +83,8 @@ export async function openStream(
     // Ends a pending read even if the native abort does not reach the body.
     const cancel = () => void reader.cancel().catch(noop);
     signal.addEventListener('abort', cancel, { once: true });
+    // An abort that landed while the fetch was pending fires no event any more.
+    if (signal.aborted) cancel();
     try {
       return await readFrames(reader, signal, onFrame);
     } finally {
