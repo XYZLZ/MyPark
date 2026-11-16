@@ -15,11 +15,15 @@ export function CountCard({ figures, status }: { figures: AvailabilityFigures; s
   const { t } = useTranslation();
   const closed = status === 'closed';
   const capacity = t('availability.of', { total: figures.effectiveCapacity });
-  const detail = figures.outOfService > 0 ? `${capacity} · ${t('availability.outOfService', { count: figures.outOfService })}` : capacity;
+  const outOfService = t('availability.outOfService', { count: figures.outOfService });
+  const detail = figures.outOfService > 0 ? t('home.detailOos', { capacity, outOfService }) : capacity;
   const statusText = t(`availability.status.${status}`);
+  const counts = { count: figures.available, total: figures.effectiveCapacity, status: statusText };
   const label = closed
-    ? `${t('availability.availableLong')}: ${statusText}`
-    : `${t('availability.announce.count', { count: figures.available, total: figures.effectiveCapacity })} ${statusText}`;
+    ? t('home.cardLabelClosed', { status: statusText, body: t('lot.unavailable.closedBody') })
+    : figures.outOfService > 0
+      ? t('home.cardLabelOos', { ...counts, outOfService })
+      : t('home.cardLabel', counts);
 
   return (
     <View accessible accessibilityLabel={label} className="flex-row items-start gap-3">

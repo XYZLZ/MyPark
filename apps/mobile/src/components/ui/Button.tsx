@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, Pressable } from 'react-native';
 
 import { tokens } from '@/design/tokens';
@@ -11,6 +11,7 @@ import { AppText } from './AppText';
 const SURFACE_CLASS = {
   primary:
     'bg-brand-navy active:bg-brand-navy-deep focus:border-2 focus:border-surface focus:outline-2 focus:outline-brand-navy',
+  outline: 'bg-surface border-2 border-brand-navy active:bg-brand-primary-tint focus:border-4',
   onDark: 'bg-transparent border-2 border-brand-primary-contrast active:bg-white/10 focus:border-4',
   quiet: 'bg-transparent active:bg-brand-primary-tint focus:border-2 focus:border-brand-navy',
   danger: 'bg-danger active:opacity-90 focus:border-2 focus:border-brand-navy',
@@ -18,6 +19,7 @@ const SURFACE_CLASS = {
 
 const TEXT_CLASS = {
   primary: 'text-brand-primary-contrast',
+  outline: 'text-brand-navy',
   onDark: 'text-brand-primary-contrast',
   quiet: 'text-brand-primary',
   danger: 'text-brand-primary-contrast',
@@ -26,6 +28,7 @@ const TEXT_CLASS = {
 // Web disabled is a flat fill; onDark keeps its outline, in the disabled ink color.
 const DISABLED_SURFACE = {
   primary: 'bg-disabled-bg',
+  outline: 'bg-disabled-bg border-2 border-disabled-ink',
   onDark: 'bg-disabled-bg border-2 border-disabled-ink',
   quiet: 'bg-disabled-bg',
   danger: 'bg-disabled-bg',
@@ -35,6 +38,7 @@ const DISABLED_SURFACE = {
 // for non-style props; a literal token value works too.
 const SPINNER_COLOR = {
   primary: tokens.brandPrimaryContrast,
+  outline: tokens.brandNavy,
   onDark: tokens.brandPrimaryContrast,
   quiet: tokens.brandPrimary,
   danger: tokens.brandPrimaryContrast,
@@ -51,9 +55,14 @@ type Props = {
   loading?: boolean;
   disabled?: boolean;
   onPress?: () => void;
+  /** 'link' for a button that leaves the app (Maps). */
+  role?: 'button' | 'link';
+  hint?: string;
+  /** Decorative; drawn before the label. */
+  icon?: ReactNode;
 };
 
-export function Button({ variant, label, loading = false, disabled = false, onPress }: Props) {
+export function Button({ variant, label, loading = false, disabled = false, onPress, role = 'button', hint, icon }: Props) {
   const [scale] = useState(() => new Animated.Value(1));
   const reduceMotion = useRef(false);
 
@@ -85,8 +94,9 @@ export function Button({ variant, label, loading = false, disabled = false, onPr
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
       <Pressable
-        accessibilityRole="button"
+        accessibilityRole={role}
         accessibilityLabel={label}
+        accessibilityHint={hint}
         accessibilityState={{ disabled, busy: loading }}
         disabled={disabled}
         onPress={() => {
@@ -96,6 +106,7 @@ export function Button({ variant, label, loading = false, disabled = false, onPr
         onPressOut={() => animateTo(1)}
         className={`min-h-12 flex-row items-center justify-center gap-2 rounded-full px-6 py-3 ${surface}`}
       >
+        {icon}
         {loading ? <ActivityIndicator testID="button-spinner" color={SPINNER_COLOR[variant]} /> : null}
         <AppText weight="semibold" className={textColor}>
           {label}

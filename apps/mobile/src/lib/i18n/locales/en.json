@@ -13,7 +13,12 @@
   },
   "home": {
     "location": "Colonial Zone, Santo Domingo",
-    "openInMapsHint": "Opens Maps"
+    "openInMapsHint": "Opens Maps",
+    "cardLabel": "Available spaces: {{count}} of {{total}}. {{status}}",
+    "cardLabelOos": "Available spaces: {{count}} of {{total}}, {{outOfService}}. {{status}}",
+    "cardLabelClosed": "Available spaces: {{status}}. {{body}}",
+    "detailOos": "{{capacity}} · {{outOfService}}",
+    "rate": "{{label}}: {{value}}"
   },
   "errors": {
     "fallback": "Something went wrong. Please try again.",

@@ -13,10 +13,10 @@ import { useLotData } from './useLotData';
 
 /**
  * The live block (design §4.3). Order: count card, the caller's actions right under it, the map slot (Task 12), then the lot
- * info and the rates. The figures come only from availability, never from the map (M2B-15). Without figures it shows a
+ * info and the rates. The figures come only from availability, never from the map (M2B-15). `cardClassName` lets the screen overlap the count card onto the banner above it. Without figures it shows a
  * skeleton while connecting and the error panel when nothing can be loaded; the actions stay on screen either way.
  */
-export function LotLive({ actions }: { actions?: ReactNode }) {
+export function LotLive({ actions, cardClassName = '' }: { actions?: ReactNode; cardClassName?: string }) {
   const { lot, availability, tariff, connection, loadError, retry, snapshotAt } = useLotData();
   const figures = availability ? availabilityFigures(availability) : null;
   useAnnouncer(
@@ -35,7 +35,7 @@ export function LotLive({ actions }: { actions?: ReactNode }) {
 
   return (
     <>
-      <View className="-mt-14 gap-3 rounded-panel border border-hairline bg-surface p-4">
+      <View className={`gap-3 rounded-panel border border-hairline bg-surface p-4 ${cardClassName}`}>
         <CountCard figures={figures} status={availability.status} />
         <View className="border-t border-hairline pt-3">
           <FreshnessLine

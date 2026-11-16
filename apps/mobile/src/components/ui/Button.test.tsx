@@ -118,3 +118,34 @@ test.each([
   await render(<Button variant={variant} label="Save" loading onPress={jest.fn()} />);
   expect(screen.getByTestId('button-spinner').props.color).toBe(color);
 });
+
+describe('outline variant', () => {
+  test('is a navy outline on the surface, with a 4 dp focus border', async () => {
+    await render(<Button variant="outline" label="Save" onPress={jest.fn()} />);
+    const className = screen.getByRole('button', { name: 'Save' }).props.className as string;
+    for (const part of ['bg-surface', 'border-2', 'border-brand-navy', 'active:bg-brand-primary-tint', 'focus:border-4']) {
+      expect(className).toContain(part);
+    }
+    expect(screen.getByText('Save').props.className).toContain('text-brand-navy');
+  });
+
+  test('disabled uses the flat disabled fill with its outline', async () => {
+    await render(<Button variant="outline" label="Save" disabled onPress={jest.fn()} />);
+    const className = screen.getByRole('button', { name: 'Save' }).props.className as string;
+    expect(className).toContain('bg-disabled-bg');
+    expect(className).toContain('border-disabled-ink');
+    expect(className).not.toContain('border-brand-navy');
+    expect(screen.getByText('Save').props.className).toContain('text-disabled-ink');
+  });
+
+  test('the spinner is navy', async () => {
+    await render(<Button variant="outline" label="Save" loading onPress={jest.fn()} />);
+    expect(screen.getByTestId('button-spinner').props.color).toBe(tokens.brandNavy);
+  });
+
+  test('can be a link with a hint and an icon', async () => {
+    await render(<Button variant="outline" label="Maps" role="link" hint="Opens Maps" icon={<></>} onPress={jest.fn()} />);
+    const link = screen.getByRole('link', { name: 'Maps' });
+    expect(link.props.accessibilityHint).toBe('Opens Maps');
+  });
+});

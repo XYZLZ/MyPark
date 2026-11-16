@@ -39,6 +39,17 @@ test.each(sizes)('Welcome and Inicio at %s keep the 16 dp gutter and never scrol
   expect(countHorizontalScrolls()).toBe(0);
 });
 
+test('the scroll adds no inset of its own: all padding is explicit (no iOS double top inset)', async () => {
+  await renderAtSize(<LotHomeScreen />, 'small', { language: 'es-DO' });
+  expect(screen.getByTestId('screen-scroll').props.contentInsetAdjustmentBehavior).toBe('never');
+});
+
+test('Inicio shows the hero with the place and no tagline', async () => {
+  await renderAtSize(<LotHomeScreen />, 'small', { language: 'es-DO' });
+  expect(screen.getByText('Zona Colonial, Santo Domingo')).toBeOnTheScreen();
+  expect(screen.queryByText('Mira cuántos espacios hay libres antes de llegar.')).toBeNull();
+});
+
 const headerPadding = () => {
   const style = StyleSheet.flatten(screen.getByTestId('wavy-header').props.style) ?? {};
   return { top: style.paddingTop, left: style.paddingLeft, right: style.paddingRight };

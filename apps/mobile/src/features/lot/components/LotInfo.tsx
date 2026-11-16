@@ -1,8 +1,9 @@
 import type { Lot } from '@mypark/contracts';
 import { useTranslation } from 'react-i18next';
-import { Linking, Pressable, View } from 'react-native';
+import { Linking, View } from 'react-native';
 
 import { AppText } from '@/components/ui/AppText';
+import { Button } from '@/components/ui/Button';
 
 /** `map_url` comes from the API; only an absolute http(s) URL becomes a link. */
 const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
@@ -28,18 +29,24 @@ export function LotInfo({ lot }: { lot: Lot }) {
         <AppText>{lot.opening_hours.always_open ? t('lot.hours.alwaysOpen') : t('lot.hours.varies')}</AppText>
       </View>
       {isWebUrl(lot.map_url) ? (
-        <Pressable
-          accessibilityRole="link"
-          accessibilityLabel={t('lot.openInMaps')}
-          accessibilityHint={t('home.openInMapsHint')}
+        <Button
+          variant="outline"
+          role="link"
+          label={t('lot.openInMaps')}
+          hint={t('home.openInMapsHint')}
+          icon={<PinMark />}
           onPress={() => void Linking.openURL(lot.map_url).catch(() => {})}
-          className="min-h-12 justify-center self-start focus:border-2 focus:border-brand-navy"
-        >
-          <AppText weight="semibold" className="text-brand-primary underline">
-            {t('lot.openInMaps')}
-          </AppText>
-        </Pressable>
+        />
       ) : null}
+    </View>
+  );
+}
+
+/** A small map pin drawn with Views. Decoration. */
+function PinMark() {
+  return (
+    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" className="h-5 w-5 items-center justify-center rounded-full border-2 border-brand-navy">
+      <View className="h-1.5 w-1.5 rounded-full bg-brand-navy" />
     </View>
   );
 }

@@ -40,10 +40,11 @@ export function WelcomeScreen() {
       {notice === 'logout_all_failed' ? <Banner tone="info">{t('session.logoutAllFailed')}</Banner> : null}
       <HeroPlaceholder tagline />
       <LotLive
+        cardClassName="-mt-14"
         actions={
           <>
             <Button variant="primary" label={t('auth.welcome.logIn')} onPress={() => router.push('/login')} />
-            <Button variant="quiet" label={t('auth.welcome.signUp')} onPress={() => router.push('/register')} />
+            <Button variant="outline" label={t('auth.welcome.signUp')} onPress={() => router.push('/register')} />
           </>
         }
       />

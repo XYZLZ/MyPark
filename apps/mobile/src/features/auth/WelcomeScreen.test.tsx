@@ -112,3 +112,8 @@ test('Welcome shows the count, status and rates from fixtures', async () => {
   expect(await screen.findByText('RD$50.00')).toBeOnTheScreen();
   expect(screen.getByText('Primera hora')).toBeOnTheScreen();
 });
+
+test('Crear cuenta is the outline button', async () => {
+  await renderScreen(<WelcomeScreen />, { language: 'es-DO' });
+  expect(screen.getByRole('button', { name: 'Crear cuenta' }).props.className).toContain('border-brand-navy');
+});

@@ -13,7 +13,12 @@
   },
   "home": {
     "location": "Zona Colonial, Santo Domingo",
-    "openInMapsHint": "Abre Maps"
+    "openInMapsHint": "Abre Maps",
+    "cardLabel": "Espacios disponibles: {{count}} de {{total}}. {{status}}",
+    "cardLabelOos": "Espacios disponibles: {{count}} de {{total}}, {{outOfService}}. {{status}}",
+    "cardLabelClosed": "Espacios disponibles: {{status}}. {{body}}",
+    "detailOos": "{{capacity}} · {{outOfService}}",
+    "rate": "{{label}}: {{value}}"
   },
   "errors": {
     "fallback": "Algo salió mal. Inténtalo de nuevo.",

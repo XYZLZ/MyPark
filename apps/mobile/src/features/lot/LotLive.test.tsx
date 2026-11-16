@@ -128,9 +128,26 @@ test('the count never grows past 1.5x font scale', async () => {
   expect(screen.getByText('211').props.maxFontSizeMultiplier).toBe(1.5);
 });
 
-test('the count card is one screen-reader element that says the count once', async () => {
+test('the count card is one screen-reader element that says the count, the out of service figure and the status once', async () => {
   await renderLot();
-  expect(screen.getByLabelText('Espacios disponibles: 211 de 277. Abierto')).toBeOnTheScreen();
+  expect(screen.getByLabelText('Espacios disponibles: 211 de 277, 3 fuera de servicio. Abierto')).toBeOnTheScreen();
+});
+
+test('a closed card says why in its screen-reader label', async () => {
+  stubLotApi(request, availabilityClosedFixture);
+  await renderLot();
+  expect(screen.getByLabelText('Espacios disponibles: Cerrado. El parqueo no recibe vehículos ahora.')).toBeOnTheScreen();
+});
+
+test('each rate is one element named "label: value"', async () => {
+  await renderLot();
+  expect(await screen.findByLabelText('Primera hora: RD$50.00')).toBeOnTheScreen();
+});
+
+test('Abrir en Maps is an outline link at block width', async () => {
+  await renderLot();
+  const link = await screen.findByRole('link', { name: 'Abrir en Maps' });
+  expect(link.props.className).toContain('border-brand-navy');
 });
 
 test('Abrir en Maps opens the server map_url and says what it does', async () => {

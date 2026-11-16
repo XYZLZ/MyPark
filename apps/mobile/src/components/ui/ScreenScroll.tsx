@@ -28,7 +28,8 @@ export function ScreenScroll({
   return (
     <ScrollView
       testID="screen-scroll"
-      contentInsetAdjustmentBehavior="automatic"
+      // All padding is explicit; "automatic" would add the iOS top safe area again under a full-bleed banner.
+      contentInsetAdjustmentBehavior="never"
       keyboardShouldPersistTaps="handled"
       className="flex-1 bg-surface"
       contentContainerStyle={{ ...padding, gap: 16 }}

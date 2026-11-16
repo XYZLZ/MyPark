@@ -19,7 +19,7 @@ export type LotData = {
   /** Nothing to show and no way to get it right now (design §4.3): the error panel replaces the live block. */
   loadError: boolean;
   retry: () => void;
-  /** Client time of the REST availability snapshot, for the stale and unavailable lines. */
+  /** Client time of the last write to the availability key (the REST snapshot, or a later stream frame): the stale and unavailable lines' fallback when no frame has arrived. */
   snapshotAt: number;
 };
 

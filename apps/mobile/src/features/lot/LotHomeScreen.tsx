@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import { ScreenScroll } from '@/components/ui/ScreenScroll';
 
+import { HeroPlaceholder } from './components/HeroPlaceholder';
 import { LotHeader } from './components/LotHeader';
 import { LotLive } from './LotLive';
 
@@ -27,7 +28,8 @@ export function LotHomeScreen() {
         />
       }
     >
-      <LotLive />
+      <HeroPlaceholder />
+      <LotLive cardClassName="-mt-14" />
     </ScreenScroll>
   );
 }

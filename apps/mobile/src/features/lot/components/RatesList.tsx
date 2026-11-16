@@ -32,7 +32,7 @@ export function RatesList({ tariff }: { tariff: Tariff }) {
         <View
           key={label}
           accessible
-          accessibilityLabel={`${label}: ${value}`}
+          accessibilityLabel={t('home.rate', { label, value })}
           className={`flex-row items-center justify-between gap-3 py-2.5 ${index === 0 ? '' : 'border-t border-hairline'}`}
         >
           <AppText className="flex-1">{label}</AppText>
