@@ -65,6 +65,66 @@ const homeProps = (apiOrigin: string | null, snap: LotSnapshot) => (
 /** The value in a stat tile, found through its label (the legend repeats some labels). */
 const tile = (label: string) => within(screen.getAllByText(label).find((el) => el.tagName === 'DT')!.closest('div')!);
 
+describe('LotLive map readiness', () => {
+  const updating = () => screen.queryByText('Actualizando el mapa…');
+
+  test('no dim while connecting or when no stream is available', () => {
+    renderHome();
+    expect(FakeEventSource.latest()).toBeDefined();
+    expect(updating()).toBeNull();
+    cleanup();
+    renderHome(availabilityReducedFixture, null);
+    expect(updating()).toBeNull();
+  });
+
+  test('dims with Actualizando el mapa… when live or stale without a full spaces frame, and clears on it', () => {
+    stubFetch(jsonResponse(500, { error: { code: 'internal.unexpected', message: 'x', details: {} }, meta: { request_id: 'r' } }));
+    renderHome();
+    act(() => {
+      FakeEventSource.latest().open();
+      FakeEventSource.latest().emit('availability', { ...availabilityReducedFixture, version: 121 }, 121);
+    });
+    expect(updating()).toBeInTheDocument();
+
+    act(() => {
+      FakeEventSource.latest().emit('heartbeat', heartbeatFixture);
+      FakeEventSource.latest().fail(0);
+    });
+    expect(screen.getByText('Reconectando…')).toBeInTheDocument();
+    expect(updating()).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+      FakeEventSource.latest().open();
+      FakeEventSource.latest().emit('availability', { ...availabilityReducedFixture, version: 122 }, 122);
+    });
+    expect(updating()).toBeInTheDocument();
+
+    act(() => {
+      FakeEventSource.latest().emit('spaces', spacesFullEventFixture);
+    });
+    expect(updating()).toBeNull();
+  });
+});
+
+describe('LotLive home layout', () => {
+  test('DOM order is tiles, actions, map, info and rates; the lg classes place the columns', () => {
+    const { container } = renderWithProviders(
+      <LotLive variant="home" lotId={lotFixture.id} apiOrigin={ORIGIN} snapshot={snapshot()} actions={<div data-slot="actions"><button type="button">Acciones</button></div>} />,
+      { locale: 'es-DO' },
+    );
+    const slot = (name: string) => container.querySelector<HTMLElement>(`[data-slot="${name}"]`)!;
+    const order = ['tiles', 'actions', 'map', 'info'].map(slot);
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(slot('tiles').className).toContain('lg:col-start-2 lg:row-start-1');
+    expect(slot('map').className).toContain('lg:col-start-1 lg:row-start-3');
+    expect(slot('info').className).toContain('lg:col-start-2 lg:row-span-2 lg:row-start-2');
+    expect(slot('map')).toContainElement(screen.getByRole('region', { name: 'Mapa del parqueo, desplazable' }));
+  });
+});
+
 describe('LotLive home', () => {
   test('frame to screen: a spaces delta changes the cell state without a timer (M2B-42)', () => {
     const { container } = renderHome();

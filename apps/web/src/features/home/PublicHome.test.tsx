@@ -1,11 +1,18 @@
 import { screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { describe, expect, test } from 'vitest';
 import { buttonClass } from '@/components/ui/Button';
 import { LotErrorPanel } from '@/features/lot/components/LotErrorPanel';
 import { renderWithProviders } from '@/testing/render';
 import { PublicHome } from './PublicHome';
 
-const noLot = <p>lot slot</p>;
+// The lot slot receives the actions node and decides where they sit (design §4.1).
+const noLot = (actions: ReactNode) => (
+  <>
+    <p>lot slot</p>
+    {actions}
+  </>
+);
 
 describe('PublicHome', () => {
   test.each([
@@ -30,7 +37,12 @@ describe('PublicHome', () => {
   });
 
   test('the API down still renders the hero, Log in and Sign up', () => {
-    renderWithProviders(<PublicHome signedIn={false} lot={<LotErrorPanel />} />, { locale: 'es-DO' });
+    renderWithProviders(<PublicHome signedIn={false} lot={(actions) => (
+        <>
+          <LotErrorPanel />
+          {actions}
+        </>
+      )} />, { locale: 'es-DO' });
 
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Iniciar sesión' })).toBeInTheDocument();
@@ -76,6 +88,14 @@ describe('PublicHome', () => {
     const logIn = screen.getByRole('link', { name: 'Log in' });
     expect(hero.compareDocumentPosition(lot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(lot.compareDocumentPosition(logIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('the hero is the wide column, row 1; the actions are handed to the slot to be placed under it', () => {
+    renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale: 'en' });
+
+    expect(screen.getByRole('heading', { level: 1 }).closest('[class*="lg:col-start-1"]')!.className).toContain('lg:row-start-1');
+    const actions = screen.getByRole('link', { name: 'Log in' }).closest('[data-slot="actions"]')!;
+    expect(actions.className).toContain('lg:col-start-1 lg:row-start-2');
   });
 
   test('Sign up is the outline button of the mockup', () => {

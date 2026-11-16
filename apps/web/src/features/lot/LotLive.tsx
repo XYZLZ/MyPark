@@ -2,7 +2,7 @@
 
 import { availabilityFigures, lotQueryKeys, type Availability, type Lot, type SpaceState, type Tariff } from '@mypark/contracts';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useLayoutEffect, useState } from 'react';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLiveLot } from './live/useLiveLot';
 import { Announcer } from './components/Announcer';
@@ -41,14 +41,21 @@ function reseedNewer(queryClient: QueryClient, lotId: string, snapshot: LotSnaps
   seed(lotQueryKeys.tariff(lotId), snapshot.tariff, () => true);
 }
 
-type LotLiveProps = { variant: 'home' | 'compact'; lotId: string; apiOrigin: string | null; snapshot: LotSnapshot };
+type LotLiveProps = {
+  variant: 'home' | 'compact';
+  lotId: string;
+  apiOrigin: string | null;
+  snapshot: LotSnapshot;
+  /** Home only: rendered between the counter and the map (DOM order), placed by `PublicHome`. */
+  actions?: ReactNode;
+};
 
 /**
  * The live block (design §4.3). The server snapshot seeds the five Query keys; the stream then
  * writes availability and spaces into the cache, and the figures come only from availability
  * (the gate counter), never from the map (M2B-15).
  */
-export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
+export function LotLive({ variant, lotId, apiOrigin, snapshot, actions }: LotLiveProps) {
   const t = useTranslations('availability');
   const tSpaces = useTranslations('spaces');
   const [zoom, setZoom] = useState<ZoomLevel>(1);
@@ -129,16 +136,18 @@ export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
     );
   }
 
-  // PublicHome places these: it wraps the slot in one column.
+  // Direct grid items of PublicHome (design §4.1). DOM order: counter, actions, map, info; at lg the
+  // counter and the info and rates take the second column, the actions and the map the first.
   return (
     <>
-      <section className="overflow-hidden rounded-panel bg-brand-sky-strong shadow-sm">
+      <section data-slot="tiles" className="overflow-hidden rounded-panel bg-brand-sky-strong shadow-sm lg:col-start-2 lg:row-start-1">
         <h2 className="sr-only">{t('title')}</h2>
         <StatTiles figures={figures} status={availability.status} />
         <div className="border-t border-hairline bg-surface px-4 py-2.5">{freshness}</div>
         {announcer}
       </section>
-      <section className="rounded-panel bg-surface px-5.5 py-5 shadow-sm">
+      {actions}
+      <section data-slot="map" className="rounded-panel bg-surface px-5.5 py-5 shadow-sm lg:col-start-1 lg:row-start-3">
         <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="flex items-center gap-2.5 text-xl font-bold text-brand-navy">
             <Icon name="pin" />
@@ -154,7 +163,7 @@ export function LotLive({ variant, lotId, apiOrigin, snapshot }: LotLiveProps) {
         </div>
         {mapDetails}
       </section>
-      <div className="grid content-start gap-5.5">
+      <div data-slot="info" className="grid content-start gap-5.5 lg:col-start-2 lg:row-span-2 lg:row-start-2">
         <LotInfo lot={lot} />
         <RatesList tariff={tariff} />
       </div>

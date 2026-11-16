@@ -21,6 +21,7 @@
     }
   },
   "home": {
+    "mapLabel": "Parking map, scrollable",
     "subtitle": "Create your account and register your vehicles to reserve a space.",
     "signedInSubtitle": "Manage the vehicles on your account.",
     "logIn": "Log in",

@@ -21,6 +21,7 @@
     }
   },
   "home": {
+    "mapLabel": "Mapa del parqueo, desplazable",
     "subtitle": "Crea tu cuenta y registra tus vehículos para reservar un espacio.",
     "signedInSubtitle": "Administra los vehículos de tu cuenta.",
     "logIn": "Iniciar sesión",

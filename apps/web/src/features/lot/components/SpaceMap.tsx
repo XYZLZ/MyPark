@@ -28,11 +28,17 @@ function Building() {
  */
 export function SpaceMap({ spaces, ready, zoom }: { spaces: SpaceState[] | null; ready: boolean; zoom: ZoomLevel }) {
   const t = useTranslations('spaces');
+  const tHome = useTranslations('home'); // web-only copy: `spaces` is shared with mobile
   const dimmed = spaces !== null && !ready;
 
   return (
     <div className="relative">
-      <div className="overflow-auto rounded-panel">
+      <div
+        role="region"
+        tabIndex={0}
+        aria-label={tHome('mapLabel')}
+        className="overflow-auto rounded-panel focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-navy"
+      >
         <div
           style={{ width: `${zoom * 100}%`, backgroundImage: LAWN }}
           className={`grid grid-cols-1 gap-3 rounded-panel bg-lot-lawn p-3 md:grid-cols-[15%_1fr] md:p-4 ${dimmed ? 'opacity-60' : ''}`}

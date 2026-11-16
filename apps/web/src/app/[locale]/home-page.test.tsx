@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import en from '@/i18n/messages/en.json';
 import { renderWithProviders } from '@/testing/render';
@@ -8,7 +9,12 @@ const state = { cookies: new Set<string>() };
 
 vi.mock('next/headers', () => ({ cookies: async () => ({ has: (name: string) => state.cookies.has(name) }) }));
 // An async server component cannot render in jsdom; its own tests cover it.
-vi.mock('@/features/lot/LotSection', () => ({ LotSection: () => <p>lot section</p> }));
+vi.mock('@/features/lot/LotSection', () => ({ LotSection: ({ actions }: { actions?: ReactNode }) => (
+    <>
+      <p>lot section</p>
+      {actions}
+    </>
+  ) }));
 
 beforeEach(() => {
   state.cookies = new Set();

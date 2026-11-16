@@ -60,16 +60,43 @@ describe('SpaceMap', () => {
     const out = screen.getByRole('button', { name: 'Alejar mapa' });
     const zoomIn = screen.getByRole('button', { name: 'Acercar mapa' });
     expect(ZOOM_LEVELS).toEqual([1, 1.25, 1.5, 1.75, 2]);
-    expect(out).toBeDisabled();
+    expect(out).toHaveAttribute('aria-disabled', 'true');
+    expect(zoomIn).toHaveAttribute('aria-disabled', 'false');
     for (let i = 0; i < 4; i++) fireEvent.click(zoomIn);
-    expect(zoomIn).toBeDisabled();
-    expect(out).toBeEnabled();
+    expect(zoomIn).toHaveAttribute('aria-disabled', 'true');
+    expect(out).toHaveAttribute('aria-disabled', 'false');
+    fireEvent.click(zoomIn);
+    expect(zoomIn).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  test('a bound keeps focus on its button: it is aria-disabled, never natively disabled', () => {
+    function Harness() {
+      const [zoom, setZoom] = useState<ZoomLevel>(1.75);
+      return <ZoomControls zoom={zoom} onZoom={setZoom} />;
+    }
+    renderWithProviders(<Harness />, { locale: 'es-DO' });
+    const zoomIn = screen.getByRole('button', { name: 'Acercar mapa' });
+    zoomIn.focus();
+    fireEvent.click(zoomIn);
+    expect(zoomIn).toHaveAttribute('aria-disabled', 'true');
+    expect(zoomIn).not.toBeDisabled();
+    expect(zoomIn).toHaveFocus();
   });
 
   test('zoom widens the map inside its own scroll frame', () => {
     const { container } = renderMap({ zoom: 1.5 });
-    const frame = container.querySelector<HTMLElement>('.overflow-auto')!;
+    const frame = screen.getByRole('region', { name: 'Mapa del parqueo, desplazable' });
     expect((frame.firstElementChild as HTMLElement).style.width).toBe('150%');
+    expect(container).toBeInTheDocument();
+  });
+
+  test('the scroll frame is a named, keyboard-reachable region; only the grid is hidden', () => {
+    const { container } = renderMap();
+    const frame = screen.getByRole('region', { name: 'Mapa del parqueo, desplazable' });
+    expect(frame).toHaveAttribute('tabindex', '0');
+    expect(frame).not.toHaveAttribute('aria-hidden');
+    expect(frame.className).toContain('focus-visible:outline');
+    expect(container.querySelector('[data-code="E001"]')!.closest('[aria-hidden="true"]')).not.toBeNull();
   });
 
   test('no spaces yet shows the skeleton; not ready shows Actualizando el mapa… at 60 %', () => {

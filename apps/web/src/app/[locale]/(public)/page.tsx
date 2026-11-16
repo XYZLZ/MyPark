@@ -18,11 +18,20 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
     <PublicHome
       signedIn={hasSessionHint(store)}
       notice={notice === LOGOUT_ALL_FAILED_NOTICE ? 'logout_all_failed' : undefined}
-      lot={
-        <Suspense fallback={<LotSkeleton />}>
-          <LotSection variant="home" />
+      lot={(actions) => (
+        <Suspense
+          fallback={
+            <>
+              <div className="lg:col-start-2 lg:row-start-1">
+                <LotSkeleton />
+              </div>
+              {actions}
+            </>
+          }
+        >
+          <LotSection variant="home" actions={actions} />
         </Suspense>
-      }
+      )}
     />
   );
 }
