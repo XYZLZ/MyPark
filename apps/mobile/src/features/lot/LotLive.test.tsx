@@ -7,6 +7,7 @@ import {
   heartbeatFixture,
   lotFixture,
   sseText,
+  successBody,
 } from '@mypark/contracts/fixtures';
 import { focusManager, QueryClient } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, screen, within } from '@testing-library/react-native';
@@ -16,6 +17,7 @@ import { getApiBaseUrl } from '@/lib/env';
 import { http } from '@/services/runtime';
 import { requestsFor, stubLotApi } from '@/testing/lot-api';
 import { notifyQuerySynchronously } from '@/testing/query';
+import { reply } from '@/testing/response';
 import { renderScreen } from '@/testing/render';
 import { controllableStream, type ControllableStream } from '@/testing/stream';
 
@@ -283,4 +285,26 @@ test('the preview dims with Actualizando el mapa… when the stream drops, but n
   await act(async () => stream.push(sseText('heartbeat', heartbeatFixture)));
   await act(async () => stream.fail());
   expect(screen.getByText('Actualizando el mapa…')).toBeOnTheScreen();
+});
+
+test('a REST availability answer that arrives after a newer stream frame does not overwrite it', async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (args) => {
+    if (args.path.endsWith('/availability')) {
+      await gate;
+      return reply(200, successBody({ ...availabilityReducedFixture, available: 100, version: 4 }));
+    }
+    return base(args);
+  });
+  await renderScreen(<LotLive mapHref="/home/map" />, { language: 'es-DO', queryClient });
+
+  await pushAvailability({ available: 150 }, 5);
+  await act(async () => {
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+  });
+
+  expect(queryClient.getQueryData<{ version: number }>(lotQueryKeys.availability(lotFixture.id))?.version).toBe(5);
 });

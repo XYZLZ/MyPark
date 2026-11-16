@@ -1,5 +1,5 @@
 import { lotQueryKeys, type Availability, type Lot, type SpaceState, type Tariff } from '@mypark/contracts';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getAvailability, getLot, getSpaces, getTariff } from './api';
 import { CONNECTING, type Connection } from './live/connection-store';
@@ -32,6 +32,7 @@ export type LotData = {
 export function useLotData(): LotData {
   const id = useLotId();
   const lotId = id.lotId;
+  const queryClient = useQueryClient();
   const connection = useLiveLot(lotId);
   const enabled = lotId !== null;
   const key = lotId ?? '';
@@ -39,7 +40,12 @@ export function useLotData(): LotData {
   const lot = useQuery({ queryKey: lotQueryKeys.lot(key), queryFn: () => getLot(key), enabled, staleTime: SLOW_STALE_MS });
   const availability = useQuery({
     queryKey: lotQueryKeys.availability(key),
-    queryFn: () => getAvailability(key),
+    // The stream may have written a newer frame while this request was in flight: keep it (the stream's own version guard).
+    queryFn: async () => {
+      const fetched = await getAvailability(key);
+      const cached = queryClient.getQueryData<Availability>(lotQueryKeys.availability(key));
+      return cached && cached.version >= fetched.version ? cached : fetched;
+    },
     enabled,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
