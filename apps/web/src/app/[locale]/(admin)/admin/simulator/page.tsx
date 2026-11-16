@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
+import { Suspense } from 'react';
+import { LotSkeleton } from '@/features/lot/components/LotSkeleton';
 import { LotSection } from '@/features/lot/LotSection';
 import { RefreshOnMount } from '@/features/session/RefreshOnMount';
 import { SimulatorConsole } from '@/features/simulator/SimulatorConsole';
@@ -16,5 +18,13 @@ export default async function SimulatorPage() {
   const gate = await requireAdmin(resolveLocale(await getLocale()));
   if (gate.state !== 'ready') return <RefreshOnMount />;
 
-  return <SimulatorConsole lot={<LotSection variant="compact" />} />;
+  return (
+    <SimulatorConsole
+      lot={
+        <Suspense fallback={<LotSkeleton />}>
+          <LotSection variant="compact" />
+        </Suspense>
+      }
+    />
+  );
 }

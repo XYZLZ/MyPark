@@ -66,6 +66,15 @@ describe('PublicHome', () => {
     expect(screen.getByRole('status')).toHaveTextContent(text);
   });
 
+  test('the notice sits above the hero, outside the grid, so it is at the top at every width', () => {
+    renderWithProviders(<PublicHome signedIn={false} notice="logout_all_failed" lot={noLot} />, { locale: 'en' });
+
+    const banner = screen.getByRole('status');
+    const hero = screen.getByRole('heading', { level: 1 });
+    expect(banner.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(banner.closest('[class*="lg:grid-cols"]')).toBeNull();
+  });
+
   test('no notice, no banner', () => {
     renderWithProviders(<PublicHome signedIn={false} lot={noLot} />, { locale: 'en' });
 

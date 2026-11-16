@@ -27,38 +27,40 @@ export function PublicHome({
 
   const actions = (
     <div data-slot="actions" className="rounded-panel bg-surface p-5 shadow-sm lg:col-start-1 lg:row-start-2 lg:self-start">
-        <p className="mb-4 max-w-prose text-balance">{signedIn ? t('signedInSubtitle') : t('subtitle')}</p>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          {signedIn ? (
-            <Link href="/vehicles" className={buttonClass('primary')}>
-              {t('vehicles')}
+      <p className="mb-4 max-w-prose text-balance">{signedIn ? t('signedInSubtitle') : t('subtitle')}</p>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        {signedIn ? (
+          <Link href="/vehicles" className={buttonClass('primary')}>
+            {t('vehicles')}
+          </Link>
+        ) : (
+          <>
+            <Link href="/login" className={buttonClass('primary')}>
+              {t('logIn')}
             </Link>
-          ) : (
-            <>
-              <Link href="/login" className={buttonClass('primary')}>
-                {t('logIn')}
-              </Link>
-              <Link href="/register" className={buttonClass('outline')}>
-                {t('signUp')}
-              </Link>
-            </>
-          )}
-        </div>
+            <Link href="/register" className={buttonClass('outline')}>
+              {t('signUp')}
+            </Link>
+          </>
+        )}
+      </div>
     </div>
   );
 
   return (
-    <div className="mx-auto grid w-full max-w-7xl content-start gap-5.5 px-4 py-6 sm:px-7 lg:grid-cols-[minmax(0,1.55fr)_minmax(18.75rem,1fr)]">
+    <>
       {notice === 'logout_all_failed' ? (
-        <div className="lg:col-span-full">
+        <div className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-7">
           <Banner tone="status">{tSession('logoutAllFailed')}</Banner>
         </div>
       ) : null}
-      <div className="lg:col-start-1 lg:row-start-1">
-        <HomeHero />
+      <div className="mx-auto grid w-full max-w-7xl content-start gap-5.5 px-4 py-6 sm:px-7 lg:grid-cols-[minmax(0,1.55fr)_minmax(18.75rem,1fr)]">
+        <div className="lg:col-start-1 lg:row-start-1">
+          <HomeHero />
+        </div>
+        {/* DOM order is the reading order: hero, counter, actions, map, info (design §4.1). The lot slot places its own parts in the grid (first column: hero, actions, map; second: counter, then info and rates). */}
+        {lot(actions)}
       </div>
-      {/* DOM order is the reading order: hero, counter, actions, map, info (design §4.1). The lot slot places its own parts in the grid (first column: hero, actions, map; second: counter, then info and rates). */}
-      {lot(actions)}
-    </div>
+    </>
   );
 }

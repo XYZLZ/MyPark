@@ -29,7 +29,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
             </>
           }
         >
-          <LotSection variant="home" actions={actions} />
+          <LotSection variant="home" actions={actions} className="lg:col-start-2 lg:row-start-1" />
         </Suspense>
       )}
     />

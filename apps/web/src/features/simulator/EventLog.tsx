@@ -42,7 +42,7 @@ function rowKeys(rows: LogRow[]): string[] {
  * It counts events received since the last announcement, not rows, so the 500-row cap and a restart
  * cannot inflate it. The first load only sets the baseline.
  */
-function useNewEventsMessage(received: number): string {
+function useNewEventsMessage(received: number, loaded: boolean): string {
   const t = useTranslations('simulator.log');
   const [message, setMessage] = useState('');
   const announced = useRef<number | null>(null);
@@ -50,7 +50,7 @@ function useNewEventsMessage(received: number): string {
 
   useEffect(() => {
     if (announced.current === null) {
-      if (received > 0) announced.current = received;
+      if (loaded) announced.current = received;
       return;
     }
     const count = received - announced.current;
@@ -62,7 +62,7 @@ function useNewEventsMessage(received: number): string {
       setMessage(t('newEvents', { count }));
     }, wait);
     return () => clearTimeout(timer);
-  }, [received, t]);
+  }, [received, loaded, t]);
 
   return message;
 }
@@ -118,7 +118,8 @@ export function EventLog() {
   const locale = useLocale() as Locale;
   const rows = useConsoleStore((state) => state.log.rows);
   const received = useConsoleStore((state) => state.log.received);
-  const announcement = useNewEventsMessage(received);
+  const loaded = useConsoleStore((state) => state.log.loaded);
+  const announcement = useNewEventsMessage(received, loaded);
   const keys = useMemo(() => rowKeys(rows), [rows]);
 
   return (

@@ -41,4 +41,15 @@ describe('LotSection', () => {
     expect(screen.getByText('La disponibilidad no está cargando ahora')).toBeInTheDocument();
     expect(FakeEventSource.instances).toHaveLength(0);
   });
+
+  test('the error panel takes its placement from the caller, and has none by default', async () => {
+    vi.mocked(loadLotSnapshot).mockResolvedValue(null);
+    const { unmount } = renderWithProviders(await LotSection({ variant: 'compact' }), { locale: 'es-DO' });
+    const bare = screen.getByText('La disponibilidad no está cargando ahora').closest('[data-slot="lot-error"]')!;
+    expect(bare.className).not.toContain('lg:col-start-2');
+    unmount();
+
+    renderWithProviders(await LotSection({ variant: 'home', className: 'lg:col-start-2 lg:row-start-1' }), { locale: 'es-DO' });
+    expect(screen.getByText('La disponibilidad no está cargando ahora').closest('[data-slot="lot-error"]')!.className).toContain('lg:col-start-2 lg:row-start-1');
+  });
 });

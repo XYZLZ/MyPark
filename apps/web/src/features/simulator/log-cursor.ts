@@ -18,11 +18,13 @@ export type LogState = {
   startedAt: string | null;
   /** Every event ever added, so the log can say how many are new even when the cap drops rows. */
   received: number;
+  /** An events response has been applied, even an empty one: the log has had its first load. */
+  loaded: boolean;
   /** Newest first. */
   rows: LogRow[];
 };
 
-export const initialLogState: LogState = { cursor: 0, resetPending: false, startedAt: null, received: 0, rows: [] };
+export const initialLogState: LogState = { cursor: 0, resetPending: false, startedAt: null, received: 0, loaded: false, rows: [] };
 
 /** The `after` value for the next events request. */
 export function nextAfter(state: LogState): number {
@@ -46,6 +48,11 @@ function prepend(rows: LogRow[], ascending: LogRow[]): LogRow[] {
  *   separator is added. A normal answer to a non-zero `after` never means a restart and keeps the reset pending.
  */
 export function applyEvents(state: LogState, after: number, events: SimulatorEvent[]): LogState {
+  const next = foldEvents(state, after, events);
+  return next.loaded ? next : { ...next, loaded: true };
+}
+
+function foldEvents(state: LogState, after: number, events: SimulatorEvent[]): LogState {
   const resetAnswer = after === 0;
   const recovering = resetAnswer && state.resetPending && state.cursor > 0;
   const resetPending = resetAnswer ? false : state.resetPending;

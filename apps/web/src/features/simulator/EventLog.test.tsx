@@ -122,6 +122,14 @@ describe('EventLog', () => {
     expect(screen.getByRole('status')).toHaveTextContent('');
   });
 
+  test('an empty first load is still the baseline, so the first batch after it is announced', () => {
+    mount();
+    push();
+    push(ev(1), ev(2), ev(3));
+    act(() => void vi.advanceTimersByTime(0));
+    expect(screen.getByRole('status')).toHaveTextContent('3 new events');
+  });
+
   test('new events are announced at most every 10 s, and the cap does not inflate the count', () => {
     mount();
     const region = screen.getByRole('status');
