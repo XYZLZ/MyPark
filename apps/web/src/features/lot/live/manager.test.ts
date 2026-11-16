@@ -101,7 +101,7 @@ describe('acquireLiveLot', () => {
     expect(instances()).toHaveLength(1);
     target.dispatchEvent(new Event('pageshow'));
     expect(instances()).toHaveLength(2);
-    expect(store.get().spacesReady).toBe(false);
+    expect(store.get()).toMatchObject({ status: 'stale', spacesReady: false });
   });
 
   test('pageshow before the 10 s floor is up waits the rest of it (M2B-5)', () => {
