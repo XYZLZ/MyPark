@@ -343,7 +343,7 @@ describe('sharing', () => {
 });
 
 describe('lifecycle', () => {
-  test('hide closes and marks stale; show reopens as connecting', () => {
+  test('hide closes and marks stale; show reopens and stays stale until the first frame', () => {
     const { store } = acquire();
     show();
     expect(transports).toHaveLength(1);
@@ -355,7 +355,9 @@ describe('lifecycle', () => {
     expect(transports).toHaveLength(1);
     show();
     expect(transports).toHaveLength(2);
-    expect(store.get()).toMatchObject({ status: 'connecting', spacesReady: false });
+    expect(store.get()).toMatchObject({ status: 'stale', spacesReady: false });
+    t(1).frame('heartbeat', { as_of: '2026-11-15T14:47:15Z' });
+    expect(store.get().status).toBe('live');
   });
 
   test('repeated hide and show events open exactly one new connection', () => {

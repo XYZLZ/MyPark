@@ -306,7 +306,7 @@ export function createLiveLotRegistry(): LiveLotRegistry {
       hidden = false;
       // With no subscribers left the idle close is pending; a new acquire opens.
       if (stopped || refs === 0) return;
-      if (deps.now() >= notBefore) store.set({ status: 'connecting' });
+      // Stays stale until the stream is back: "Connecting…" is only for the first connect (design §4.3, §9.3).
       resume();
     };
 
