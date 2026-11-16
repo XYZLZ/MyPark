@@ -26,6 +26,10 @@ test('a screen under a stack header keeps 24: the header already clears the top'
   expect(screenPadding({ ...insets, top: 48 }, 'tabBar', 'stack').paddingTop).toBe(24);
 });
 
+test('a screen that opens with a banner has no top padding: the banner clears the notch itself', () => {
+  expect(screenPadding({ ...insets, top: 48 }, 'screen', 'banner').paddingTop).toBe(0);
+});
+
 test('tabBarStyle pads the home indicator', () => {
   expect(tabBarStyle(insets)).toMatchObject({ height: 98, paddingBottom: 34, paddingLeft: 16, paddingRight: 16 });
   expect(tabBarStyle({ ...insets, left: 12, right: 4 })).toMatchObject({ paddingLeft: 28, paddingRight: 20 });

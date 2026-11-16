@@ -7,8 +7,13 @@
     "dismiss": "Dismiss"
   },
   "nav": {
+    "home": "Home",
     "vehicles": "Vehicles",
     "profile": "Profile"
+  },
+  "home": {
+    "location": "Colonial Zone, Santo Domingo",
+    "openInMapsHint": "Opens Maps"
   },
   "errors": {
     "fallback": "Something went wrong. Please try again.",
@@ -267,7 +272,7 @@
       "photoAlt": "Front of the Banreservas parking lot in the Colonial Zone"
     },
     "error": {
-      "title": "We could not load the parking information",
+      "title": "Availability is not loading right now",
       "retry": "Try again"
     },
     "unavailable": {

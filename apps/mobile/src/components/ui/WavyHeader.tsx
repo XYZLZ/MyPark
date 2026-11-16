@@ -12,6 +12,7 @@ export function WavyHeader({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
   return (
     <View
+      testID="wavy-header"
       className="overflow-hidden bg-brand-navy pb-10"
       style={{ paddingTop: SCREEN_GUTTER + insets.top, paddingLeft: SCREEN_GUTTER + insets.left, paddingRight: SCREEN_GUTTER + insets.right }}
     >

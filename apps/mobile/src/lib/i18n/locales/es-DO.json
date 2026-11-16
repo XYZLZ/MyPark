@@ -7,8 +7,13 @@
     "dismiss": "Descartar"
   },
   "nav": {
+    "home": "Inicio",
     "vehicles": "Vehículos",
     "profile": "Perfil"
+  },
+  "home": {
+    "location": "Zona Colonial, Santo Domingo",
+    "openInMapsHint": "Abre Maps"
   },
   "errors": {
     "fallback": "Algo salió mal. Inténtalo de nuevo.",
@@ -267,7 +272,7 @@
       "photoAlt": "Fachada del parqueo Banreservas en la Zona Colonial"
     },
     "error": {
-      "title": "No pudimos cargar la información del parqueo",
+      "title": "La disponibilidad no está cargando ahora",
       "retry": "Reintentar"
     },
     "unavailable": {

@@ -9,7 +9,7 @@ import { tabBarStyle } from '@/design/layout';
 import { tokens } from '@/design/tokens';
 import { StorageNotice } from '@/features/session/StorageNotice';
 
-/** Signed in and clear of the gate: two tabs, each with its own stack. */
+/** Signed in and clear of the gate: the tabs, each with its own stack (Task 12 sets their order). */
 export default function TabsLayout() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -24,6 +24,14 @@ export default function TabsLayout() {
           tabBarStyle: { ...tabBarStyle(insets), backgroundColor: tokens.surface, borderTopColor: tokens.hairline },
         }}
       >
+        <Tabs.Screen
+          name="home"
+          options={{
+            title: t('nav.home'),
+            tabBarIcon: ({ focused }) => <TabIcon name="home" focused={focused} />,
+            tabBarLabel: ({ focused }) => <TabLabel focused={focused} label={t('nav.home')} />,
+          }}
+        />
         <Tabs.Screen
           name="vehicles"
           options={{
