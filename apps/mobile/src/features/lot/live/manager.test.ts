@@ -1,17 +1,14 @@
 import { lotQueryKeys, type Availability, type SpaceState } from '@mypark/contracts';
-import {
-  availabilityReducedFixture,
-  errorBody,
-  spacesFixture,
-  spacesFullEventFixture,
-  sseText,
-} from '@mypark/contracts/fixtures';
+import { availabilityReducedFixture, errorBody, spacesFixture, spacesFullEventFixture, sseText } from '@mypark/contracts/fixtures';
 import { QueryClient } from '@tanstack/react-query';
 import type { AppStateStatus } from 'react-native';
 
+import type { StreamFetch, StreamResponse } from '@/services/sse';
 import { controllableStream, type ControllableStream } from '@/testing/stream';
 
 import { acquireLiveLot, resetLiveLotsForTests, type MobileLiveDeps } from './manager';
+
+/** Mobile adapters only: how `expo/fetch` ends are classified and how `AppState` drives the stream. The shared rules are tested in contracts (m2/registry.test.ts). */
 
 const ORIGIN = 'http://api.test';
 const LOT = 'L1';
@@ -21,6 +18,7 @@ const freeSpaces: SpaceState[] = spacesFixture.spaces.map((s) => ({ ...s, state:
 let queryClient: QueryClient;
 let stream: ControllableStream;
 let appStateListeners: Set<(state: AppStateStatus) => void>;
+let currentState: AppStateStatus;
 let fetchSnapshot: jest.MockedFunction<MobileLiveDeps['fetchSnapshot']>;
 let onLotGone: jest.Mock<void, []>;
 let log: jest.MockedFunction<MobileLiveDeps['log']>;
@@ -30,6 +28,7 @@ beforeEach(() => {
   queryClient = new QueryClient();
   stream = controllableStream();
   appStateListeners = new Set();
+  currentState = 'active';
   fetchSnapshot = jest.fn(async (_lotId: string) => ({ availability: v(125, 200), spaces: freeSpaces }));
   onLotGone = jest.fn();
   log = jest.fn();
@@ -42,16 +41,22 @@ afterEach(() => {
 });
 
 const appState: MobileLiveDeps['appState'] = {
+  get currentState() {
+    return currentState;
+  },
   addEventListener(_type, listener) {
     appStateListeners.add(listener);
     return { remove: () => appStateListeners.delete(listener) };
   },
 };
-const setAppState = (state: AppStateStatus) => appStateListeners.forEach((listener) => listener(state));
+const setAppState = (state: AppStateStatus) => {
+  currentState = state;
+  appStateListeners.forEach((listener) => listener(state));
+};
 
-const acquire = () =>
+const acquire = (fetchImpl: StreamFetch = stream.fetchImpl) =>
   acquireLiveLot(ORIGIN, LOT, queryClient, {
-    fetchImpl: stream.fetchImpl,
+    fetchImpl,
     random: () => 1,
     now: () => Date.now(),
     appState,
@@ -65,6 +70,15 @@ const advance = (ms: number) => jest.advanceTimersByTimeAsync(ms);
 const calls = () => stream.calls.length;
 const cachedAvailability = () => queryClient.getQueryData<Availability>(lotQueryKeys.availability(LOT));
 const cachedSpaces = () => queryClient.getQueryData<SpaceState[]>(lotQueryKeys.spaces(LOT));
+
+/** Waits the 10 s HTTP floor exactly: no call at 9 999 ms, one at 10 000 ms. */
+async function expectFloorWait() {
+  await advance(0);
+  await advance(9_999);
+  expect(calls()).toBe(1);
+  await advance(1);
+  expect(calls()).toBe(2);
+}
 
 test('the first frame makes it live and writes the cache', async () => {
   const { store } = acquire();
@@ -91,18 +105,6 @@ test('a malformed frame keeps the stream live', async () => {
   expect(log).toHaveBeenCalledWith('live: dropped a malformed stream frame', { event: 'availability' });
 });
 
-test('a lost stream marks the map stale before the REST snapshot replaces it', async () => {
-  const { store } = acquire();
-  stream.push(sseText('availability', v(121)) + sseText('spaces', spacesFullEventFixture));
-  await advance(0);
-  stream.fail();
-  await advance(0);
-  expect(fetchSnapshot).toHaveBeenCalledWith(LOT);
-  expect(cachedAvailability()?.version).toBe(125);
-  expect(cachedSpaces()).toEqual(freeSpaces);
-  expect(store.get()).toMatchObject({ status: 'stale', spacesReady: false });
-});
-
 test('a 429 waits Retry-After when it is larger than the backoff', async () => {
   const { store } = acquire();
   stream.respond(429, JSON.stringify(errorBody('rate_limit.exceeded')), { 'Retry-After': '20' });
@@ -117,11 +119,26 @@ test('a 429 waits Retry-After when it is larger than the backoff', async () => {
 test('a 429 with Retry-After soon waits the 10 s floor', async () => {
   acquire();
   stream.respond(429, '<html>Too many</html>', { 'retry-after': 'soon' });
-  await advance(0);
-  await advance(9_999);
-  expect(calls()).toBe(1);
-  await advance(1);
-  expect(calls()).toBe(2);
+  await expectFloorWait();
+});
+
+test('a 5xx waits the 10 s floor', async () => {
+  acquire();
+  stream.respond(503, JSON.stringify(errorBody('internal.unavailable')));
+  await expectFloorWait();
+});
+
+test('a 200 that is not an event stream waits the 10 s floor', async () => {
+  acquire();
+  stream.respond(200, '<html>captive portal</html>', { 'content-type': 'text/html' });
+  await expectFloorWait();
+});
+
+test('a 404 that is not lot.not_found waits the 10 s floor', async () => {
+  acquire();
+  stream.respond(404, '<html>Not found</html>');
+  await expectFloorWait();
+  expect(onLotGone).not.toHaveBeenCalled();
 });
 
 test('404 lot.not_found re-discovers the lot once', async () => {
@@ -160,7 +177,25 @@ test('45 s without a frame goes stale, aborts and reconnects', async () => {
   expect(calls()).toBe(2);
 });
 
-test('background aborts the stream and foreground reconnects with a fresh snapshot', async () => {
+test('a late openStream result after a silence abort is ignored', async () => {
+  // A transport that ignores the signal: its response lands after the manager gave up on it.
+  let late: (res: StreamResponse) => void = () => {};
+  const signals: AbortSignal[] = [];
+  const stubborn: StreamFetch = (_url, init) => {
+    signals.push(init.signal);
+    return new Promise((resolve) => (late = resolve));
+  };
+  const { store } = acquire(stubborn);
+  await advance(45_000);
+  expect(signals[0]?.aborted).toBe(true);
+  late({ status: 404, headers: { get: () => null }, body: null, text: async () => JSON.stringify(errorBody('lot.not_found')) });
+  await advance(1_000);
+  expect(onLotGone).not.toHaveBeenCalled();
+  expect(signals).toHaveLength(2);
+  expect(store.get().status).toBe('stale');
+});
+
+test('background aborts the stream; foreground reconnects as connecting until its first frame', async () => {
   const { store } = acquire();
   stream.push(sseText('availability', v(121)) + sseText('spaces', spacesFullEventFixture));
   await advance(0);
@@ -179,6 +214,39 @@ test('background aborts the stream and foreground reconnects with a fresh snapsh
   expect(cachedAvailability()?.available).toBe(190);
 });
 
+test('a foreground during a 429 wait keeps waiting for Retry-After (M2B-5)', async () => {
+  const { store } = acquire();
+  stream.respond(429, JSON.stringify(errorBody('rate_limit.exceeded')), { 'Retry-After': '20' });
+  await advance(1_000);
+  setAppState('background');
+  setAppState('active');
+  expect(store.get().status).toBe('stale');
+  await advance(18_999);
+  expect(calls()).toBe(1);
+  await advance(1);
+  expect(calls()).toBe(2);
+});
+
+test('repeated app-state events open exactly one new stream', async () => {
+  acquire();
+  setAppState('inactive');
+  setAppState('background');
+  setAppState('active');
+  setAppState('active');
+  await advance(0);
+  expect(calls()).toBe(2);
+});
+
+test('an acquire while the app is not active opens nothing until it is', async () => {
+  currentState = 'background';
+  const { store } = acquire();
+  await advance(60_000);
+  expect(calls()).toBe(0);
+  expect(store.get().status).toBe('connecting');
+  setAppState('active');
+  expect(calls()).toBe(1);
+});
+
 test('two subscribers share one stream; the last release aborts after 2 s', async () => {
   const first = acquire();
   const second = acquire();
@@ -192,16 +260,4 @@ test('two subscribers share one stream; the last release aborts after 2 s', asyn
   await advance(1);
   expect(stream.calls[0]?.signal.aborted).toBe(true);
   expect(appStateListeners.size).toBe(0);
-});
-
-test('a retry that falls due with no subscribers does not reconnect', async () => {
-  const { release } = acquire();
-  stream.end();
-  await advance(0);
-  release();
-  await advance(1_000);
-  expect(calls()).toBe(1);
-  // A new subscriber opens it again.
-  acquire();
-  expect(calls()).toBe(2);
 });

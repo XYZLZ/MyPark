@@ -3,7 +3,7 @@ import { availabilityReducedFixture, errorBody } from '@mypark/contracts/fixture
 
 import { controllableStream } from '@/testing/stream';
 
-import { openStream } from './sse';
+import { openStream, type StreamFetch } from './sse';
 
 const URL = 'http://api.test/v1/lots/L1/availability/stream?include=spaces';
 
@@ -71,4 +71,33 @@ test('an HTML error body gives code null', async () => {
   const { stream, done } = start();
   stream.respond(502, '<html>Bad gateway</html>', { 'content-type': 'text/html' });
   await expect(done).resolves.toEqual({ kind: 'http', status: 502, code: null, retryAfterMs: null });
+});
+
+test('abort cancels a pending read', async () => {
+  const cancel = jest.fn(async () => {});
+  const releaseLock = jest.fn();
+  // A reader whose read never settles on its own: only the cancel can end it.
+  const fetchImpl: StreamFetch = async () => ({
+    status: 200,
+    headers: { get: () => 'text/event-stream' },
+    body: { getReader: () => ({ read: () => new Promise(() => {}), cancel, releaseLock }) },
+    text: async () => '',
+  });
+  const controller = new AbortController();
+  void openStream(URL, { signal: controller.signal, onFrame: () => {}, fetchImpl });
+  await settle();
+  controller.abort();
+  expect(cancel).toHaveBeenCalledTimes(1);
+});
+
+test('the reader lock is released when the stream ends', async () => {
+  const releaseLock = jest.fn();
+  const fetchImpl: StreamFetch = async () => ({
+    status: 200,
+    headers: { get: () => 'text/event-stream' },
+    body: { getReader: () => ({ read: async () => ({ done: true }), cancel: async () => {}, releaseLock }) },
+    text: async () => '',
+  });
+  await expect(openStream(URL, { signal: new AbortController().signal, onFrame: () => {}, fetchImpl })).resolves.toEqual({ kind: 'ended' });
+  expect(releaseLock).toHaveBeenCalledTimes(1);
 });

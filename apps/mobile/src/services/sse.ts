@@ -1,11 +1,17 @@
 import { fetch } from 'expo/fetch';
 import { createSseParser, parseRetryAfter, type SseFrame } from '@mypark/contracts';
 
+export type StreamReader = {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  cancel(reason?: unknown): Promise<void>;
+  releaseLock(): void;
+};
+
 /** The slice of an `expo/fetch` response the stream reads. */
 export type StreamResponse = {
   status: number;
   headers: { get(name: string): string | null };
-  body: { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } } | null;
+  body: { getReader(): StreamReader } | null;
   text(): Promise<string>;
 };
 
@@ -35,6 +41,24 @@ function errorCode(text: string): string | null {
   }
 }
 
+const noop = () => {};
+
+async function readFrames(reader: StreamReader, signal: AbortSignal, onFrame: (frame: SseFrame) => void): Promise<StreamEnd> {
+  // `ignoreBOM` leaves the BOM to the parser, the one place that strips it (contracts sse/parser.ts).
+  const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+  const parser = createSseParser();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (signal.aborted) return ABORTED;
+    const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
+    for (const frame of parser.push(text)) {
+      onFrame(frame);
+      if (signal.aborted) return ABORTED;
+    }
+    if (done) return ENDED;
+  }
+}
+
 const isEventStream = (res: StreamResponse) =>
   res.status === 200 && res.body !== null && /^text\/event-stream\b/i.test(res.headers.get('content-type') ?? '');
 
@@ -56,18 +80,19 @@ export async function openStream(
       return { kind: 'http', status: res.status, code: errorCode(text), retryAfterMs: parseRetryAfter(res.headers.get('retry-after')) };
     }
     const reader = res.body.getReader();
-    // `ignoreBOM` leaves the BOM to the parser, the one place that strips it (contracts sse/parser.ts).
-    const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
-    const parser = createSseParser();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (signal.aborted) return ABORTED;
-      const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
-      for (const frame of parser.push(text)) {
-        onFrame(frame);
-        if (signal.aborted) return ABORTED;
+    // Ends a pending read even if the native abort does not reach the body.
+    const cancel = () => void reader.cancel().catch(noop);
+    signal.addEventListener('abort', cancel, { once: true });
+    try {
+      return await readFrames(reader, signal, onFrame);
+    } finally {
+      signal.removeEventListener('abort', cancel);
+      // Some readers throw while a read is still settling; the stream is done with either way.
+      try {
+        reader.releaseLock();
+      } catch {
+        // Nothing to release.
       }
-      if (done) return ENDED;
     }
   } catch {
     return signal.aborted ? ABORTED : NETWORK;

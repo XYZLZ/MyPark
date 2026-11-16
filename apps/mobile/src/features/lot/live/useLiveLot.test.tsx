@@ -1,4 +1,4 @@
-import { lotQueryKeys, type Availability, type SpaceState } from '@mypark/contracts';
+import { ApiError, lotQueryKeys, type Availability, type SpaceState } from '@mypark/contracts';
 import {
   availabilityReducedFixture,
   errorBody,
@@ -47,6 +47,8 @@ describe('useLiveLot', () => {
   let stream: ControllableStream;
   let restoreNotify: () => void;
   let releaseDriver: () => void;
+  /** The REST fallback stays pending until a test settles it. */
+  let rejectSnapshot: (error: unknown) => void;
 
   beforeEach(() => {
     jest.useFakeTimers();
@@ -56,7 +58,11 @@ describe('useLiveLot', () => {
     queryClient.setQueryData(lotQueryKeys.spaces(LOT), spacesFixture.spaces);
     stream = controllableStream();
     // The first acquirer's deps drive the shared connection; the hook then joins it.
-    releaseDriver = acquireLiveLot(getApiBaseUrl(), LOT, queryClient, { fetchImpl: stream.fetchImpl, random: () => 1 }).release;
+    releaseDriver = acquireLiveLot(getApiBaseUrl(), LOT, queryClient, {
+      fetchImpl: stream.fetchImpl,
+      random: () => 1,
+      fetchSnapshot: () => new Promise((_resolve, reject) => (rejectSnapshot = reject)),
+    }).release;
   });
 
   afterEach(async () => {
@@ -96,6 +102,20 @@ describe('useLiveLot', () => {
 
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: lotQueryKeys.all });
+  });
+
+  test('lot.not_found from the stream and then from the REST snapshot invalidates once', async () => {
+    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+    await renderScreen(<Probe />, { queryClient });
+    await act(async () => stream.respond(503, JSON.stringify(errorBody('internal.unavailable'))));
+    const rejectFirstSnapshot = rejectSnapshot;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10_000);
+      stream.respond(404, JSON.stringify(errorBody('lot.not_found')));
+    });
+    await act(async () => rejectFirstSnapshot(new ApiError({ code: 'lot.not_found', message: 'gone', status: 404 })));
+
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
 });
 

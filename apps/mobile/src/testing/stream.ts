@@ -57,6 +57,12 @@ export function controllableStream() {
               conn.waiting = { resolve, reject };
               flush(conn);
             }),
+          // As on a real stream, a cancel resolves a pending read as done.
+          cancel: async () => {
+            conn.ended = true;
+            flush(conn);
+          },
+          releaseLock: () => {},
         }),
       },
       text: () => Promise.reject(new Error('the body is a stream')),
