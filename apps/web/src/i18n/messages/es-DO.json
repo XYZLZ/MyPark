@@ -190,6 +190,56 @@
     "greeting": "Hola, {name}.",
     "body": "Estás en el área de administración de MyPark."
   },
+  "simulator": {
+    "title": "Consola del simulador",
+    "refreshNote": "Se actualiza cada 2 s",
+    "adminLink": "Consola del simulador",
+    "notConfigured": "El simulador no está configurado en este servidor.",
+    "unreachable": "No pudimos comunicarnos con el simulador. Seguimos intentando.",
+    "status": {
+      "title": "Estado",
+      "running": "En ejecución",
+      "idle": "Inactivo",
+      "draining": "Vaciando",
+      "scenario": "Escenario",
+      "speed": "Velocidad",
+      "seed": "Semilla",
+      "copySeed": "Copiar semilla",
+      "copied": "Copiada",
+      "virtualTime": "Hora virtual",
+      "carsInside": "Carros dentro",
+      "startedAt": "Iniciado",
+      "reachedFull": "El parqueo llegó a estar lleno",
+      "none": "Ninguno"
+    },
+    "scenario": {
+      "idle": "Inactivo",
+      "weekday": "Día laborable",
+      "weekend_peak": "Pico de fin de semana",
+      "fill_to_full": "Llenar hasta completo",
+      "sensor_drift": "Deriva de sensores"
+    },
+    "start": {
+      "title": "Iniciar escenario",
+      "scenario": "Escenario",
+      "speed": "Velocidad",
+      "speedRange": "(1–120)",
+      "seed": "Semilla",
+      "startAt": "Hora de inicio",
+      "optional": "(opcional)",
+      "seedPlaceholder": "Aleatoria",
+      "startAtHint": "Hora de Santo Domingo (−04:00)",
+      "submit": "Iniciar",
+      "disabledRunning": "Deshabilitado: hay un escenario en ejecución.",
+      "disabledDraining": "Deshabilitado: el simulador se está vaciando."
+    },
+    "stop": {
+      "title": "Detener",
+      "now": "Detener ahora",
+      "drain": "Detener cuando salgan los carros",
+      "drainingHint": "Mientras se vacía, solo queda “Detener ahora”."
+    }
+  },
   "acceptInvitation": {
     "title": "Activa tu cuenta de administración",
     "intro": "Ingresa el código de tu invitación y elige una contraseña.",

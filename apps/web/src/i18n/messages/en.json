@@ -190,6 +190,56 @@
     "greeting": "Hello, {name}.",
     "body": "You are in the MyPark administration area."
   },
+  "simulator": {
+    "title": "Simulator console",
+    "refreshNote": "Updates every 2 s",
+    "adminLink": "Simulator console",
+    "notConfigured": "The simulator is not configured on this server.",
+    "unreachable": "We could not reach the simulator. Still trying.",
+    "status": {
+      "title": "Status",
+      "running": "Running",
+      "idle": "Idle",
+      "draining": "Draining",
+      "scenario": "Scenario",
+      "speed": "Speed",
+      "seed": "Seed",
+      "copySeed": "Copy seed",
+      "copied": "Copied",
+      "virtualTime": "Virtual time",
+      "carsInside": "Cars inside",
+      "startedAt": "Started",
+      "reachedFull": "Lot reached full",
+      "none": "None"
+    },
+    "scenario": {
+      "idle": "Idle",
+      "weekday": "Weekday",
+      "weekend_peak": "Weekend peak",
+      "fill_to_full": "Fill to full",
+      "sensor_drift": "Sensor drift"
+    },
+    "start": {
+      "title": "Start scenario",
+      "scenario": "Scenario",
+      "speed": "Speed",
+      "speedRange": "(1–120)",
+      "seed": "Seed",
+      "startAt": "Start time",
+      "optional": "(optional)",
+      "seedPlaceholder": "Random",
+      "startAtHint": "Santo Domingo time (−04:00)",
+      "submit": "Start",
+      "disabledRunning": "Disabled: a scenario is running.",
+      "disabledDraining": "Disabled: the simulator is draining."
+    },
+    "stop": {
+      "title": "Stop",
+      "now": "Stop now",
+      "drain": "Stop after cars leave",
+      "drainingHint": "While the lot drains, only “Stop now” is available."
+    }
+  },
   "acceptInvitation": {
     "title": "Activate your administrator account",
     "intro": "Enter the code from your invitation and choose a password.",

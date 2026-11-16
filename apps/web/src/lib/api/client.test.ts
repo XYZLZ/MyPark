@@ -138,3 +138,26 @@ describe('handleSessionError', () => {
     expect(hardNavigate).not.toHaveBeenCalled();
   });
 });
+
+describe('apiFetch bodyText and raw text parsing', () => {
+  test('apiFetch sends bodyText verbatim with CSRF', async () => {
+    setCsrf('token-9');
+    const fetchMock = stubFetch(jsonResponse(200, successBody({ ok: true })));
+    const exact = '{"seed":9007199254740993}';
+
+    await apiFetch('/api/admin/simulator/scenarios/start', parseOk, { method: 'POST', bodyText: exact });
+
+    expect(fetchMock.mock.calls[0]![1]!.body).toBe(exact);
+    expect(headersOf(fetchMock).get('x-csrf-token')).toBe('token-9');
+    expect(headersOf(fetchMock).get('content-type')).toBe('application/json');
+  });
+
+  test('parse receives the raw response text as its third argument', async () => {
+    stubFetch(new Response('{"data":{"n":9007199254740993}}', { status: 200 }));
+    const seen: string[] = [];
+
+    await apiFetch('/x', (_body, _status, text) => seen.push(text ?? ''));
+
+    expect(seen).toEqual(['{"data":{"n":9007199254740993}}']);
+  });
+});
