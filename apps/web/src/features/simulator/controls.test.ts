@@ -75,4 +75,9 @@ describe('consoleMode', () => {
     expect(consoleMode({ error: apiError('internal.unexpected', 500) }, false)).toBe('error');
     expect(consoleMode({}, false)).toBe('loading');
   });
+
+  test('a 400 or 429 is a generic error, not an unreachable simulator', () => {
+    expect(consoleMode({ error: apiError('http.invalid_json', 400) }, false)).toBe('error');
+    expect(consoleMode({ error: apiError('rate_limit.exceeded', 429) }, false)).toBe('error');
+  });
 });

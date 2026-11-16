@@ -18,7 +18,8 @@ export function consoleMode(result: { data?: StatusResult; error?: unknown }, dr
   if (isNotConfigured(error)) return 'notConfigured';
   if (error !== undefined && error !== null) {
     if (error instanceof ApiError && error.code === 'auth.forbidden') return 'forbidden';
-    if (error instanceof ApiError && !isUnreachable(error) && (error.status ?? 0) >= 500) return 'error';
+    // Any other answer from the simulator or the gateway (5xx, 400, 429…) is an error, not a lost connection.
+    if (error instanceof ApiError && !isUnreachable(error)) return 'error';
     return 'unreachable';
   }
   if (!data) return 'loading';

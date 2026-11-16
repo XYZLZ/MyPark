@@ -45,6 +45,7 @@ function route(handlers: { status: Array<() => Response>; post?: () => Response 
   let polls = 0;
   return stubFetch(async (url) => {
     if (String(url).endsWith('/status')) return handlers.status[Math.min(polls++, handlers.status.length - 1)]!();
+    if (String(url).includes('/events')) return jsonResponse(200, successBody([]));
     return handlers.post!();
   });
 }
@@ -128,7 +129,7 @@ describe('SimulatorConsole', () => {
     fireEvent.click(screen.getByRole('button', { name: S.start.submit }));
     await settle();
 
-    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/status'))).toBe(true);
+    expect(fetchMock.mock.calls.every(([url]) => /\/(status|events)/.test(String(url)))).toBe(true);
     expect(screen.getByText(/Must be at least 1/)).toBeInTheDocument();
   });
 
@@ -217,32 +218,72 @@ describe('SimulatorConsole accessibility and states', () => {
     expect(region).toHaveTextContent(S.status.idle);
   });
 
-  test('the live region announces unreachable and not configured', async () => {
+  test('an unreachable simulator is spoken by the alert only, never twice', async () => {
     stubFetch(async () => {
       throw new TypeError('offline');
     });
     await renderConsole();
-    expect(liveText()).toContain(S.unreachable);
     expect(screen.getByRole('alert')).toHaveTextContent(S.unreachable);
+    expect(liveText().join(' ')).not.toContain(S.unreachable);
   });
 
   test('the live region announces not configured, and the panel itself is not a live region', async () => {
     stubFetch(jsonResponse(404, errorBody('http.not_found')));
     await renderConsole();
     expect(liveText()).toContain(S.notConfigured);
-    expect(screen.getAllByText(S.notConfigured).filter((el) => el.getAttribute('role') === 'status')).toHaveLength(1);
+    const panel = screen.getByRole('heading', { name: S.status.title }).closest('section')!;
+    expect(panel).toHaveTextContent(S.notConfigured);
+    expect(panel).not.toHaveAttribute('role');
+    expect(panel.closest('[role="status"],[role="alert"],[aria-live]')).toBeNull();
+    expect(panel.querySelector('[role="status"],[role="alert"],[aria-live]')).toBeNull();
   });
 
-  test('a 403 and a 500 each show their own message', async () => {
+  test('a 403 shows the forbidden message once', async () => {
     stubFetch(jsonResponse(403, errorBody('auth.forbidden')));
     await renderConsole();
     expect(screen.getByRole('alert')).toHaveTextContent(S.forbidden);
+    expect(liveText().join(' ')).not.toContain(S.forbidden);
   });
 
-  test('a 500 shows the server error message', async () => {
+  test('a 500 shows the server error message once', async () => {
     stubFetch(jsonResponse(500, errorBody('internal.unexpected')));
     await renderConsole();
     expect(screen.getByRole('alert')).toHaveTextContent(S.serverError);
+    expect(liveText().join(' ')).not.toContain(S.serverError);
+  });
+
+  test.each([
+    ['400', 400, 'http.invalid_json'],
+    ['429', 429, 'rate_limit.exceeded'],
+  ])('a %s from the status poll is a generic error, not "could not reach"', async (_name, status, code) => {
+    stubFetch(jsonResponse(status, errorBody(code)));
+    await renderConsole();
+    expect(screen.getByRole('alert')).toHaveTextContent(S.serverError);
+    expect(screen.queryByText(S.unreachable)).not.toBeInTheDocument();
+  });
+
+  test('while the status is unknown the stop buttons say so, not that nothing is running', () => {
+    stubFetch(() => new Promise<Response>(() => undefined));
+    renderWithProviders(<SimulatorConsole lot={null} />, { locale: 'en' });
+    const now = screen.getByRole('button', { name: S.stop.now });
+    expect(now).toBeDisabled();
+    expect(screen.queryByText(S.stop.notRunning)).not.toBeInTheDocument();
+    expect(screen.getByText(S.stop.unknown)).toHaveAttribute('id', now.getAttribute('aria-describedby'));
+  });
+
+  test('when a failed action ends in the not configured panel, focus lands on its heading', async () => {
+    route({ status: [running, () => jsonResponse(404, errorBody('http.not_found'))], post: () => jsonResponse(404, errorBody('http.not_found')) });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: S.stop.now }));
+    await settle();
+    expect(screen.getAllByText(S.notConfigured).length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: S.status.title })).toHaveFocus();
+  });
+
+  test('the first load into not configured does not steal focus', async () => {
+    stubFetch(jsonResponse(404, errorBody('http.not_found')));
+    await renderConsole();
+    expect(screen.getByRole('heading', { name: S.status.title })).not.toHaveFocus();
   });
 
   test('the last badge stays while a later poll fails', async () => {
@@ -263,7 +304,8 @@ describe('SimulatorConsole accessibility and states', () => {
     stubFetch(() => new Promise<Response>(() => undefined));
     renderWithProviders(<SimulatorConsole lot={null} />, { locale: 'en' });
     expect(screen.getByRole('button', { name: S.start.submit })).toBeDisabled();
-    expect(screen.getByText(S.start.disabledLoading)).toBeInTheDocument();
+    const start = screen.getByRole('button', { name: S.start.submit });
+    expect(document.getElementById(start.getAttribute('aria-describedby')!)).toHaveTextContent(S.start.disabledLoading);
     expect(screen.getByText(S.status.loading)).toBeInTheDocument();
   });
 
@@ -272,7 +314,7 @@ describe('SimulatorConsole accessibility and states', () => {
     await renderConsole();
     const now = screen.getByRole('button', { name: S.stop.now });
     expect(now).toBeDisabled();
-    expect(screen.getByText(S.stop.notRunning)).toHaveAttribute('id', now.getAttribute('aria-describedby'));
+    expect(document.getElementById(now.getAttribute('aria-describedby')!)).toHaveTextContent(S.stop.notRunning);
     expect(screen.queryByText(S.stop.drainingHint)).not.toBeInTheDocument();
   });
 

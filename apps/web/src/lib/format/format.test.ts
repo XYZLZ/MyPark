@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { formatMoney } from './money';
-import { formatClock } from './time';
+import { formatClock, formatLogTime } from './time';
 
 // es-DO times use narrow no-break spaces (`a. m.`); compare on plain spaces.
 const normalize = (text: string) => text.replace(/[\s  ]+/g, ' ');
@@ -53,5 +53,17 @@ describe('formatClock', () => {
   test('formatClock gives an empty string for an invalid time instead of throwing', () => {
     expect(formatClock('not a time', 'es-DO')).toBe('');
     expect(formatClock(Number.NaN, 'en')).toBe('');
+  });
+});
+
+describe('formatLogTime', () => {
+  test('is HH:mm:ss, 24 hours, in Santo Domingo, in both locales', () => {
+    expect(formatLogTime('2026-11-15T18:32:05Z', 'es-DO')).toBe('14:32:05');
+    expect(formatLogTime('2026-11-15T18:32:05Z', 'en')).toBe('14:32:05');
+  });
+
+  test('midnight is 00, not 24, and an invalid time gives an empty string', () => {
+    expect(formatLogTime('2026-11-15T04:05:09Z', 'en')).toBe('00:05:09');
+    expect(formatLogTime('nope', 'en')).toBe('');
   });
 });

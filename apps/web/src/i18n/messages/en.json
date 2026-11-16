@@ -241,10 +241,67 @@
       "now": "Stop now",
       "drain": "Stop after cars leave",
       "drainingHint": "While the lot drains, only “Stop now” is available.",
-      "notRunning": "No scenario is running."
+      "notRunning": "No scenario is running.",
+      "unknown": "The status is not known yet."
     },
     "forbidden": "You do not have permission to use the simulator console.",
-    "serverError": "The simulator reported an error. Still trying."
+    "serverError": "The simulator reported an error. Still trying.",
+    "inject": {
+      "title": "Add car",
+      "credential": "Credential",
+      "ticket": "Ticket",
+      "employeeCard": "Employee card",
+      "card": "Card number",
+      "cardPlaceholder": "EMP-001",
+      "hold": "Hold inside until released",
+      "dwell": "Minutes inside",
+      "dwellRange": "(1–600)",
+      "dwellPlaceholder": "Random",
+      "submit": "Add car",
+      "added": "Car {id} added."
+    },
+    "held": {
+      "title": "Held cars",
+      "empty": "No cars are being held.",
+      "lostTicket": "Lost ticket",
+      "lostTicketFor": "Lost ticket for {id}",
+      "leave": "Leave",
+      "leaveCar": "Leave {id}",
+      "other": "Another car",
+      "otherHint": "(id)",
+      "otherPlaceholder": "car-000123",
+      "leaveOther": "Leave"
+    },
+    "fault": {
+      "title": "Sensor fault",
+      "code": "Space",
+      "fault": "Fault",
+      "submit": "Apply",
+      "applied": "Fault applied on {code}",
+      "kind": {
+        "stuck_occupied": "Stuck occupied",
+        "stuck_free": "Stuck free",
+        "silent": "No signal",
+        "none": "Clear fault"
+      }
+    },
+    "log": {
+      "title": "Event log",
+      "caption": "Last 500 events, newest first. Santo Domingo time.",
+      "seq": "#",
+      "time": "Time",
+      "device": "Device",
+      "type": "Type",
+      "result": "Result",
+      "reason": "Reason",
+      "car": "Car",
+      "denied": "Denied",
+      "empty": "No events yet. Start a scenario.",
+      "gap": "Some events were skipped ({from}–{to}).",
+      "run": "New run · {scenario} · {time}",
+      "restarted": "The simulator restarted.",
+      "newEvents": "{count, plural, one {# new event} other {# new events}}"
+    }
   },
   "acceptInvitation": {
     "title": "Activate your administrator account",

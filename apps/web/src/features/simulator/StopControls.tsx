@@ -1,13 +1,13 @@
 'use client';
 
-import { ApiError } from '@mypark/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef } from 'react';
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
-import { translateError, type Translator } from '@/lib/i18n/translate-error';
+import type { Translator } from '@/lib/i18n/translate-error';
 import { useConsoleStore } from '@/providers/simulator-store-provider';
+import { failureMessage } from './action-support';
 import { simulatorKeys, stopScenario } from './api';
 import { isNotConfigured } from './controls';
 
@@ -15,9 +15,21 @@ import { isNotConfigured } from './controls';
  * "Stop after cars leave" sets `draining` on 202 (M2B-45); "Stop now" stays enabled to escalate.
  * `onStopped` runs after a successful stop, so the console can move focus off a button that is now disabled.
  */
-export function StopControls({ canStopNow, canDrain, onStopped }: { canStopNow: boolean; canDrain: boolean; onStopped?: () => void }) {
+export function StopControls({
+  canStopNow,
+  canDrain,
+  statusKnown,
+  onStopped,
+  onNotConfigured,
+}: {
+  canStopNow: boolean;
+  canDrain: boolean;
+  /** False until a status has been read, so the reason does not claim "no scenario is running" about an unknown state. */
+  statusKnown: boolean;
+  onStopped?: () => void;
+  onNotConfigured?: () => void;
+}) {
   const t = useTranslations('simulator.stop');
-  const tSim = useTranslations('simulator');
   const tAll: Translator = useTranslations();
   const queryClient = useQueryClient();
   const setDraining = useConsoleStore((state) => state.setDraining);
@@ -32,7 +44,9 @@ export function StopControls({ canStopNow, canDrain, onStopped }: { canStopNow: 
     },
     // A missing configuration shows in the panel too once the status refetches.
     onError: (error) => {
-      if (isNotConfigured(error)) void queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
+      if (!isNotConfigured(error)) return;
+      onNotConfigured?.();
+      void queryClient.invalidateQueries({ queryKey: simulatorKeys.status });
     },
   });
 
@@ -42,14 +56,10 @@ export function StopControls({ canStopNow, canDrain, onStopped }: { canStopNow: 
 
   const busy = stop.isPending;
   const failure = stop.error;
-  const message = !failure
-    ? null
-    : isNotConfigured(failure)
-      ? tSim('notConfigured')
-      : translateError(tAll, failure instanceof ApiError ? failure : new ApiError({ code: 'internal.unexpected', message: 'unknown' }));
+  const message = failure ? failureMessage(tAll, failure) : null;
 
   // The reason a button is disabled is text tied to it, not only a dimmed button.
-  const reason = !canStopNow ? t('notRunning') : !canDrain ? t('drainingHint') : null;
+  const reason = !statusKnown ? t('unknown') : !canStopNow ? t('notRunning') : !canDrain ? t('drainingHint') : null;
 
   return (
     <section aria-labelledby="sim-stop-title" className="rounded-panel bg-surface p-5">

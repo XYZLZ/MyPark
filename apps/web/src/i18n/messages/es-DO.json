@@ -241,10 +241,67 @@
       "now": "Detener ahora",
       "drain": "Detener cuando salgan los carros",
       "drainingHint": "Mientras se vacía, solo queda “Detener ahora”.",
-      "notRunning": "No hay ningún escenario en ejecución."
+      "notRunning": "No hay ningún escenario en ejecución.",
+      "unknown": "Aún no se conoce el estado."
     },
     "forbidden": "No tienes permiso para usar la consola del simulador.",
-    "serverError": "El simulador informó un error. Seguimos intentando."
+    "serverError": "El simulador informó un error. Seguimos intentando.",
+    "inject": {
+      "title": "Agregar carro",
+      "credential": "Credencial",
+      "ticket": "Ticket",
+      "employeeCard": "Tarjeta de empleado",
+      "card": "Número de tarjeta",
+      "cardPlaceholder": "EMP-001",
+      "hold": "Mantener dentro hasta liberarlo",
+      "dwell": "Minutos dentro",
+      "dwellRange": "(1–600)",
+      "dwellPlaceholder": "Al azar",
+      "submit": "Agregar carro",
+      "added": "Carro {id} agregado."
+    },
+    "held": {
+      "title": "Carros retenidos",
+      "empty": "No hay carros retenidos.",
+      "lostTicket": "Ticket perdido",
+      "lostTicketFor": "Ticket perdido de {id}",
+      "leave": "Salir",
+      "leaveCar": "Salir {id}",
+      "other": "Otro carro",
+      "otherHint": "(id)",
+      "otherPlaceholder": "car-000123",
+      "leaveOther": "Salir"
+    },
+    "fault": {
+      "title": "Falla de sensor",
+      "code": "Espacio",
+      "fault": "Falla",
+      "submit": "Aplicar",
+      "applied": "Falla aplicada en {code}",
+      "kind": {
+        "stuck_occupied": "Atascado ocupado",
+        "stuck_free": "Atascado libre",
+        "silent": "Sin señal",
+        "none": "Quitar falla"
+      }
+    },
+    "log": {
+      "title": "Registro de eventos",
+      "caption": "Últimos 500 eventos, el más reciente arriba. Hora de Santo Domingo.",
+      "seq": "#",
+      "time": "Hora",
+      "device": "Dispositivo",
+      "type": "Tipo",
+      "result": "Resultado",
+      "reason": "Motivo",
+      "car": "Carro",
+      "denied": "Denegado",
+      "empty": "Aún no hay eventos. Inicia un escenario.",
+      "gap": "Se omitieron algunos eventos ({from}–{to}).",
+      "run": "Nueva ejecución · {scenario} · {time}",
+      "restarted": "El simulador se reinició.",
+      "newEvents": "{count, plural, one {# evento nuevo} other {# eventos nuevos}}"
+    }
   },
   "acceptInvitation": {
     "title": "Activa tu cuenta de administración",

@@ -13,3 +13,16 @@ export function formatClock(at: string | number, locale: Locale): string {
     timeZone: 'America/Santo_Domingo',
   }).format(date);
 }
+
+/** The event log's time: `HH:mm:ss`, 24 hours, Santo Domingo, whatever the locale (mockup 5). Invalid gives `''`. */
+export function formatLogTime(at: string, locale: Locale): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'America/Santo_Domingo',
+  }).format(date);
+}
