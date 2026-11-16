@@ -23,6 +23,17 @@ test('flags horizontal after an arrow function or JSX inside another prop', () =
   assert.equal(count('<FlatList renderItem={() => <Row />} data={[]} />'), 0);
 });
 
+test('flags a scroll component with a generic type argument', () => {
+  assert.equal(count('<FlatList<Item> horizontal data={[]} />'), 1);
+  assert.equal(count('<FlatList<Item> data={[]} horizontal={true} />'), 1);
+  assert.equal(count('<FlatList<Item> data={[]} />'), 0);
+  assert.equal(count('<FlatList<Item> {...props} />'), 1);
+});
+
+test('the allow-list is empty: no screen is exempt any more (PF12)', () => {
+  assert.deepEqual(LAYOUT_ALLOW, []);
+});
+
 test('flags the Animated variants and spread props', () => {
   assert.equal(count('<Animated.FlatList horizontal data={[]} />'), 1);
   assert.equal(count('<Animated.SectionList horizontal={true} />'), 1);

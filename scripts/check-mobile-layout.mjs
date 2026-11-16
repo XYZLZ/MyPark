@@ -14,10 +14,7 @@ const MAX_FIXED_WIDTH = 328;
 const REM = 16;
 
 /** Files exempt from every rule. Each entry needs a reason and an owner for removing it. */
-export const LAYOUT_ALLOW = [
-  // M1 Welcome uses a raw ScrollView. Task 11 rewrites it onto ScreenScroll and removes this entry (PF12).
-  'src/features/auth/WelcomeScreen.tsx',
-];
+export const LAYOUT_ALLOW = [];
 
 const STYLE_WIDTH = /\b(width|minWidth|maxWidth)\s*:\s*(\d+(?:\.\d+)?)\b/g;
 const ARBITRARY_WIDTH = /(?<![\w-])(?:min-w|w)-\[(\d+(?:\.\d+)?)(px|rem)\]/g;
@@ -75,6 +72,20 @@ function readTag(text, start) {
   return out;
 }
 
+/** Skips a generic type argument list (`<FlatList<Item> ...`), so its `>` is not read as the end of the tag. */
+function afterTypeArguments(text, start) {
+  if (text[start] !== '<') return start;
+  let depth = 0;
+  for (let i = start; i < text.length; i += 1) {
+    if (text[i] === '<') depth += 1;
+    else if (text[i] === '>') {
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return start;
+}
+
 function scrollerNames(text) {
   const names = new Set(SCROLLERS.flatMap((n) => [n, `Animated.${n}`]));
   for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"]react-native['"]/g)) {
@@ -93,9 +104,9 @@ function scan(path, raw) {
 
   // A `horizontal` prop (or a spread that could carry one) on a scroll view or list.
   const names = scrollerNames(text);
-  for (const m of text.matchAll(/<([A-Za-z][\w.]*)(?=[\s/>])/g)) {
+  for (const m of text.matchAll(/<([A-Za-z][\w.]*)(?=[\s/><])/g)) {
     if (!names.has(m[1])) continue;
-    const attrs = readTag(text, m.index + m[0].length);
+    const attrs = readTag(text, afterTypeArguments(text, m.index + m[0].length));
     if (/(^|\s)horizontal(?!\s*=\s*(\{false\}|"false"|'false'))(?=[\s=/]|$)/.test(attrs)) {
       add(m.index, 'horizontal scroll view or list (nothing may scroll sideways)');
     } else if (attrs.includes('{...}')) {
