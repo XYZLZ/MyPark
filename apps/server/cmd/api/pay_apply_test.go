@@ -324,3 +324,74 @@ func TestApply_LateChargeAfterNotSubmitted(t *testing.T) {
 	}
 	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 }
+
+// Ruling: when the driver already paid again (key B) and the reservation is
+// confirmed, a late charge for the not_submitted attempt A cannot become
+// succeeded (one live fee per reservation). It stays loud and queues no refund;
+// an admin alert and a manual refund follow (S5.1, M4).
+func TestApply_LateChargeWhileRepaid(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502) // attempt A
+	rec, _ := e.reconciler()
+	e.clk.Advance(61 * time.Second)
+	if n, err := rec.Run(t.Context(), e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Run = %d, %v; want 1 (not_submitted)", n, err)
+	}
+	var keyA string
+	if err := e.db.App.QueryRow(t.Context(), `select idempotency_key from payments where id = $1`, f.paymentID).Scan(&keyA); err != nil {
+		t.Fatal(err)
+	}
+
+	// The driver pays again with key B and the reservation confirms.
+	var userID int64
+	if err := e.db.App.QueryRow(t.Context(), `select user_id from reservations where id = $1`, f.rsvRow).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	var paymentB int64
+	if err := database.NewTxRunner(e.db.App).InTx(t.Context(), func(ctx context.Context) error {
+		a, _, err := paymentspg.NewRepo(e.db.App).StartAttempt(ctx, payments.AttemptInput{
+			ReservationID: f.rsvRow, UserID: userID, AmountCents: 15000, ClientKey: "key-apply-0002",
+			Fingerprint: make([]byte, 32), Brand: "visa", Last4: "4242", Now: e.clk.Now(),
+		})
+		paymentB = a.ID
+		return err
+	}); err != nil {
+		t.Fatalf("second attempt: %v", err)
+	}
+	if err := f.svc.Apply(t.Context(), paymentB, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.status(f.rsvID); got != "confirmed" {
+		t.Fatalf("reservation = %s, want confirmed", got)
+	}
+
+	// The stalled request for A finally charges.
+	res, err := e.gw.inner.Charge(t.Context(), payments.ChargeRequest{
+		IdempotencyKey: keyA, AmountCents: 15000,
+		Card: &payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "123"},
+	})
+	if err != nil || res.Outcome != payments.ChargeSucceeded {
+		t.Fatalf("late charge = %+v, %v", res, err)
+	}
+	err = f.svc.Apply(t.Context(), f.paymentID, res)
+	if !errors.Is(err, payments.ErrSuccessAfterFinal) {
+		t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'failed' and failure_code = 'not_submitted'`, f.paymentID); n != 1 {
+		t.Error("payment A must stay failed/not_submitted")
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded'`, paymentB); n != 1 {
+		t.Error("payment B must stay succeeded")
+	}
+	if n := e.count(`select count(*) from refunds`); n != 0 {
+		t.Errorf("refunds = %d, want none (manual refund)", n)
+	}
+	if got := e.status(f.rsvID); got != "confirmed" {
+		t.Errorf("reservation = %s, want confirmed", got)
+	}
+	logs := e.logs.String()
+	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, f.rsvID) || strings.Contains(logs, res.ProviderRef) || strings.Contains(logs, keyA) {
+		t.Errorf("want an error log naming the reservation and no provider ref or key, got %q", logs)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
