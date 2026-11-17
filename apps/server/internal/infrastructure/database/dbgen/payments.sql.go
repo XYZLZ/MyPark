@@ -32,6 +32,28 @@ func (q *Queries) FinalizeFeeFailed(ctx context.Context, arg FinalizeFeeFailedPa
 	return result.RowsAffected(), nil
 }
 
+const finalizeFeeNotSubmitted = `-- name: FinalizeFeeNotSubmitted :execrows
+update payments
+set status = 'failed', failed_at = $1, failure_code = 'not_submitted'
+where id = $2 and kind = 'reservation_fee' and status = 'pending' and created_at < $3
+`
+
+type FinalizeFeeNotSubmittedParams struct {
+	Now    pgtype.Timestamptz
+	ID     int64
+	Cutoff pgtype.Timestamptz
+}
+
+// Fenced on pending and on age (M3B-10): an attempt younger than @cutoff may
+// still have a charge in flight.
+func (q *Queries) FinalizeFeeNotSubmitted(ctx context.Context, arg FinalizeFeeNotSubmittedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finalizeFeeNotSubmitted, arg.Now, arg.ID, arg.Cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finalizeFeeSucceeded = `-- name: FinalizeFeeSucceeded :execrows
 update payments
 set status = 'succeeded', succeeded_at = $1, provider_ref = $2
@@ -286,4 +308,74 @@ func (q *Queries) InsertRefund(ctx context.Context, arg InsertRefundParams) (Ins
 		&i.Status,
 	)
 	return i, err
+}
+
+const listPendingFeesBefore = `-- name: ListPendingFeesBefore :many
+select id, public_id, status, coalesce(failure_code, '')::text as failure_code, idempotency_key, reservation_id, amount_cents
+from payments
+where kind = 'reservation_fee' and status = 'pending' and created_at < $1
+order by created_at, id
+limit $2
+`
+
+type ListPendingFeesBeforeParams struct {
+	Cutoff pgtype.Timestamptz
+	Batch  int32
+}
+
+type ListPendingFeesBeforeRow struct {
+	ID             int64
+	PublicID       uuid.UUID
+	Status         string
+	FailureCode    string
+	IdempotencyKey string
+	ReservationID  pgtype.Int8
+	AmountCents    int64
+}
+
+// The reconcile job's work list (design 9.4): fee attempts still pending after
+// the charge timeout plus a margin. Unlocked on purpose: the gateway is called
+// with no transaction open, and Apply is fenced on pending.
+func (q *Queries) ListPendingFeesBefore(ctx context.Context, arg ListPendingFeesBeforeParams) ([]ListPendingFeesBeforeRow, error) {
+	rows, err := q.db.Query(ctx, listPendingFeesBefore, arg.Cutoff, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPendingFeesBeforeRow{}
+	for rows.Next() {
+		var i ListPendingFeesBeforeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.Status,
+			&i.FailureCode,
+			&i.IdempotencyKey,
+			&i.ReservationID,
+			&i.AmountCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockReservationOfFee = `-- name: LockReservationOfFee :one
+select r.id
+from reservations r
+where r.id = (select p.reservation_id from payments p where p.id = $1 and p.kind = 'reservation_fee')
+for update of r
+`
+
+// The reservation lock a not-submitted mark takes before it touches the payment
+// (lock order: reservations before payments, design 8.1).
+func (q *Queries) LockReservationOfFee(ctx context.Context, paymentID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockReservationOfFee, paymentID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }

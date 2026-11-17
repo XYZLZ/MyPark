@@ -153,11 +153,31 @@ func (r *Repo) Finalize(ctx context.Context, paymentID int64, res payments.Charg
 	return n == 1, nil
 }
 
-// MarkNotSubmitted implements payments.Fees.
-func (r *Repo) MarkNotSubmitted(ctx context.Context, paymentID int64, now time.Time) (bool, error) {
-	n, err := r.q(ctx).FinalizeFeeFailed(ctx, dbgen.FinalizeFeeFailedParams{
-		ID: paymentID, Now: ts(now), FailureCode: text(payments.FailureNotSubmitted),
-	})
+// PendingFeesBefore implements payments.Fees.
+func (r *Repo) PendingFeesBefore(ctx context.Context, cutoff time.Time, limit int) ([]payments.FeePayment, error) {
+	rows, err := r.q(ctx).ListPendingFeesBefore(ctx, dbgen.ListPendingFeesBeforeParams{Cutoff: ts(cutoff), Batch: int32(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("payments: list pending fees: %w", err)
+	}
+	out := make([]payments.FeePayment, len(rows))
+	for i, row := range rows {
+		out[i] = fee(row.ID, row.PublicID, row.Status, row.FailureCode, row.IdempotencyKey, row.ReservationID, row.AmountCents)
+	}
+	return out, nil
+}
+
+// MarkNotSubmitted implements payments.Fees. The reservation is locked first,
+// so it cannot interleave with an Apply of the same payment.
+func (r *Repo) MarkNotSubmitted(ctx context.Context, paymentID int64, cutoff, now time.Time) (bool, error) {
+	tx, err := database.MustTx(ctx)
+	if err != nil {
+		return false, fmt.Errorf("payments: mark %d not submitted: %w", paymentID, err)
+	}
+	q := dbgen.New(tx)
+	if _, err := q.LockReservationOfFee(ctx, paymentID); err != nil {
+		return false, fmt.Errorf("payments: lock reservation of %d: %w", paymentID, err)
+	}
+	n, err := q.FinalizeFeeNotSubmitted(ctx, dbgen.FinalizeFeeNotSubmittedParams{ID: paymentID, Now: ts(now), Cutoff: ts(cutoff)})
 	if err != nil {
 		return false, fmt.Errorf("payments: mark %d not submitted: %w", paymentID, err)
 	}

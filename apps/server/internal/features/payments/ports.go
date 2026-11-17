@@ -62,8 +62,15 @@ type Fees interface {
 	// Finalize applies a gateway result to a pending payment: succeeded or
 	// failed. It is fenced on status = 'pending' and reports whether it applied.
 	Finalize(ctx context.Context, paymentID int64, res ChargeResult, now time.Time) (applied bool, err error)
-	// MarkNotSubmitted fails a pending payment the gateway never saw.
-	MarkNotSubmitted(ctx context.Context, paymentID int64, now time.Time) (bool, error)
+	// PendingFeesBefore lists up to limit pending fee payments created before
+	// cutoff, oldest first. It is an unlocked read: the reconcile job calls
+	// the gateway with no transaction open.
+	PendingFeesBefore(ctx context.Context, cutoff time.Time, limit int) ([]FeePayment, error)
+	// MarkNotSubmitted fails a pending payment the gateway never saw. It acts
+	// only on an attempt created before cutoff (M3B-10: a younger one may still
+	// have a charge in flight) and must run in a transaction, where it takes the
+	// reservation lock before touching the payment (design 8.1).
+	MarkNotSubmitted(ctx context.Context, paymentID int64, cutoff, now time.Time) (bool, error)
 	// LiveFee is the pending, succeeded or refunded fee of the reservation.
 	LiveFee(ctx context.Context, reservationID int64) (FeePayment, bool, error)
 	// LatestFee is the newest fee attempt of the reservation, whatever its status.

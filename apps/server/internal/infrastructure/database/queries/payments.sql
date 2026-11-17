@@ -50,3 +50,28 @@ limit 1;
 insert into refunds (public_id, payment_id, amount_cents, reason, status, idempotency_key, next_attempt_at, created_at)
 values (@public_id, @payment_id, @amount_cents, @reason, 'pending', @idempotency_key, @now, @now)
 returning id, public_id, payment_id, amount_cents, reason, status;
+
+-- name: ListPendingFeesBefore :many
+-- The reconcile job's work list (design 9.4): fee attempts still pending after
+-- the charge timeout plus a margin. Unlocked on purpose: the gateway is called
+-- with no transaction open, and Apply is fenced on pending.
+select id, public_id, status, coalesce(failure_code, '')::text as failure_code, idempotency_key, reservation_id, amount_cents
+from payments
+where kind = 'reservation_fee' and status = 'pending' and created_at < @cutoff
+order by created_at, id
+limit sqlc.arg('batch');
+
+-- name: LockReservationOfFee :one
+-- The reservation lock a not-submitted mark takes before it touches the payment
+-- (lock order: reservations before payments, design 8.1).
+select r.id
+from reservations r
+where r.id = (select p.reservation_id from payments p where p.id = @payment_id and p.kind = 'reservation_fee')
+for update of r;
+
+-- name: FinalizeFeeNotSubmitted :execrows
+-- Fenced on pending and on age (M3B-10): an attempt younger than @cutoff may
+-- still have a charge in flight.
+update payments
+set status = 'failed', failed_at = @now, failure_code = 'not_submitted'
+where id = @id and kind = 'reservation_fee' and status = 'pending' and created_at < @cutoff;

@@ -133,7 +133,7 @@ func TestMarkNotSubmitted_AndLatestFee(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := e.fees.MarkNotSubmitted(ctx, a.ID, now); err != nil || !ok {
+		if ok, err := e.fees.MarkNotSubmitted(ctx, a.ID, now.Add(time.Second), now); err != nil || !ok {
 			t.Fatalf("mark = %v %v", ok, err)
 		}
 		if _, ok, _ := e.fees.LiveFee(ctx, e.rsv); ok {
@@ -173,5 +173,64 @@ func TestOneLiveFeeByIndex(t *testing.T) {
 		         'key-direct-3', $3, 'visa', '4242')`, e.rsv, e.user, bytes32(9))
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); !ok || pgErr.Code != "23505" || pgErr.ConstraintName != "payments_reservation_live_key" {
 		t.Errorf("second pending fee = %v, want 23505 payments_reservation_live_key", err)
+	}
+}
+
+// M3B-10: MarkNotSubmitted acts only on an attempt created before the cutoff,
+// and it needs the transaction that holds the reservation lock.
+func TestMarkNotSubmitted_OnlyBeforeCutoffAndInATx(t *testing.T) {
+	e := newEnv(t)
+	var id int64
+	if err := e.tx.InTx(t.Context(), func(ctx context.Context) error {
+		a, _, err := e.fees.StartAttempt(ctx, e.input("key-aaaa-1111", 1))
+		id = a.ID
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.fees.MarkNotSubmitted(t.Context(), id, now.Add(time.Hour), now); !errors.Is(err, database.ErrNoTx) {
+		t.Errorf("outside a transaction = %v, want ErrNoTx", err)
+	}
+	if err := e.tx.InTx(t.Context(), func(ctx context.Context) error {
+		if ok, err := e.fees.MarkNotSubmitted(ctx, id, now, now); err != nil || ok { // created_at == cutoff: not older
+			t.Errorf("attempt created at the cutoff: ok=%v err=%v, want left alone", ok, err)
+		}
+		if ok, err := e.fees.MarkNotSubmitted(ctx, id, now.Add(time.Second), now.Add(time.Minute)); err != nil || !ok {
+			t.Errorf("older attempt: ok=%v err=%v, want marked", ok, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var status, code string
+	var failedAt time.Time
+	if err := e.db.App.QueryRow(t.Context(), `select status, failure_code, failed_at from payments where id = $1`, id).Scan(&status, &code, &failedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || code != "not_submitted" || !failedAt.Equal(now.Add(time.Minute)) {
+		t.Errorf("payment = %s %s %v, want failed not_submitted at the given now", status, code, failedAt)
+	}
+}
+
+func TestPendingFeesBefore(t *testing.T) {
+	e := newEnv(t)
+	if err := e.tx.InTx(t.Context(), func(ctx context.Context) error {
+		_, _, err := e.fees.StartAttempt(ctx, e.input("key-aaaa-1111", 1))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		cutoff time.Time
+		want   int
+	}{"created at the cutoff": {now, 0}, "before the cutoff": {now.Add(time.Second), 1}} {
+		got, err := e.fees.PendingFeesBefore(t.Context(), tc.cutoff, 20)
+		if err != nil || len(got) != tc.want {
+			t.Errorf("%s: %d rows, %v; want %d", name, len(got), err, tc.want)
+		}
+	}
+	got, _ := e.fees.PendingFeesBefore(t.Context(), now.Add(time.Second), 20)
+	if got[0].GatewayKey == "" || got[0].AmountCents != 15000 || got[0].ReservationID != e.rsv || got[0].Status != "pending" {
+		t.Errorf("row = %+v", got[0])
 	}
 }
