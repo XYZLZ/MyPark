@@ -14,6 +14,8 @@ var (
 	VehicleWriteUser = Rule{Name: "vehicle_write_user", Limit: 20, Window: time.Minute, Key: KeyUser, Prefix: "veh:", FailOpen: true}
 	// ReservationWriteUser throttles reservation creation (design 7.3). It fails open like the vehicle write rule.
 	ReservationWriteUser = Rule{Name: "reservation_write_user", Limit: 30, Window: time.Minute, Key: KeyUser, Prefix: "rsv_w:", FailOpen: true}
+	// ReservationPayUser throttles card attempts (design 7.6). It fails closed: a card must not be probed while the limiter is down.
+	ReservationPayUser = Rule{Name: "reservation_pay_user", Limit: 10, Window: 10 * time.Minute, Key: KeyUser, Prefix: "rsv_pay:"}
 )
 
 // DeleteAccountUser throttles DELETE /v1/me. The endpoint verifies the

@@ -14,6 +14,10 @@ const (
 	TplPasswordChanged Template = "password_changed"
 	TplAccountExists   Template = "account_exists"
 	TplAdminInvite     Template = "admin_invite"
+
+	// Reservation templates. Their files and the allNames entry arrive with S5.1.
+	TplReservationConfirmed Template = "reservation_confirmed"
+	TplReservationCancelled Template = "reservation_cancelled"
 )
 
 // Email is one message to enqueue. Locale is the users.locale of the
