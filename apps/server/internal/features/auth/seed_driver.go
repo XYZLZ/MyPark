@@ -57,16 +57,20 @@ func SeedDriver(ctx context.Context, d SeedDeps, in SeedDriverInput) (created bo
 	return rows == 1, nil
 }
 
-// SeedDriverID returns the id of the live account with this email, for the
-// seed to attach the driver's vehicle.
-func SeedDriverID(ctx context.Context, email string) (int64, error) {
+// SeedDriverID returns the id of the live driver account with this email, for
+// the seed to attach the driver's vehicle. ok is false when the email is held
+// by an account that is not a driver: the seed must not touch it.
+func SeedDriverID(ctx context.Context, email string) (id int64, ok bool, err error) {
 	tx, err := database.MustTx(ctx)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	id, err := dbgen.New(tx).GetLiveUserIDByEmail(ctx, NormalizeEmail(email))
+	id, err = dbgen.New(tx).GetLiveDriverIDByEmail(ctx, NormalizeEmail(email))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
 	if err != nil {
-		return 0, fmt.Errorf("auth: seed driver id: %w", safeSeedError(err))
+		return 0, false, fmt.Errorf("auth: seed driver id: %w", safeSeedError(err))
 	}
-	return id, nil
+	return id, true, nil
 }

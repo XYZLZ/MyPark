@@ -229,9 +229,9 @@ func (SeedDrivers) LogValue() slog.Value { return slog.StringValue(redacted) }
 
 // LoadSeedDrivers reads the simulated driver seed variables. With
 // SEED_SIMULATOR_DRIVERS unset or false it returns a disabled value and
-// ignores every other variable. When true it requires SIMULATOR_FLEET_SECRET
-// under the fleet seed's rule, and refuses the committed dev value when
-// APP_ENV=production. Errors name variables and never include a value.
+// ignores every other variable. When true it refuses APP_ENV=production
+// outright (the accounts have known emails and derivable passwords) and
+// requires SIMULATOR_FLEET_SECRET under the fleet seed's rule. Errors name variables and never include a value.
 func LoadSeedDrivers(getenv func(string) string) (SeedDrivers, error) {
 	flag := strings.TrimSpace(getenv(EnvSeedSimulatorDrivers))
 	if flag == "" {
@@ -245,6 +245,10 @@ func LoadSeedDrivers(getenv func(string) string) (SeedDrivers, error) {
 		return SeedDrivers{}, nil
 	}
 	production := valueOr(getenv(EnvAppEnv), DefaultEnv) == "production"
+	if production {
+		// Known emails with a derivable password: development only (design R7).
+		return SeedDrivers{}, fmt.Errorf("%s must not be true in production", EnvSeedSimulatorDrivers)
+	}
 	fleet, err := loadSecretVar(getenv, EnvSimulatorFleetSecret, DevSimulatorFleetSecret, production)
 	if err != nil {
 		return SeedDrivers{}, fmt.Errorf("invalid seed configuration: %w", err)

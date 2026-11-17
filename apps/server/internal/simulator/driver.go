@@ -349,12 +349,12 @@ func (c *DriverClient) Pay(ctx context.Context, n int, reservationID uuid.UUID, 
 }
 
 // QR fetches the entry token of a confirmed reservation. The token is a
-// secret and a plain string, because the gate payload must carry it verbatim:
-// callers must never log it.
-func (c *DriverClient) QR(ctx context.Context, n int, reservationID uuid.UUID) (string, error) {
+// secret: it is a secret.String, so call Reveal only where the gate payload is
+// built, and never log the result.
+func (c *DriverClient) QR(ctx context.Context, n int, reservationID uuid.UUID) (secret.String, error) {
 	var out struct {
 		Data struct {
-			Token string `json:"token"`
+			Token secret.String `json:"token"`
 		} `json:"data"`
 	}
 	if _, err := c.authed(ctx, n, http.MethodGet, "/v1/reservations/"+reservationID.String()+"/qr", nil, nil, &out); err != nil {

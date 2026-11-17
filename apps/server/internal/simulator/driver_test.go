@@ -23,6 +23,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport/fakeclock"
 )
 
+const qrToken = "QRTOKEN-never-log-me-0123456789"
+
 var driverFleet = secret.Bytes(bytes.Repeat([]byte("f"), 32))
 
 // fakeAPI is a minimal driver API: login, refresh (which rotates, so a reused
@@ -72,6 +74,12 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.refreshes.Add(1)
 		f.issue(w)
+	case "/v1/reservations/" + uuid.Nil.String() + "/qr":
+		if r.Header.Get("Authorization") != "Bearer "+f.access {
+			apiErr(w, 401, "auth.unauthorized")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"token": qrToken}})
 	case "/v1/vehicles":
 		if r.Header.Get("Authorization") != "Bearer "+f.access {
 			apiErr(w, 401, "auth.unauthorized")
@@ -163,6 +171,13 @@ func TestDriverClient_NeverLogsSecrets(t *testing.T) {
 	if _, err := c.Vehicle(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
+	tok, err := c.QR(ctx, 2, uuid.Nil)
+	if err != nil || tok.Reveal() != qrToken {
+		t.Fatalf("QR = %v, %v", tok, err)
+	}
+	if fmt.Sprintf("%v %+v %#v", tok, tok, tok) != "[redacted] [redacted] [redacted]" {
+		t.Error("QR token prints itself")
+	}
 	api.failPay = true
 	_, payErr := c.Pay(ctx, 2, uuid.Nil, "key-0001-abcdef")
 	if payErr == nil {
@@ -170,7 +185,7 @@ func TestDriverClient_NeverLogsSecrets(t *testing.T) {
 	}
 	password := devicefleet.SimDriverPassword(driverFleet, devicefleet.SimDriverEmail(2)).Reveal()
 	out := logs.String() + payErr.Error() + fmt.Sprintf("%v %+v %#v %v", c, c, c, simulator.DriverClientConfig{Fleet: driverFleet})
-	for _, secretText := range []string{password, "access-token-1", "refresh-token-1", "4242424242424242", string(driverFleet)} {
+	for _, secretText := range []string{password, "access-token-1", "refresh-token-1", "4242424242424242", string(driverFleet), qrToken} {
 		if strings.Contains(out, secretText) {
 			t.Errorf("output contains secret %q...", secretText[:6])
 		}

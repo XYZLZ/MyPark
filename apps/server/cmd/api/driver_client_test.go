@@ -38,7 +38,7 @@ func TestDriverClient_Flow(t *testing.T) {
 			}); err != nil {
 				return err
 			}
-			id, err := auth.SeedDriverID(ctx, email)
+			id, _, err := auth.SeedDriverID(ctx, email)
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func TestDriverClient_Flow(t *testing.T) {
 		t.Fatalf("Pay = %q, %v", status, err)
 	}
 	token, err := c.QR(t.Context(), 1, rsv.ID)
-	if err != nil || len(token) != 86 {
-		t.Fatalf("QR: %d chars, %v, want 86", len(token), err)
+	if err != nil || len(token.Reveal()) != 86 {
+		t.Fatalf("QR: %d chars, %v, want 86", len(token.Reveal()), err)
 	}
 }

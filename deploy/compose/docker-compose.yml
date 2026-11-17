@@ -96,7 +96,7 @@ services:
       SIMULATOR_FLEET_SECRET: ${SIMULATOR_FLEET_SECRET:-WXDXaWhcsK1yFwswbHoQjtSo1CqGtuoMo6QHfFvF7dY=}
       # Simulated drivers (M3B-44): 20 drivers (sim-driver-NN@mypark.test) whose
       # passwords derive from SIMULATOR_FLEET_SECRET; only argon2id hashes are
-      # stored. Refused when APP_ENV=production with the dev secret.
+      # stored. Refused when APP_ENV=production.
       SEED_SIMULATOR_DRIVERS: ${SEED_SIMULATOR_DRIVERS:-true} # dev only
     depends_on:
       postgres:

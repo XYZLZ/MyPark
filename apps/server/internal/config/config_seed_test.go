@@ -109,11 +109,23 @@ func TestLoadSeedDrivers(t *testing.T) {
 		t.Errorf("SeedDrivers prints its secret: %s", s)
 	}
 	_, err = config.LoadSeedDrivers(env(map[string]string{"SEED_SIMULATOR_DRIVERS": "true", "APP_ENV": "production", "SIMULATOR_FLEET_SECRET": config.DevSimulatorFleetSecret}))
-	if err == nil || !strings.Contains(err.Error(), "SIMULATOR_FLEET_SECRET must not be the development default in production") {
+	if err == nil || !strings.Contains(err.Error(), "must not be true in production") {
 		t.Errorf("production with the dev secret: err = %v", err)
 	}
 	_, err = config.LoadSeedDrivers(env(map[string]string{"SEED_SIMULATOR_DRIVERS": "true"}))
 	if err == nil || !strings.Contains(err.Error(), "SIMULATOR_FLEET_SECRET is required") {
 		t.Errorf("missing secret: err = %v", err)
+	}
+}
+
+func TestLoadSeedDrivers_RefusedInProductionWhateverTheSecret(t *testing.T) {
+	_, err := config.LoadSeedDrivers(seedEnv(map[string]string{
+		"SEED_SIMULATOR_DRIVERS": "true", "APP_ENV": "production", "SIMULATOR_FLEET_SECRET": b64(32, 9),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "SEED_SIMULATOR_DRIVERS must not be true in production") {
+		t.Errorf("production with a custom secret: err = %v", err)
+	}
+	if err == nil || strings.Contains(err.Error(), b64(32, 9)) {
+		t.Errorf("error echoes the secret: %v", err)
 	}
 }

@@ -272,3 +272,41 @@ func TestSeed_SimDriversRefuseDevSecretInProduction(t *testing.T) {
 		t.Fatal("run accepted the dev fleet secret in production")
 	}
 }
+
+func TestSeed_SimDriversRefusedInProductionWithCustomSecret(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	env := driversSeedEnv(db.AppURL)
+	env["APP_ENV"] = "production"
+	env["SIMULATOR_FLEET_SECRET"] = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	if err := run(t.Context(), func(k string) string { return env[k] }, io.Discard); err == nil {
+		t.Fatal("run seeded simulated drivers in production")
+	}
+	var n int
+	if err := db.App.QueryRow(t.Context(), "select count(*) from users").Scan(&n); err != nil || n != 0 {
+		t.Errorf("users = %d, %v, want 0", n, err)
+	}
+}
+
+func TestSeed_SimDriverEmailHeldByAnAdminGetsNoVehicle(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	email := devicefleet.SimDriverEmail(5)
+	if _, err := db.Super.Exec(t.Context(), `insert into users (email, password_hash, first_name, last_name, role, status, locale, email_verified_at)
+		values ($1, 'x', 'Some', 'Admin', 'admin', 'active', 'en', now())`, email); err != nil {
+		t.Fatal(err)
+	}
+	env := driversSeedEnv(db.AppURL)
+	var out bytes.Buffer
+	if err := run(t.Context(), func(k string) string { return env[k] }, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var vehicles int
+	if err := db.App.QueryRow(t.Context(), "select count(*) from vehicles v join users u on u.id = v.user_id where u.email = $1", email).Scan(&vehicles); err != nil || vehicles != 0 {
+		t.Errorf("vehicles on the admin account = %d, %v, want 0", vehicles, err)
+	}
+	if err := db.App.QueryRow(t.Context(), "select count(*) from vehicles").Scan(&vehicles); err != nil || vehicles != 19 {
+		t.Errorf("vehicles = %d, %v, want 19", vehicles, err)
+	}
+	if !strings.Contains(out.String(), "not a driver") || strings.Contains(out.String(), email) {
+		t.Errorf("want a warning without the email, got %s", out.String())
+	}
+}

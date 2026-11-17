@@ -269,3 +269,6 @@ on conflict (email) where deleted_at is null do nothing;
 
 -- name: GetLiveUserIDByEmail :one
 select id from users where email = @email and deleted_at is null;
+
+-- name: GetLiveDriverIDByEmail :one
+select id from users where email = @email and deleted_at is null and role = 'driver';

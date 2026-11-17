@@ -117,7 +117,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 			}
 		}
 		if drivers.Enabled() {
-			if driversSeeded, err = seedSimDrivers(ctx, deps, drivers.FleetSecret()); err != nil {
+			if driversSeeded, err = seedSimDrivers(ctx, log, deps, drivers.FleetSecret()); err != nil {
 				return err
 			}
 		}
@@ -154,7 +154,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 // seedSimDrivers creates the simulated drivers and their one vehicle each
 // (M3B-44) and returns how many drivers were new. Passwords derive from the
 // fleet secret and only their hashes are stored.
-func seedSimDrivers(ctx context.Context, deps auth.SeedDeps, fleet secret.Bytes) (int, error) {
+func seedSimDrivers(ctx context.Context, log *slog.Logger, deps auth.SeedDeps, fleet secret.Bytes) (int, error) {
 	created := 0
 	for n := 1; n <= devicefleet.SimDriverCount; n++ {
 		email := devicefleet.SimDriverEmail(n)
@@ -169,9 +169,14 @@ func seedSimDrivers(ctx context.Context, deps auth.SeedDeps, fleet secret.Bytes)
 		if isNew {
 			created++
 		}
-		ownerID, err := auth.SeedDriverID(ctx, email)
+		ownerID, isDriver, err := auth.SeedDriverID(ctx, email)
 		if err != nil {
 			return created, err
+		}
+		if !isDriver {
+			// A live non-driver account holds the address: leave it alone. No email in the log.
+			log.Warn("simulated driver skipped: its address is held by an account that is not a driver", "driver", n)
+			continue
 		}
 		err = vehicles.SeedVehicle(ctx, ownerID, devicefleet.SimDriverPlate(n), "Toyota", "Corolla", "Gris", deps.Clock.Now())
 		if err != nil {

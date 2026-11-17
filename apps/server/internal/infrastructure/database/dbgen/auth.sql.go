@@ -212,6 +212,17 @@ func (q *Queries) FindUserForLogin(ctx context.Context, email string) (FindUserF
 	return i, err
 }
 
+const getLiveDriverIDByEmail = `-- name: GetLiveDriverIDByEmail :one
+select id from users where email = $1 and deleted_at is null and role = 'driver'
+`
+
+func (q *Queries) GetLiveDriverIDByEmail(ctx context.Context, email string) (int64, error) {
+	row := q.db.QueryRow(ctx, getLiveDriverIDByEmail, email)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getLiveUserIDByEmail = `-- name: GetLiveUserIDByEmail :one
 select id from users where email = $1 and deleted_at is null
 `
