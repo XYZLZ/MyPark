@@ -71,3 +71,21 @@ where lot_id = @lot_id and slot_start >= @window_start and slot_start < @window_
 -- The check (held >= 0) catches a double release.
 update reservation_slot_loads set held = held - 1
 where lot_id = @lot_id and slot_start >= @window_start and slot_start < @window_end;
+
+-- name: CountEffectiveHolds :one
+-- Confirmed reservations whose hold window contains @now (design s8.4).
+select count(*)::int from reservations
+where lot_id = @lot_id and status = 'confirmed' and hold_window @> @now::timestamptz;
+
+
+-- name: CountUpcomingArrivals :one
+-- Confirmed arrivals in (@now, @until] (design s8.4).
+select count(*)::int from reservations
+where lot_id = @lot_id and status = 'confirmed' and arrival_at > @now and arrival_at <= @until;
+
+
+-- name: VehicleHasActiveReservation :one
+select exists (
+    select 1 from reservations
+    where vehicle_id = @vehicle_id and status in ('pending_payment', 'confirmed', 'checked_in')
+) as active;

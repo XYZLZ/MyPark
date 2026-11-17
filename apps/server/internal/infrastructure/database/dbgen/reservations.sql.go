@@ -12,6 +12,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEffectiveHolds = `-- name: CountEffectiveHolds :one
+select count(*)::int from reservations
+where lot_id = $1 and status = 'confirmed' and hold_window @> $2::timestamptz
+`
+
+type CountEffectiveHoldsParams struct {
+	LotID int64
+	Now   pgtype.Timestamptz
+}
+
+// Confirmed reservations whose hold window contains @now (design s8.4).
+func (q *Queries) CountEffectiveHolds(ctx context.Context, arg CountEffectiveHoldsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countEffectiveHolds, arg.LotID, arg.Now)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countUpcomingArrivals = `-- name: CountUpcomingArrivals :one
+select count(*)::int from reservations
+where lot_id = $1 and status = 'confirmed' and arrival_at > $2 and arrival_at <= $3
+`
+
+type CountUpcomingArrivalsParams struct {
+	LotID int64
+	Now   pgtype.Timestamptz
+	Until pgtype.Timestamptz
+}
+
+// Confirmed arrivals in (@now, @until] (design s8.4).
+func (q *Queries) CountUpcomingArrivals(ctx context.Context, arg CountUpcomingArrivalsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countUpcomingArrivals, arg.LotID, arg.Now, arg.Until)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const decSlotLoads = `-- name: DecSlotLoads :exec
 update reservation_slot_loads set held = held - 1
 where lot_id = $1 and slot_start >= $2 and slot_start < $3
@@ -322,4 +359,18 @@ func (q *Queries) ReadSlotLoads(ctx context.Context, arg ReadSlotLoadsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const vehicleHasActiveReservation = `-- name: VehicleHasActiveReservation :one
+select exists (
+    select 1 from reservations
+    where vehicle_id = $1 and status in ('pending_payment', 'confirmed', 'checked_in')
+) as active
+`
+
+func (q *Queries) VehicleHasActiveReservation(ctx context.Context, vehicleID int64) (bool, error) {
+	row := q.db.QueryRow(ctx, vehicleHasActiveReservation, vehicleID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
 }

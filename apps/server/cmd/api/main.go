@@ -137,7 +137,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	// One hub fans lot changes out to every stream. Its listener holds a
 	// dedicated connection, hijacked out of the request pool (design §11.6).
 	// REST and SSE share one availability service, so both see the same
-	// reservation holds when M3 replaces NoReservations.
+	// reservation holds.
 	availSvc := newAvailabilityService(pool, clock.System{})
 	hub := availability.NewHub(availSvc, clock.System{}, log)
 	listener := pubsub.New(pool, log, pubsub.Handlers{
@@ -290,8 +290,8 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		Store: deviceRepo,
 		Gate: gate.NewService(gate.Deps{
 			Repo: gatepg.NewRepo(), Clock: d.clock, Log: d.log, Tariffs: tariffSvc, Audit: auditRec,
-			// NoReservations until M3 (M2C-1); ticket codes come from crypto/rand.
-			Holds: availability.NoReservations{}, CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
+			// Real reservation holds since M3; ticket codes come from crypto/rand.
+			Holds: reservations.NewHolds(d.pool), CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
 		}),
 		Sealer:     d.sealer,
 		CardPepper: d.cfg.CardUIDPepper(),
@@ -313,9 +313,9 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	})
 	auth.NewHandler(authSvc, validation.New(), d.limiter, d.keys, d.log).Register(r)
 
-	// NoReservations is the M1 checker (OC-29); M3 swaps in the reservations adapter.
+	// A vehicle with a pending, confirmed or checked-in reservation cannot be deleted.
 	vehicleSvc := vehicles.NewService(tx, vehiclespg.NewRepo(d.pool),
-		vehicles.NoReservations{}, d.cfg.MaxVehiclesPerUser(), d.clock)
+		reservations.NewVehicleChecker(d.pool), d.cfg.MaxVehiclesPerUser(), d.clock)
 	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
 
 	reservations.NewHandler(reservations.NewService(reservations.Deps{
@@ -332,8 +332,8 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins()), r.Routes()
 }
 
-// newAvailabilityService builds the availability service. NoReservations
-// until M3 (M2C-1).
+// newAvailabilityService builds the availability service over the real
+// reservation holds.
 func newAvailabilityService(pool *pgxpool.Pool, clk clock.Clock) *availability.Service {
-	return availability.NewService(availabilitypg.NewRepo(pool), availability.NoReservations{}, clk)
+	return availability.NewService(availabilitypg.NewRepo(pool), reservations.NewHolds(pool), clk)
 }
