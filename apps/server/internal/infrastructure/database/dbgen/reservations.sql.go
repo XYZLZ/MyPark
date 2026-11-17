@@ -699,6 +699,64 @@ func (q *Queries) ListDueNoShows(ctx context.Context, arg ListDueNoShowsParams) 
 	return items, nil
 }
 
+const listDueReminders = `-- name: ListDueReminders :many
+select r.id, r.public_id, r.user_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.status = 'confirmed'
+  and r.arrival_at > $1::timestamptz
+  and r.arrival_at <= ($1::timestamptz + interval '30 minutes')
+  and r.confirmed_at <= r.arrival_at - interval '30 minutes'
+  and r.id > $2
+  and not exists (select 1 from outbox_messages o where o.dedupe_key = 'reservation_reminder:' || r.public_id::text)
+order by r.id
+limit $3::int
+`
+
+type ListDueRemindersParams struct {
+	Now      pgtype.Timestamptz
+	AfterID  int64
+	RowLimit int32
+}
+
+type ListDueRemindersRow struct {
+	ID          int64
+	PublicID    uuid.UUID
+	UserID      int64
+	ArrivalAt   pgtype.Timestamptz
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+}
+
+// The reminder job's candidates (M3B-41): confirmed arrivals within 30 minutes
+// that were booked at least 30 minutes ahead and have no reminder queued yet.
+func (q *Queries) ListDueReminders(ctx context.Context, arg ListDueRemindersParams) ([]ListDueRemindersRow, error) {
+	rows, err := q.db.Query(ctx, listDueReminders, arg.Now, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDueRemindersRow{}
+	for rows.Next() {
+		var i ListDueRemindersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.UserID,
+			&i.ArrivalAt,
+			&i.WindowStart,
+			&i.WindowEnd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueUnpaid = `-- name: ListDueUnpaid :many
 select id from reservations
 where status = 'pending_payment' and payment_due_at <= $1 and id > $2

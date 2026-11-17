@@ -232,4 +232,16 @@ type ExpiryRepo interface {
 	BlockUser(ctx context.Context, userID int64, now time.Time, blockDays int) (time.Time, error)
 	// PolicyByID reads a captured policy version; only the no-show fields are set.
 	PolicyByID(ctx context.Context, id int64) (Policy, error)
+	// ListDueReminders lists the confirmed reservations to remind at now, ascending
+	// by id after afterID: arrival within 30 minutes, booked at least 30 minutes
+	// ahead, and no reminder in the outbox yet (M3B-41).
+	ListDueReminders(ctx context.Context, now time.Time, afterID int64, limit int) ([]ReminderRow, error)
+}
+
+// ReminderRow is a reservation due a reminder email.
+type ReminderRow struct {
+	ID, UserID int64
+	PublicID   uuid.UUID
+	ArrivalAt  time.Time
+	Window     Window
 }

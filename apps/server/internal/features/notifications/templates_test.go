@@ -183,3 +183,23 @@ func TestTemplates_ReservationNoShow(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplates_ReservationReminder(t *testing.T) {
+	data := map[string]string{"arrival_at": "2026-12-01 13:00", "window": "2026-12-01 12:45 - 2026-12-01 13:20"}
+	subjects := map[string]string{}
+	for _, locale := range []string{"es-DO", "en"} {
+		subject, plain, html, err := notifications.Render(notifications.TplReservationReminder, locale, data)
+		if err != nil || subject == "" {
+			t.Fatalf("%s: %q, %v", locale, subject, err)
+		}
+		subjects[locale] = subject
+		for name, body := range map[string]string{"text": plain, "html": html} {
+			if !strings.Contains(body, "2026-12-01 13:00") || !strings.Contains(body, "12:45") || !strings.Contains(body, brandLine) {
+				t.Errorf("%s %s: arrival, window or brand line missing: %s", locale, name, body)
+			}
+		}
+	}
+	if subjects["es-DO"] == subjects["en"] {
+		t.Errorf("subjects = %v, want one per locale", subjects)
+	}
+}

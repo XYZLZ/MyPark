@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
 )
 
 // expiryBatch is how many candidates one page of an expiry job reads (design 12).
@@ -156,4 +161,129 @@ func (j *Jobs) expireNoShowOne(ctx context.Context, id int64, now time.Time) (ex
 		return nil
 	})
 	return expired && err == nil, err
+}
+
+// reminderLead is how long before arrival the reminder goes out (M3B-41).
+const reminderLead = 30 * time.Minute
+
+// Reminders enqueues the reservation_reminder email for every confirmed
+// reservation arriving within the next 30 minutes that was booked at least 30
+// minutes ahead (a later booking already has its confirmation email), and
+// returns how many it queued (FR-NOTIF-1, M3B-41). The outbox dedupe key
+// reservation_reminder:<public_id> makes a repeated or concurrent run harmless,
+// and the candidate query skips reservations already reminded. A reservation
+// cancelled between the list and the enqueue may still get one reminder; the
+// window is milliseconds and the mail names its arrival time.
+func (j *Jobs) Reminders(ctx context.Context, now time.Time) (int, error) {
+	var sent int
+	var errs []error
+	var after int64
+	for {
+		rows, err := j.s.repo.ListDueReminders(ctx, now, after, expiryBatch)
+		if err != nil {
+			return sent, errors.Join(append(errs, err)...)
+		}
+		for _, row := range rows {
+			if err := ctx.Err(); err != nil {
+				return sent, errors.Join(append(errs, err)...)
+			}
+			if err := j.remind(ctx, row); err != nil {
+				j.s.log.ErrorContext(ctx, "reservations: reminder failed", "reservation_row", row.ID, "err", err)
+				errs = append(errs, err)
+				continue
+			}
+			sent++
+		}
+		if len(rows) < expiryBatch {
+			return sent, errors.Join(errs...)
+		}
+		after = rows[len(rows)-1].ID
+	}
+}
+
+func (j *Jobs) remind(ctx context.Context, row ReminderRow) error {
+	return j.s.tx.InTx(ctx, func(ctx context.Context) error {
+		if err := j.s.repo.SetTxLimits(ctx); err != nil {
+			return err
+		}
+		rsv := ApplyRow{ID: row.ID, UserID: row.UserID, PublicID: row.PublicID, Window: row.Window}
+		return j.s.enqueue(ctx, rsv, notifications.TplReservationReminder, map[string]string{
+			"reservation_id": row.PublicID.String(),
+			"arrival_at":     lotTime(row.ArrivalAt),
+			"window":         lotTime(row.Window.Start) + " - " + lotTime(row.Window.End),
+		})
+	})
+}
+
+// HoldBoundary publishes the effective-hold changes that happen with no
+// transaction: a hold window opening or closing as time passes (M3B-39,
+// design 12.3). Transactions that change holds at their own now bump the lot
+// version themselves (M3B-13).
+//
+// It remembers, per lot, the effective-hold count it last published, in
+// memory. On its first tick for a lot after the process starts, or when the
+// count differs, it bumps lot_occupancy.version and NOTIFYs in a short
+// transaction that locks only lot_occupancy. Comparing counts skips a tick
+// where one window ends as another starts. Worker replicas each keep their
+// own memory, so two of them may both bump for one change: the second push is
+// a newer snapshot with the same content, which the stream contract allows.
+// A HoldBoundary is for one goroutine, as the job runner calls it.
+type HoldBoundary struct {
+	pool  *pgxpool.Pool
+	holds Holds
+	tx    *database.TxRunner
+	log   *slog.Logger
+	last  map[int64]int
+}
+
+// NewHoldBoundary returns the boundary job over pool.
+func NewHoldBoundary(pool *pgxpool.Pool, log *slog.Logger) *HoldBoundary {
+	return &HoldBoundary{pool: pool, holds: NewHolds(pool), tx: database.NewTxRunner(pool), log: log, last: map[int64]int{}}
+}
+
+// Tick publishes the lots whose effective holds at now differ from the last
+// value it published, and returns how many it bumped. A failing lot is logged
+// and the others still run; the errors are joined.
+func (b *HoldBoundary) Tick(ctx context.Context, now time.Time) (bumped int, err error) {
+	ids, err := dbgen.New(b.pool).ListLotIDs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reservations: list lots: %w", err)
+	}
+	var errs []error
+	for _, id := range ids {
+		n, err := b.holds.EffectiveHolds(ctx, id, now)
+		if err == nil {
+			if prev, seen := b.last[id]; seen && prev == n {
+				continue
+			}
+			err = b.publish(ctx, id, now)
+		}
+		if err != nil {
+			b.log.ErrorContext(ctx, "reservations: hold boundary notify failed", "lot_row", id, "err", err)
+			errs = append(errs, err)
+			continue
+		}
+		b.last[id] = n
+		bumped++
+	}
+	return bumped, errors.Join(errs...)
+}
+
+// publish bumps the lot version (occupancy unchanged) and notifies on commit.
+func (b *HoldBoundary) publish(ctx context.Context, lotID int64, now time.Time) error {
+	return b.tx.InTx(ctx, func(ctx context.Context) error {
+		conn := database.Conn(ctx, b.pool)
+		if _, err := conn.Exec(ctx, "set local lock_timeout = '1s'"); err != nil {
+			return fmt.Errorf("reservations: set lock timeout: %w", err)
+		}
+		q := dbgen.New(conn)
+		version, err := q.BumpOccupancy(ctx, dbgen.BumpOccupancyParams{Delta: 0, Now: tstz(now), LotID: lotID})
+		if err != nil {
+			return fmt.Errorf("reservations: bump lot version: %w", err)
+		}
+		if err := q.NotifyLotChanged(ctx, dbgen.NotifyLotChangedParams{LotID: lotID, Version: version}); err != nil {
+			return fmt.Errorf("reservations: notify lot changed: %w", err)
+		}
+		return nil
+	})
 }

@@ -1,0 +1,12 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+Un recordatorio: tu reserva comienza pronto.
+
+Llegada: {{.arrival_at}}
+Ventana de entrada: {{.window}}
+(hora de Santo Domingo)
+
+Muestra el código QR del correo de confirmación, o el de la app, en la barrera de entrada.
+
+-- 
+{{template "brand"}}

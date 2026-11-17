@@ -2,12 +2,15 @@ package reservations_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
 	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
@@ -303,4 +306,137 @@ func TestJobs_Batches(t *testing.T) {
 		t.Errorf("held = %d, want 0", got)
 	}
 	e.done()
+}
+
+// listenLot returns a connection LISTENing on lot_changed.
+func (e *jobEnv) listenLot() *pgxpool.Conn {
+	e.t.Helper()
+	conn, err := e.db.App.Acquire(e.t.Context())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(conn.Release)
+	if _, err := conn.Exec(e.t.Context(), `listen lot_changed`); err != nil {
+		e.t.Fatal(err)
+	}
+	return conn
+}
+
+func (e *jobEnv) tick(b *reservations.HoldBoundary, now time.Time, want int) {
+	e.t.Helper()
+	if n, err := b.Tick(e.t.Context(), now); err != nil || n != want {
+		e.t.Fatalf("Tick(%s) = %d, %v; want %d, nil", now.Format("15:04:05"), n, err, want)
+	}
+}
+
+func newBoundary(e *jobEnv) *reservations.HoldBoundary {
+	return reservations.NewHoldBoundary(e.db.App, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func TestHoldBoundaryJob(t *testing.T) {
+	t.Run("crossing a window bound", func(t *testing.T) {
+		e := newJobEnv(t, nil)
+		d := testsupport.SeedDrivers(t, e.db, 2)
+		end := jobsNow.Add(time.Hour) // window [15:25, 16:00)
+		e.rsv(d[0], "confirmed", jobsNow, end)
+		e.rsv(d[1], "pending_payment", jobsNow, end) // never a hold
+		conn := e.listenLot()
+		b := newBoundary(e)
+		v := e.version()
+
+		e.tick(b, jobsNow, 1) // first tick after start
+		e.tick(b, jobsNow.Add(time.Minute), 0)
+		if got := e.version(); got != v+1 {
+			t.Fatalf("version = %d, want %d", got, v+1)
+		}
+		e.tick(b, end.Add(-35*time.Minute), 1) // lower bound is inclusive
+		e.tick(b, end.Add(-time.Minute), 0)
+		if got := e.version(); got != v+2 {
+			t.Fatalf("version = %d, want %d", got, v+2)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		for i := 1; i <= 2; i++ {
+			n, err := conn.Conn().WaitForNotification(ctx)
+			if want := fmt.Sprintf("%d:%d", e.lot, v+i); err != nil || n.Payload != want {
+				t.Fatalf("notification %d = %+v, %v; want %s", i, n, err, want)
+			}
+		}
+		e.tick(b, end, 1) // upper bound is exclusive
+		e.tick(b, end.Add(time.Hour), 0)
+		if got := e.version(); got != v+3 {
+			t.Errorf("version = %d, want %d", got, v+3)
+		}
+		e.done()
+	})
+	t.Run("one window ending as another starts", func(t *testing.T) {
+		e := newJobEnv(t, nil)
+		d := testsupport.SeedDrivers(t, e.db, 2)
+		first := jobsNow.Add(time.Hour) // [15:25, 16:00)
+		e.rsv(d[0], "confirmed", jobsNow, first)
+		e.rsv(d[1], "confirmed", jobsNow, first.Add(35*time.Minute)) // [16:00, 16:35)
+		b := newBoundary(e)
+		e.tick(b, first.Add(-30*time.Minute), 1)
+		e.tick(b, first.Add(-time.Minute), 0)
+		e.tick(b, first, 0) // 1 hold before and after: nothing visible changed
+		e.tick(b, first.Add(35*time.Minute), 1)
+	})
+}
+
+func TestReminders(t *testing.T) {
+	arrival := jobsNow.Add(2 * time.Hour)
+	end := arrival.Add(20 * time.Minute)
+	newRem := func(t *testing.T) (*jobEnv, int64) {
+		e := newJobEnv(t, nil)
+		d := testsupport.SeedDrivers(t, e.db, 5)
+		id := e.rsv(d[0], "confirmed", jobsNow, end) // confirmed at jobsNow
+		// Not reminded: cancelled, expired, checked in, booked 20 min ahead.
+		can := e.rsv(d[1], "confirmed", jobsNow, end)
+		e.exec(`update reservations set status = 'cancelled', cancelled_at = $2, cancelled_by = 'driver' where id = $1`, can, jobsNow)
+		ns := e.rsv(d[2], "confirmed", jobsNow, end)
+		e.exec(`update reservations set status = 'expired_no_show', expired_at = $2 where id = $1`, ns, jobsNow)
+		ci := e.rsv(d[3], "confirmed", jobsNow, end)
+		e.exec(`update reservations set status = 'checked_in', checked_in_at = $2 where id = $1`, ci, jobsNow)
+		late := e.rsv(d[4], "confirmed", jobsNow, end)
+		e.exec(`update reservations set confirmed_at = arrival_at - interval '20 minutes' where id = $1`, late)
+		return e, id
+	}
+	at := func(e *jobEnv, d time.Duration, want int) {
+		t := e.t
+		t.Helper()
+		if n, err := e.jobs.Reminders(t.Context(), arrival.Add(d)); err != nil || n != want {
+			t.Fatalf("Reminders(arrival%+v) = %d, %v; want %d, nil", d, n, err, want)
+		}
+	}
+	e, id := newRem(t)
+	at(e, -31*time.Minute, 0)
+	at(e, -30*time.Minute, 1)
+	at(e, -30*time.Minute, 0) // deduplicated
+	at(e, -10*time.Minute, 0)
+	var pub uuid.UUID
+	var payload string
+	var locale string
+	if err := e.db.App.QueryRow(t.Context(), `select public_id from reservations where id = $1`, id).Scan(&pub); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.Super.QueryRow(t.Context(),
+		`select payload::text, locale from outbox_messages where dedupe_key = $1 and template = 'reservation_reminder'`,
+		"reservation_reminder:"+pub.String()).Scan(&payload, &locale); err != nil {
+		t.Fatalf("outbox row: %v", err)
+	}
+	for _, want := range []string{`"arrival_at": "2026-12-01 13:00"`, `"reservation_id": "` + pub.String() + `"`, `"window"`} {
+		if !strings.Contains(payload, want) {
+			t.Errorf("payload %s lacks %s", payload, want)
+		}
+	}
+	if strings.Contains(payload, "qr_token") {
+		t.Error("a reminder carries no QR token")
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = 'reservation_reminder'`); n != 1 {
+		t.Errorf("reminders queued = %d, want 1", n)
+	}
+	// A cancelled reservation after the first run is never reminded.
+	e2, id2 := newRem(t)
+	e2.exec(`update reservations set status = 'cancelled', cancelled_at = $2, cancelled_by = 'driver' where id = $1`, id2, jobsNow)
+	at(e2, -30*time.Minute, 0)
 }

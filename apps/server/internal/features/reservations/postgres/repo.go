@@ -557,3 +557,19 @@ func (r *Repo) PolicyByID(ctx context.Context, id int64) (reservations.Policy, e
 		NoShowWindowDays: int(p.NoshowWindowDays), NoShowBlockDays: int(p.NoshowBlockDays),
 	}, nil
 }
+
+// ListDueReminders implements reservations.Repo.
+func (r *Repo) ListDueReminders(ctx context.Context, now time.Time, afterID int64, limit int) ([]reservations.ReminderRow, error) {
+	rows, err := r.q(ctx).ListDueReminders(ctx, dbgen.ListDueRemindersParams{Now: ts(now), AfterID: afterID, RowLimit: int32(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("reservations: list due reminders: %w", err)
+	}
+	out := make([]reservations.ReminderRow, len(rows))
+	for i, row := range rows {
+		out[i] = reservations.ReminderRow{
+			ID: row.ID, UserID: row.UserID, PublicID: row.PublicID, ArrivalAt: row.ArrivalAt.Time.UTC(),
+			Window: reservations.Window{Start: row.WindowStart.Time.UTC(), End: row.WindowEnd.Time.UTC()},
+		}
+	}
+	return out, nil
+}

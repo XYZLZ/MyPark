@@ -44,3 +44,8 @@ select id, public_id, slug, name, address,
        timezone, capacity, status, opening_hours
 from lots
 where public_id = @public_id;
+
+-- name: ListLotIDs :many
+-- The boundary job walks every lot.
+select lot_id from lot_occupancy
+order by lot_id;

@@ -282,3 +282,18 @@ returning reservation_blocked_until;
 
 -- name: GetPolicyVersionByID :one
 select * from policy_versions where id = @id;
+
+-- name: ListDueReminders :many
+-- The reminder job's candidates (M3B-41): confirmed arrivals within 30 minutes
+-- that were booked at least 30 minutes ahead and have no reminder queued yet.
+select r.id, r.public_id, r.user_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.status = 'confirmed'
+  and r.arrival_at > sqlc.arg(now)::timestamptz
+  and r.arrival_at <= (sqlc.arg(now)::timestamptz + interval '30 minutes')
+  and r.confirmed_at <= r.arrival_at - interval '30 minutes'
+  and r.id > @after_id
+  and not exists (select 1 from outbox_messages o where o.dedupe_key = 'reservation_reminder:' || r.public_id::text)
+order by r.id
+limit @row_limit::int;
