@@ -1,0 +1,8 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+No llegaste durante el horario de tu reserva, por lo que la reserva expiró. El costo de la reserva no es reembolsable.
+{{if .blocked_until}}
+Por haber perdido varias reservas, no podrás hacer una nueva hasta el {{.blocked_until}}.
+{{end}}
+-- 
+{{template "brand"}}

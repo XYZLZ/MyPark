@@ -1,0 +1,8 @@
+Hello{{with .first_name}} {{.}}{{end}},
+
+You did not arrive during your reservation window, so the reservation expired. The reservation fee is not refundable.
+{{if .blocked_until}}
+Because of repeated missed reservations, you cannot book a new one until {{.blocked_until}}.
+{{end}}
+-- 
+{{template "brand"}}

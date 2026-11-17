@@ -162,3 +162,24 @@ func TestTemplates_RefundSucceeded(t *testing.T) {
 		t.Errorf("subjects = %v, want one per locale", subjects)
 	}
 }
+
+func TestTemplates_ReservationNoShow(t *testing.T) {
+	for _, locale := range []string{"es-DO", "en"} {
+		subject, plain, html, err := notifications.Render(notifications.TplReservationNoShow, locale, map[string]string{"blocked_until": "2026-12-08 11:00"})
+		if err != nil || subject == "" {
+			t.Fatalf("%s: %q, %v", locale, subject, err)
+		}
+		_, plainNoBlock, htmlNoBlock, err := notifications.Render(notifications.TplReservationNoShow, locale, map[string]string{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, c := range map[string][2]string{"text": {plain, plainNoBlock}, "html": {html, htmlNoBlock}} {
+			if !strings.Contains(c[0], "2026-12-08 11:00") || strings.Contains(c[1], "2026-12-08") || c[0] == c[1] {
+				t.Errorf("%s %s: blocked_until must show only when set", locale, name)
+			}
+			if !strings.Contains(c[0], brandLine) {
+				t.Errorf("%s %s: brand line missing", locale, name)
+			}
+		}
+	}
+}
