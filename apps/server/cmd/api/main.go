@@ -38,6 +38,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	lotspg "github.com/XYZLZ/MyPark/apps/server/internal/features/lots/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
 	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
@@ -50,6 +52,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/paymentsim"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/pubsub"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
@@ -223,6 +226,9 @@ type deps struct {
 	hub        *availability.Hub
 	timers     clock.Timers // the hub and stream heartbeats; nil: clock.System
 	listenerUp func() bool  // the LISTEN connection is up (/readyz); nil: no listener check
+
+	// gateway charges and refunds cards; nil means the simulated gateway on pool.
+	gateway payments.Gateway
 }
 
 // newHandler builds the API router with every feature handler and wraps it
@@ -318,8 +324,16 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		reservations.NewVehicleChecker(d.pool), d.cfg.MaxVehiclesPerUser(), d.clock)
 	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
 
+	gateway := d.gateway
+	if gateway == nil {
+		gateway = paymentsim.New(d.pool, paymentsim.Config{
+			Clock: d.clock, Latency: d.cfg.SimGatewayLatency(), TimeoutDelay: d.cfg.SimGatewayTimeoutDelay(),
+		})
+	}
 	reservations.NewHandler(reservations.NewService(reservations.Deps{
 		Tx: tx, Repo: reservationspg.NewRepo(d.pool), Tariffs: tariffSvc, Avail: availSvc, Clock: d.clock, Log: d.log,
+		Fees: paymentspg.NewRepo(d.pool), Gateway: gateway, Notify: notifier,
+		QRKey: d.cfg.QRHMACKey(), ChargeTimeout: d.cfg.PaymentChargeTimeout(), Rand: rand.Reader,
 	}), validation.New(), d.log).Register(r)
 
 	// Account deletion reaches vehicles and auth only through their ports.

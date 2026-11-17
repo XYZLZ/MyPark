@@ -1037,7 +1037,6 @@ paths:
         reservation is confirmed shortly after (poll `getReservation`); any
         other Luhn-valid number is declined (`card_not_supported`). Card data
         is never echoed, logged or stored beyond brand and last four.
-      x-mypark-pending: S4.2
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1122,7 +1121,6 @@ paths:
       operationId: getReservationQr
       summary: Get the entry QR token of a reservation
       description: Available for `confirmed` and `checked_in` reservations. The token is secret and is never logged.
-      x-mypark-pending: S4.2
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       responses:

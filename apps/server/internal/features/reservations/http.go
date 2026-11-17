@@ -40,6 +40,9 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("GET /v1/reservations/{id}", router.Policy{Roles: router.DriverOnly}, h.get)
 	r.Handle("PATCH /v1/reservations/{id}",
 		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.changeVehicle)
+	r.Handle("POST /v1/reservations/{id}/pay",
+		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationPayUser}, h.pay)
+	r.Handle("GET /v1/reservations/{id}/qr", router.Policy{Roles: router.DriverOnly}, h.qr)
 }
 
 // Ids arrive as strings: a malformed one is the same 404 as an unknown one

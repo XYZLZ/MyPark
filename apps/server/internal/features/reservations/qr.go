@@ -1,11 +1,18 @@
 package reservations
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 )
 
 // qrTokenLen is the length of a QR token: base64url (no padding) of
@@ -61,4 +68,42 @@ func qrMAC(key, msg []byte) []byte {
 
 func isBase64URL(c byte) bool {
 	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
+}
+
+// QRView is the QR token of a reservation and the times that bound entry.
+type QRView struct {
+	Token                           string
+	EntryValidFrom, EntryValidUntil time.Time
+}
+
+// QR returns the entry token of a confirmed or checked-in reservation of the
+// driver (design 7.9). Any other state is 409 reservation.invalid_state. The
+// token is secret and never logged.
+func (s *Service) QR(ctx context.Context, userID int64, id uuid.UUID) (QRView, error) {
+	var out QRView
+	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SetTxLimits(ctx); err != nil {
+			return err
+		}
+		d, err := s.repo.QRData(ctx, userID, id)
+		if errors.Is(err, ErrNotFound) {
+			return apperr.NotFound(errcodes.ReservationNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		if d.Status != StatusConfirmed && d.Status != StatusCheckedIn {
+			return apperr.Conflict(errcodes.ReservationInvalidState).
+				WithDetails(map[string]any{"status": string(d.Status)})
+		}
+		if len(d.Nonce) != 16 {
+			return fmt.Errorf("reservations: %s %s has a qr nonce of %d bytes", d.Status, d.PublicID, len(d.Nonce))
+		}
+		out = QRView{
+			Token:          EncodeQR(s.qrKey, d.PublicID, [16]byte(d.Nonce)),
+			EntryValidFrom: d.Window.Start, EntryValidUntil: d.Window.End,
+		}
+		return nil
+	})
+	return out, err
 }

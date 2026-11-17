@@ -37,16 +37,19 @@ type matrixEntry struct {
 	// reservation seeds a confirmed reservation of the owner (f.reservationID)
 	// before the run; notFound is the code of the owned 404 (default: a vehicle).
 	reservation bool
-	notFound    errcodes.Code
+	// unpaid seeds the reservation as pending_payment (still payable) instead of confirmed.
+	unpaid   bool
+	notFound errcodes.Code
 }
 
 func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.String() }
 
 func reservationPath(f *fixture) string { return "/v1/reservations/" + f.reservationID.String() }
 
-// seedReservation gives the owner a confirmed reservation of its vehicle, with
-// the arrival an hour ahead, straight into the database.
-func (f *fixture) seedReservation() {
+// seedReservation gives the owner a confirmed reservation of its vehicle (or a
+// payable pending_payment one when unpaid), with the arrival an hour ahead,
+// straight into the database.
+func (f *fixture) seedReservation(unpaid bool) {
 	f.env.t.Helper()
 	lotID := testsupport.SeedPilotLot(f.env.t, f.env.db)
 	now := f.env.clk.Now()
@@ -55,13 +58,14 @@ func (f *fixture) seedReservation() {
 		                           tariff_version_id, policy_version_id, payment_due_at, created_at, updated_at,
 		                           confirmed_at, qr_nonce)
 		 select $1, v.id, $2, $3::timestamptz, tstzrange($3::timestamptz - interval '15 minutes', $3::timestamptz + interval '20 minutes', '[)'),
-		        'confirmed', 15000,
+		        case when $6 then 'pending_payment' else 'confirmed' end, 15000,
 		        (select id from tariff_versions where lot_id = $2 order by effective_from desc limit 1),
 		        (select id from policy_versions where lot_id = $2 order by effective_from desc limit 1),
-		        $4::timestamptz, $4::timestamptz, $4::timestamptz, $4::timestamptz, decode(md5(random()::text), 'hex')
+		        case when $6 then $4::timestamptz + interval '10 minutes' else $4::timestamptz end, $4::timestamptz, $4::timestamptz,
+		        case when $6 then null else $4::timestamptz end, case when $6 then null else decode(md5(random()::text), 'hex') end
 		 from vehicles v where v.public_id = $5
 		 returning public_id`,
-		f.owner.userID, lotID, now.Add(time.Hour), now, f.vehicleID).Scan(&f.reservationID)
+		f.owner.userID, lotID, now.Add(time.Hour), now, f.vehicleID, unpaid).Scan(&f.reservationID)
 	if err != nil {
 		f.env.t.Fatalf("seed fixture reservation: %v", err)
 	}
@@ -191,6 +195,17 @@ var matrix = map[string]matrixEntry{
 		build: func(f *fixture) *http.Request {
 			return jsonReq("PATCH", reservationPath(f), map[string]any{"vehicle_id": f.vehicleID.String()})
 		}},
+	// The owner pays a payable reservation with the simulator's success card.
+	"POST /v1/reservations/{id}/pay": {owned: true, reservation: true, unpaid: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request {
+			req := jsonReq("POST", reservationPath(f)+"/pay", map[string]any{
+				"card_number": "4242 4242 4242 4242", "exp_month": 12, "exp_year": 2030, "cvc": "123",
+			})
+			req.Header.Set("Idempotency-Key", "matrix-key-0001")
+			return req
+		}},
+	"GET /v1/reservations/{id}/qr": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f)+"/qr", nil) }},
 
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
 
@@ -298,7 +313,7 @@ func TestAuthzMatrix(t *testing.T) {
 		t.Run(rt.Pattern, func(t *testing.T) {
 			f := e.newFixture()
 			if entry.reservation {
-				f.seedReservation()
+				f.seedReservation(entry.unpaid)
 			}
 			for _, r := range rows {
 				want := expected(rt.Policy, r)
@@ -497,6 +512,8 @@ var specPolicy = map[string]struct {
 	"GET /v1/reservations":             {access: "driver"},
 	"GET /v1/reservations/{id}":        {access: "driver"},
 	"PATCH /v1/reservations/{id}":      {access: "driver", limit: &ratelimit.ReservationWriteUser},
+	"POST /v1/reservations/{id}/pay":   {access: "driver", limit: &ratelimit.ReservationPayUser},
+	"GET /v1/reservations/{id}/qr":     {access: "driver"},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},
 	// A device route declares no Policy.Limit: the router applies DeviceIP
