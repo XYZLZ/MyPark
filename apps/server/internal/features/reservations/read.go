@@ -2,23 +2,13 @@ package reservations
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
-	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
-)
-
-// Page size bounds of the reservation list (design 7.5).
-const (
-	DefaultPageSize = 20
-	MaxPageSize     = 50
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/keyset"
 )
 
 // Scopes of the reservation list.
@@ -32,13 +22,6 @@ type ListQuery struct {
 	Scope  string
 	Limit  int
 	Cursor string
-}
-
-// fieldError is a 422 validation.failed naming one field and rule.
-func fieldError(field, rule, param string) error {
-	verr := &validation.Error{Fields: []validation.FieldError{{Field: field, Rule: rule, Param: param}}}
-	return apperr.Invalid(errcodes.ValidationFailed).
-		WithDetails(map[string]any{"fields": verr.Fields}).Wrap(verr)
 }
 
 // Get returns one of the driver's reservations. An unknown id and another
@@ -70,21 +53,18 @@ func (s *Service) List(ctx context.Context, userID int64, q ListQuery) ([]View, 
 	switch q.Scope {
 	case "", ScopeActive, ScopePast:
 	default:
-		return nil, "", fieldError("scope", "oneof", "active past")
+		return nil, "", keyset.FieldError("scope", "oneof", "active past")
 	}
-	if q.Limit < 1 {
-		return nil, "", fieldError("limit", "min", "1")
-	}
-	if q.Limit > MaxPageSize {
-		return nil, "", fieldError("limit", "max", fmt.Sprint(MaxPageSize))
+	if err := keyset.CheckLimit(q.Limit); err != nil {
+		return nil, "", err
 	}
 	f := ListFilter{Scope: q.Scope, Limit: q.Limit + 1}
 	if q.Cursor != "" {
-		c, err := decodeCursor(q.Cursor)
+		at, id, err := keyset.DecodeField(q.Cursor)
 		if err != nil {
-			return nil, "", fieldError("cursor", "cursor", "")
+			return nil, "", err
 		}
-		f.After = &c
+		f.After = &Cursor{ArrivalAt: at, PublicID: id}
 	}
 	var recs []Record
 	err := s.tx.InTx(ctx, func(ctx context.Context) error {
@@ -105,38 +85,11 @@ func (s *Service) List(ctx context.Context, userID int64, q ListQuery) ([]View, 
 	if len(recs) > q.Limit {
 		recs = recs[:q.Limit]
 		last := recs[q.Limit-1]
-		next = encodeCursor(Cursor{ArrivalAt: last.ArrivalAt, PublicID: last.ID})
+		next = keyset.Encode(last.ArrivalAt, last.ID)
 	}
 	out := make([]View, len(recs))
 	for i, r := range recs {
 		out[i] = r.View
 	}
 	return out, next, nil
-}
-
-var errBadCursor = errors.New("reservations: malformed cursor")
-
-// encodeCursor is the opaque cursor: base64url of "<arrival_at>|<public_id>".
-func encodeCursor(c Cursor) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(c.ArrivalAt.UTC().Format(time.RFC3339Nano) + "|" + c.PublicID.String()))
-}
-
-func decodeCursor(s string) (Cursor, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return Cursor{}, errBadCursor
-	}
-	at, id, ok := strings.Cut(string(raw), "|")
-	if !ok {
-		return Cursor{}, errBadCursor
-	}
-	t, err := time.Parse(time.RFC3339Nano, at)
-	if err != nil {
-		return Cursor{}, errBadCursor
-	}
-	pid, err := uuid.Parse(id)
-	if err != nil {
-		return Cursor{}, errBadCursor
-	}
-	return Cursor{ArrivalAt: t, PublicID: pid}, nil
 }

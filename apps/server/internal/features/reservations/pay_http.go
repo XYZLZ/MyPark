@@ -9,6 +9,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/keyset"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
@@ -43,10 +44,10 @@ func (h *Handler) pay(w http.ResponseWriter, r *http.Request) {
 	key := r.Header.Get(headerIdempotencyKey)
 	switch {
 	case key == "":
-		httpx.WriteError(w, r, h.log, fieldError(headerIdempotencyKey, "required", ""))
+		httpx.WriteError(w, r, h.log, keyset.FieldError(headerIdempotencyKey, "required", ""))
 		return
 	case !idempotencyKeyRe.MatchString(key):
-		httpx.WriteError(w, r, h.log, fieldError(headerIdempotencyKey, "idempotency_key", ""))
+		httpx.WriteError(w, r, h.log, keyset.FieldError(headerIdempotencyKey, "idempotency_key", ""))
 		return
 	}
 	req, err := httpx.DecodeJSON[payments.PayRequest](r, nil)

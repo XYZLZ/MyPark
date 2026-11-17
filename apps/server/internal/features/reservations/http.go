@@ -3,7 +3,6 @@ package reservations
 import (
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +10,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/keyset"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
@@ -218,18 +218,16 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	in := ListQuery{Scope: ScopeActive, Limit: DefaultPageSize, Cursor: q.Get("cursor")}
+	in := ListQuery{Scope: ScopeActive, Cursor: q.Get("cursor")}
 	if s := q.Get("scope"); s != "" {
 		in.Scope = s
 	}
-	if raw := q.Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			httpx.WriteError(w, r, h.log, fieldError("limit", "numeric", ""))
-			return
-		}
-		in.Limit = n
+	limit, err := keyset.ParseLimit(q.Get("limit"))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
 	}
+	in.Limit = limit
 	views, next, err := h.svc.List(r.Context(), uid, in)
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)

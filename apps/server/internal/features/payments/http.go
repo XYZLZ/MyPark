@@ -3,7 +3,6 @@ package payments
 import (
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +10,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/keyset"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpx"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/response"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/router"
@@ -111,14 +111,10 @@ func (h *ReceiptHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	limit := DefaultReceiptPageSize
-	if raw := q.Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			httpx.WriteError(w, r, h.log, fieldError("limit", "numeric", ""))
-			return
-		}
-		limit = n
+	limit, err := keyset.ParseLimit(q.Get("limit"))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
 	}
 	recs, next, err := h.svc.List(r.Context(), uid, limit, q.Get("cursor"))
 	if err != nil {
