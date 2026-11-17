@@ -105,24 +105,29 @@ func (q *Queries) InsertSpace(ctx context.Context, arg InsertSpaceParams) error 
 }
 
 const listLotIDs = `-- name: ListLotIDs :many
-select lot_id from lot_occupancy
+select lot_id, version from lot_occupancy
 order by lot_id
 `
 
-// The boundary job walks every lot.
-func (q *Queries) ListLotIDs(ctx context.Context) ([]int64, error) {
+type ListLotIDsRow struct {
+	LotID   int64
+	Version int64
+}
+
+// The boundary job walks every lot and compares the version it last saw.
+func (q *Queries) ListLotIDs(ctx context.Context) ([]ListLotIDsRow, error) {
 	rows, err := q.db.Query(ctx, listLotIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []int64{}
+	items := []ListLotIDsRow{}
 	for rows.Next() {
-		var lot_id int64
-		if err := rows.Scan(&lot_id); err != nil {
+		var i ListLotIDsRow
+		if err := rows.Scan(&i.LotID, &i.Version); err != nil {
 			return nil, err
 		}
-		items = append(items, lot_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

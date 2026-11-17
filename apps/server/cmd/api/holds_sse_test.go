@@ -89,3 +89,35 @@ func TestHolds_BoundaryToSSE(t *testing.T) {
 		t.Errorf("effective_holds = %d once the window closed, want 0", got.EffectiveHolds)
 	}
 }
+
+// TestHolds_BoundaryAfterConfirmPublished checks a real confirm that published
+// between two ticks does not leave the job with a stale baseline: the window
+// that closes afterwards brings the count back to the remembered value, yet
+// clients still show the confirm's higher one.
+func TestHolds_BoundaryAfterConfirmPublished(t *testing.T) {
+	e := newHoldsSSEEnv(t)
+	ds := testsupport.SeedDrivers(t, e.db, 2)
+	(&rsvEnv{lotEnv: e.lotEnv}).seedRes(ds[0], "confirmed", time.Date(2026, 12, 1, 14, 0, 0, 0, time.UTC)) // [13:45, 14:20)
+	b := reservations.NewHoldBoundary(e.db.App, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if n, err := b.Tick(t.Context(), rsvNow); err != nil || n != 1 {
+		t.Fatalf("first Tick = %d, %v; want 1", n, err)
+	}
+	if got := e.next(); got.EffectiveHolds != 1 {
+		t.Fatalf("effective_holds = %d, want 1", got.EffectiveHolds)
+	}
+	e.clk.Set(rsvNow.Add(time.Minute))             // lets the hub's coalescing edge pass
+	id := e.reserve(ds[1], "2026-12-01T14:02:00Z") // window [13:50, 14:25) holds now
+	if code, body, _ := e.pay(e.token(ds[1]), id, "key-sse-stale", goodCard()); code != http.StatusOK {
+		t.Fatalf("pay = %d %v", code, body)
+	}
+	if got := e.next(); got.EffectiveHolds != 2 {
+		t.Fatalf("effective_holds = %d after the confirm, want 2", got.EffectiveHolds)
+	}
+	e.clk.Set(time.Date(2026, 12, 1, 14, 20, 0, 0, time.UTC)) // the first window closes
+	if n, err := b.Tick(t.Context(), e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; want 1 bump", n, err)
+	}
+	if got := e.next(); got.EffectiveHolds != 1 {
+		t.Errorf("effective_holds = %d once the first window closed, want 1", got.EffectiveHolds)
+	}
+}

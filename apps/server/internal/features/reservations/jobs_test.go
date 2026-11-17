@@ -440,3 +440,58 @@ func TestReminders(t *testing.T) {
 	e2.exec(`update reservations set status = 'cancelled', cancelled_at = $2, cancelled_by = 'driver' where id = $1`, id2, jobsNow)
 	at(e2, -30*time.Minute, 0)
 }
+
+// txBump stands for a confirm or cancel transaction: it publishes (version
+// bump) on its own, which the boundary job must notice.
+func (e *jobEnv) txBump() {
+	e.t.Helper()
+	e.exec(`update lot_occupancy set version = version + 1 where lot_id = $1`, e.lot)
+}
+
+func TestHoldBoundaryJob_AnotherTransactionPublished(t *testing.T) {
+	t0 := jobsNow // 15:00
+	t.Run("confirm then a window closing", func(t *testing.T) {
+		e := newJobEnv(t, nil)
+		d := testsupport.SeedDrivers(t, e.db, 2)
+		e.rsv(d[0], "confirmed", t0, t0.Add(5*time.Minute)) // [14:30, 15:05)
+		b := newBoundary(e)
+		e.tick(b, t0, 1) // count 1
+		e.rsv(d[1], "confirmed", t0, t0.Add(10*time.Minute))
+		e.txBump() // the confirm at 15:02 published count 2
+		v := e.version()
+		e.tick(b, t0.Add(5*time.Minute), 1) // first window closed: count 1 again, but clients hold 2
+		if got := e.version(); got != v+1 {
+			t.Errorf("version = %d, want %d", got, v+1)
+		}
+		e.tick(b, t0.Add(6*time.Minute), 0)
+	})
+	t.Run("cancel then a window opening", func(t *testing.T) {
+		e := newJobEnv(t, nil)
+		d := testsupport.SeedDrivers(t, e.db, 2)
+		first := e.rsv(d[0], "confirmed", t0, t0.Add(5*time.Minute)) // [14:30, 15:05)
+		e.rsv(d[1], "confirmed", t0, t0.Add(40*time.Minute))         // [15:05, 15:40)
+		b := newBoundary(e)
+		e.tick(b, t0, 1)
+		e.exec(`update reservations set status = 'cancelled', cancelled_at = $2, cancelled_by = 'driver' where id = $1`, first, t0)
+		e.txBump() // the cancel at 15:02 published count 0
+		v := e.version()
+		e.tick(b, t0.Add(5*time.Minute), 1) // second window opened: count 1 again
+		if got := e.version(); got != v+1 {
+			t.Errorf("version = %d, want %d", got, v+1)
+		}
+	})
+	t.Run("a quiet lot is not bumped", func(t *testing.T) {
+		e := newJobEnv(t, nil)
+		d := testsupport.SeedDrivers(t, e.db, 1)
+		e.rsv(d[0], "confirmed", t0, t0.Add(time.Hour))
+		b := newBoundary(e)
+		e.tick(b, t0, 1)
+		v := e.version()
+		for i := 1; i <= 3; i++ {
+			e.tick(b, t0.Add(time.Duration(i)*30*time.Second), 0)
+		}
+		if got := e.version(); got != v {
+			t.Errorf("version = %d, want unchanged %d", got, v)
+		}
+	})
+}

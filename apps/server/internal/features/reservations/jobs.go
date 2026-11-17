@@ -163,9 +163,6 @@ func (j *Jobs) expireNoShowOne(ctx context.Context, id int64, now time.Time) (ex
 	return expired && err == nil, err
 }
 
-// reminderLead is how long before arrival the reminder goes out (M3B-41).
-const reminderLead = 30 * time.Minute
-
 // Reminders enqueues the reservation_reminder email for every confirmed
 // reservation arriving within the next 30 minutes that was booked at least 30
 // minutes ahead (a later booking already has its confirmation email), and
@@ -233,45 +230,59 @@ type HoldBoundary struct {
 	holds Holds
 	tx    *database.TxRunner
 	log   *slog.Logger
-	last  map[int64]int
+	last  map[int64]boundaryState
+}
+
+// boundaryState is what the job knows of a lot after its last look: the
+// effective-hold count and the lot version that count belongs to.
+type boundaryState struct {
+	holds   int
+	version int64
 }
 
 // NewHoldBoundary returns the boundary job over pool.
 func NewHoldBoundary(pool *pgxpool.Pool, log *slog.Logger) *HoldBoundary {
-	return &HoldBoundary{pool: pool, holds: NewHolds(pool), tx: database.NewTxRunner(pool), log: log, last: map[int64]int{}}
+	return &HoldBoundary{pool: pool, holds: NewHolds(pool), tx: database.NewTxRunner(pool), log: log, last: map[int64]boundaryState{}}
 }
 
-// Tick publishes the lots whose effective holds at now differ from the last
-// value it published, and returns how many it bumped. A failing lot is logged
-// and the others still run; the errors are joined.
+// Tick publishes the lots whose effective holds at now differ from what the job
+// last knew, and returns how many it bumped. A lot is also published when its
+// version moved since the job last looked: a confirm or cancel transaction
+// published in between, so the remembered count is no longer what clients
+// hold. A failing lot is logged and the others still run; the errors are
+// joined.
 func (b *HoldBoundary) Tick(ctx context.Context, now time.Time) (bumped int, err error) {
 	ids, err := dbgen.New(b.pool).ListLotIDs(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("reservations: list lots: %w", err)
 	}
 	var errs []error
-	for _, id := range ids {
+	for _, row := range ids {
+		id := row.LotID
+		// The version is read first, so the count is at least as new as it.
 		n, err := b.holds.EffectiveHolds(ctx, id, now)
+		var version int64
 		if err == nil {
-			if prev, seen := b.last[id]; seen && prev == n {
+			if prev, seen := b.last[id]; seen && prev.holds == n && prev.version == row.Version {
 				continue
 			}
-			err = b.publish(ctx, id, now)
+			version, err = b.publish(ctx, id, now)
 		}
 		if err != nil {
 			b.log.ErrorContext(ctx, "reservations: hold boundary notify failed", "lot_row", id, "err", err)
 			errs = append(errs, err)
 			continue
 		}
-		b.last[id] = n
+		b.last[id] = boundaryState{holds: n, version: version}
 		bumped++
 	}
 	return bumped, errors.Join(errs...)
 }
 
-// publish bumps the lot version (occupancy unchanged) and notifies on commit.
-func (b *HoldBoundary) publish(ctx context.Context, lotID int64, now time.Time) error {
-	return b.tx.InTx(ctx, func(ctx context.Context) error {
+// publish bumps the lot version (occupancy unchanged), notifies on commit and
+// returns the new version.
+func (b *HoldBoundary) publish(ctx context.Context, lotID int64, now time.Time) (published int64, err error) {
+	err = b.tx.InTx(ctx, func(ctx context.Context) error {
 		conn := database.Conn(ctx, b.pool)
 		if _, err := conn.Exec(ctx, "set local lock_timeout = '1s'"); err != nil {
 			return fmt.Errorf("reservations: set lock timeout: %w", err)
@@ -284,6 +295,8 @@ func (b *HoldBoundary) publish(ctx context.Context, lotID int64, now time.Time) 
 		if err := q.NotifyLotChanged(ctx, dbgen.NotifyLotChangedParams{LotID: lotID, Version: version}); err != nil {
 			return fmt.Errorf("reservations: notify lot changed: %w", err)
 		}
+		published = version
 		return nil
 	})
+	return published, err
 }

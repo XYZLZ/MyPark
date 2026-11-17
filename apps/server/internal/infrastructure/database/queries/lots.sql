@@ -46,6 +46,6 @@ from lots
 where public_id = @public_id;
 
 -- name: ListLotIDs :many
--- The boundary job walks every lot.
-select lot_id from lot_occupancy
+-- The boundary job walks every lot and compares the version it last saw.
+select lot_id, version from lot_occupancy
 order by lot_id;
