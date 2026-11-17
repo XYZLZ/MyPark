@@ -291,3 +291,78 @@ func TestGateQR_VoidRacesLateEntryPass(t *testing.T) {
 	}
 	e.invariants()
 }
+
+// M3B-24: a stay past its 60 s is not refreshed. Re-presented before the
+// void job ran, it is voided and its hold restored in the QR transaction,
+// then the confirmed path reuses it.
+func TestGateQR_RePresentStale(t *testing.T) {
+	e := newQREnv(t)
+	id, qr, stay := e.stranded()
+	if again := wantQROpen(t, e.present(qr)); again != stay {
+		t.Errorf("stay_id = %s, want the same %s", again, stay)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'entry_pending' and accepted_at = $2 and voided_at = $2`,
+		stay, e.clk.Now()); n != 1 {
+		t.Error("want the stay voided and reopened at now")
+	}
+	if st := e.status(id); st != "checked_in" {
+		t.Errorf("status = %s, want checked_in", st)
+	}
+	if h := e.held(); h != 0 {
+		t.Errorf("slots holding = %d, want 0", h)
+	}
+	if n := e.void(); n != 0 {
+		t.Errorf("voided = %d, want 0 (the stay is fresh again)", n)
+	}
+	e.invariants()
+}
+
+// A stale stay re-presented into a physically full lot: voided, and the
+// confirmed reservation is cancelled with a refund (design 11.5).
+func TestGateQR_RePresentStalePhysicallyFull(t *testing.T) {
+	e := newQREnv(t)
+	id, qr, stay := e.stranded()
+	testsupport.FillLot(t, e.db, e.lotID, 280, e.clk.Now())
+
+	wantQRDeny(t, e.present(qr), "gate.lot_physically_full")
+	if st := e.status(id); st != "cancelled" {
+		t.Errorf("status = %s, want cancelled", st)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'voided'`, stay); n != 1 {
+		t.Error("want the stay voided")
+	}
+	if n := e.count(`select count(*) from refunds where status = 'pending' and reason = 'facility_unavailable'`); n != 1 {
+		t.Error("want one pending refund")
+	}
+	e.invariants()
+}
+
+// The void job and a QR re-presented on a stale stay race: the lot lock
+// orders them. Either the QR voids and reopens it inline (the job's
+// re-check rolls back) or the job voids it and the QR reopens it. The QR
+// opens the same stay every round and never adds a second one.
+func TestGateQR_VoidRacesRePresent(t *testing.T) {
+	e := newQREnv(t)
+	for round := range 20 {
+		id, _, qr := e.confirmed(arrivalInWindow)
+		stay := wantQROpen(t, e.present(qr))
+		e.age(stay)
+		req := e.barrier.Request(t, deviceEventsPath, e.qrBody(qr), e.clk.Now())
+
+		if got := entryOf(t, e.race(round, req)); got.Result != "open" || got.StayID == nil || *got.StayID != stay {
+			t.Errorf("round %d: qr = %+v, want open with stay %s", round, got, stay)
+		}
+		if n := e.count(`select count(*) from stays s join reservations r on r.id = s.reservation_id
+		                 where r.public_id = $1 and s.status = 'entry_pending' and s.accepted_at = $2 and r.status = 'checked_in'`,
+			id, e.clk.Now()); n != 1 {
+			t.Errorf("round %d: want the stay entry_pending at now and the reservation checked_in", round)
+		}
+	}
+	if n := e.count(`select count(*) from stays`); n != 20 {
+		t.Errorf("stays = %d, want one per reservation", n)
+	}
+	if h := e.held(); h != 0 {
+		t.Errorf("slots holding = %d, want 0", h)
+	}
+	e.invariants()
+}

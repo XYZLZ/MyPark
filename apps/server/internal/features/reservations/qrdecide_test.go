@@ -13,7 +13,12 @@ func TestDecideQR_Table(t *testing.T) {
 	inside := w.Start.Add(8 * time.Minute)
 	deny := func(c errcodes.Code) QROutcome { return QROutcome{Action: QRDeny, Reason: c} }
 	in := func(st Status, now time.Time, occ, pend int, stay string) QRInput {
-		return QRInput{Status: st, Window: w, Now: now, Occupied: occ, Pending: pend, EffectiveCapacity: 280, StayStatus: stay}
+		return QRInput{Status: st, Window: w, Now: now, Occupied: occ, Pending: pend, EffectiveCapacity: 280, StayStatus: stay, StayAcceptedAt: now.Add(-10 * time.Second)}
+	}
+	stale := func(age time.Duration) QRInput {
+		r := in(StatusCheckedIn, inside, 0, 0, "entry_pending")
+		r.StayAcceptedAt = inside.Add(-age)
+		return r
 	}
 	cases := []struct {
 		name string
@@ -32,6 +37,8 @@ func TestDecideQR_Table(t *testing.T) {
 		{"confirmed inside, voided stay, full", in(StatusConfirmed, inside, 280, 0, "voided"), QROutcome{Action: QRPhysicallyFull}},
 		{"confirmed with an open stay", in(StatusConfirmed, inside, 0, 0, "active"), deny(errcodes.GateCredentialInvalid)},
 		{"checked_in, entry_pending inside", in(StatusCheckedIn, inside, 280, 0, "entry_pending"), QROutcome{Action: QRRefresh}},
+		{"checked_in, entry_pending 59 s old", stale(59 * time.Second), QROutcome{Action: QRRefresh}},
+		{"checked_in, entry_pending 60 s old (M3B-24)", stale(60 * time.Second), deny(errcodes.GateCredentialInvalid)},
 		{"checked_in, entry_pending at upper", in(StatusCheckedIn, w.End, 0, 0, "entry_pending"), deny(errcodes.ReservationWindowClosed)},
 		{"checked_in, active", in(StatusCheckedIn, inside, 0, 0, "active"), deny(errcodes.GateCredentialInUse)},
 		{"checked_in, paid", in(StatusCheckedIn, w.End.Add(time.Hour), 0, 0, "paid"), deny(errcodes.GateCredentialInUse)},

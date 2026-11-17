@@ -52,9 +52,15 @@ func (s *Service) qrEntry(ctx context.Context, d authz.Device, token string) (Re
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Result{}, err
 	}
+	if r.Status == reservationCheckedIn && stay.Status == StatusEntryPending && !now.Before(stay.AcceptedAt.Add(pendingWindow)) {
+		if r, stay, err = s.voidStale(ctx, r, stay, now); err != nil {
+			return Result{}, err
+		}
+	}
 	dec := s.reservations.Decide(QRDecisionInput{
 		Reservation: r, Now: now, Occupied: lot.Occupied, Pending: pending,
 		EffectiveCapacity: lot.Capacity - oos, StayStatus: stay.Status,
+		StayAcceptedAt: stay.AcceptedAt,
 	})
 	switch dec.Action {
 	case QRDeny:
@@ -116,9 +122,8 @@ func (s *Service) qrCheckIn(ctx context.Context, r ReservationEntry, stay Stay, 
 
 // lockStay locks the reservation's stay and reports whether it is still the
 // one read before the decision (none, or the same row in the same status).
-// The M2 void batch claims stays without the lot lock, so an entry_pending
-// stay can be voided in between until S6.2 moves reservation stays out of
-// that batch.
+// Every writer of a reservation stay takes the lot lock first (the void job
+// too, M3B-60), so this is a guard: a mismatch means it changed anyway.
 func (s *Service) lockStay(ctx context.Context, r ReservationEntry, read Stay) (bool, error) {
 	locked, err := s.repo.ReservationStayForUpdate(ctx, r.LotID, r.ID)
 	if errors.Is(err, ErrNotFound) {
@@ -138,4 +143,36 @@ func (s *Service) bumpVersion(ctx context.Context, lotID int64, now time.Time) e
 		return err
 	}
 	return s.repo.NotifyLotChanged(ctx, lotID, version)
+}
+
+// The reservation statuses the gate reads from ReservationEntry.Status.
+const (
+	reservationConfirmed = "confirmed"
+	reservationCheckedIn = "checked_in"
+)
+
+// voidStale does the void job's work inline for a checked-in reservation
+// whose stay is past its 60 s (M3B-24, M3B-60): the hold is restored without
+// a cap check and the stay voided, so the decision then takes the
+// confirmed path (reopen, physically full or window closed). The caller
+// holds the lot and reservation locks; slot loads come before the stay.
+// Nothing else can change the stay under the lot lock, so a mismatch is an
+// error that rolls everything back.
+func (s *Service) voidStale(ctx context.Context, r ReservationEntry, stay Stay, now time.Time) (ReservationEntry, Stay, error) {
+	restored, err := s.reservations.RestoreAfterVoid(ctx, r.ID, now)
+	if err != nil {
+		return r, stay, err
+	}
+	ok, err := s.lockStay(ctx, r, stay)
+	if err != nil {
+		return r, stay, err
+	}
+	if !restored || !ok {
+		return r, stay, fmt.Errorf("gate: stale reservation stay %s changed under the lot lock", stay.PublicID)
+	}
+	if err := s.repo.VoidStay(ctx, r.LotID, stay.ID, now); err != nil {
+		return r, stay, err
+	}
+	r.Status, stay.Status = reservationConfirmed, StatusVoided
+	return r, stay, s.bumpVersion(ctx, r.LotID, now)
 }

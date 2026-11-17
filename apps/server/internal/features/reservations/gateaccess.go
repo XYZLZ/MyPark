@@ -81,6 +81,7 @@ func (GateAccess) Decide(in gate.QRDecisionInput) gate.QRDecision {
 	out := DecideQR(QRInput{
 		Status: Status(r.Status), Window: Window{Start: r.WindowStart, End: r.WindowEnd}, Now: in.Now,
 		Occupied: in.Occupied, Pending: in.Pending, EffectiveCapacity: in.EffectiveCapacity, StayStatus: string(in.StayStatus),
+		StayAcceptedAt: in.StayAcceptedAt,
 	})
 	return gate.QRDecision{Action: gateActions[out.Action], Reason: out.Reason}
 }

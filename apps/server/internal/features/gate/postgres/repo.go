@@ -204,8 +204,7 @@ func toStay(row dbgen.Stay, err error) (gate.Stay, error) {
 	return gate.Stay{
 		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, CredentialKind: row.CredentialKind,
 		Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64, TariffVersionID: row.TariffVersionID,
-		AcceptedAt: row.AcceptedAt.Time,
-		EnteredAt: row.EnteredAt.Time, PaidAt: row.PaidAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
+		AcceptedAt: row.AcceptedAt.Time, EnteredAt: row.EnteredAt.Time, PaidAt: row.PaidAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
 		LostTicket: row.LostTicket, ReservationID: row.ReservationID.Int64,
 	}, nil
 }

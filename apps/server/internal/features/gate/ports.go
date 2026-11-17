@@ -206,11 +206,13 @@ const (
 
 // QRDecisionInput is what the QR decision reads under the locks. StayStatus
 // is "" when the reservation has no stay.
+// StayAcceptedAt is when that stay was last accepted.
 type QRDecisionInput struct {
 	Reservation                          ReservationEntry
 	Now                                  time.Time
 	Occupied, Pending, EffectiveCapacity int
 	StayStatus                           Status
+	StayAcceptedAt                       time.Time
 }
 
 // QRDecision is the QR decision; Reason is set only for QRDeny.

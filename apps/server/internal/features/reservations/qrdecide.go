@@ -25,14 +25,20 @@ const (
 	QRPhysicallyFull
 )
 
+// pendingWindow is how long an accepted entry waits for its barrier pass
+// (M2C-30); past it the stay is no longer pending.
+const pendingWindow = 60 * time.Second
+
 // QRInput is what the decision reads, all under the lot and reservation
 // locks. StayStatus is the reservation's stay status, "" when it has none.
+// StayAcceptedAt is when that stay was last accepted.
 type QRInput struct {
 	Status                               Status
 	Window                               Window
 	Now                                  time.Time
 	Occupied, Pending, EffectiveCapacity int
 	StayStatus                           string
+	StayAcceptedAt                       time.Time
 }
 
 // QROutcome is the decision; Reason is set only for QRDeny.
@@ -55,6 +61,9 @@ func DecideQR(in QRInput) QROutcome {
 		case in.StayStatus == "active" || in.StayStatus == "paid":
 			return qrDeny(errcodes.GateCredentialInUse)
 		case in.StayStatus != "entry_pending":
+			return qrDeny(errcodes.GateCredentialInvalid)
+		case !in.Now.Before(in.StayAcceptedAt.Add(pendingWindow)):
+			// Stale: the void path restores it first (M3B-24, M3B-60), never a refresh.
 			return qrDeny(errcodes.GateCredentialInvalid)
 		case !in.Window.Contains(in.Now):
 			return qrDeny(errcodes.ReservationWindowClosed)
