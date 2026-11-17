@@ -165,15 +165,17 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 		{Name: "auth-purge", Every: authPurgeEvery, Run: authPurger.Purge},
 		{Name: "void_unpassed_entries", Every: voidEvery, Run: func(ctx context.Context) error {
 			now := clk.Now()
-			n, err := gate.VoidUnpassedEntries(ctx, pool, now)
-			if err != nil {
-				return err
+			// Both run every tick: a failing M2 batch must not hold back the
+			// reservation stays.
+			n, batchErr := gate.VoidUnpassedEntries(ctx, pool, now)
+			r, rsvErr := voider.Run(ctx, pool, now)
+			if n > 0 {
+				log.InfoContext(ctx, "voided unpassed entries", "count", n)
 			}
-			r, err := voider.Run(ctx, pool, now)
-			if n+r > 0 {
-				log.InfoContext(ctx, "voided unpassed entries", "count", n, "reservation_count", r)
+			if r > 0 {
+				log.InfoContext(ctx, "voided unpassed reservation entries", "count", r)
 			}
-			return err
+			return errors.Join(batchErr, rsvErr)
 		}},
 		{Name: "payment_reconcile", Every: reconcileEvery, Run: func(ctx context.Context) error {
 			n, err := reconciler.Run(ctx, clk.Now())

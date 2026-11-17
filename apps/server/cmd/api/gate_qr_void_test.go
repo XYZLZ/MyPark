@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -363,6 +364,41 @@ func TestGateQR_VoidRacesRePresent(t *testing.T) {
 	}
 	if h := e.held(); h != 0 {
 		t.Errorf("slots holding = %d, want 0", h)
+	}
+	e.invariants()
+}
+
+// The voider is on the device hot path (it takes the lot lock): its
+// transaction runs under the device limits, so a held lot lock times it out
+// within about a second, the candidate is logged and retried next tick.
+func TestGateQR_VoidLockTimeout(t *testing.T) {
+	e := newQREnv(t)
+	id, _, _ := e.stranded()
+	side, err := e.db.Super.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = side.Rollback(context.WithoutCancel(t.Context())) }()
+	if _, err := side.Exec(t.Context(), `select 1 from lot_occupancy where lot_id = $1 for update`, e.lotID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	n, err := newReservationVoider(e.db.App, e.clk, slogOf(e.logs)).Run(ctx, e.db.App, e.clk.Now())
+	if err != nil || n != 0 || ctx.Err() != nil {
+		t.Fatalf("Run under a held lot lock = %d, %v (ctx %v); want 0 within the 1 s lock timeout", n, err, ctx.Err())
+	}
+	if !strings.Contains(e.logs.String(), "55P03") {
+		t.Error("want the lock timeout logged")
+	}
+	if err := side.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.void(); n != 1 {
+		t.Errorf("next tick voided %d, want 1", n)
+	}
+	if st := e.status(id); st != "confirmed" {
+		t.Errorf("status = %s, want confirmed", st)
 	}
 	e.invariants()
 }

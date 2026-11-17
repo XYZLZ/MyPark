@@ -82,6 +82,11 @@ func (v *ReservationVoider) Run(ctx context.Context, db database.DBTX, now time.
 }
 
 func (v *ReservationVoider) voidOne(ctx context.Context, row dbgen.ReservationStaysToVoidRow, now time.Time) error {
+	// It takes the lot lock, so it runs under the device limits: a timeout is
+	// logged and the stay retried next tick.
+	if err := v.Repo.SetTxLimits(ctx); err != nil {
+		return err
+	}
 	if _, err := v.Repo.LockLotOccupancy(ctx, row.LotID); err != nil {
 		return err
 	}

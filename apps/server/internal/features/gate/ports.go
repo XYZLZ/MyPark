@@ -111,6 +111,9 @@ type Repo interface {
 	StayForUpdateByID(ctx context.Context, lotID, stayID int64) (Stay, error)
 	// VoidStay moves the locked entry_pending stay to voided at now (M3B-60).
 	VoidStay(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// SetTxLimits applies the device lock and statement timeouts (M3B-55) to
+	// the current transaction.
+	SetTxLimits(ctx context.Context) error
 }
 
 // ErrNotFound means the lot has no matching row.

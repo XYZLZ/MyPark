@@ -464,3 +464,18 @@ func (Repo) VoidStay(ctx context.Context, lotID, stayID int64, now time.Time) er
 	n, err := qs.VoidStay(ctx, dbgen.VoidStayParams{Now: ts(now), LotID: lotID, ID: stayID})
 	return oneRow("void stay", stayID, n, err)
 }
+
+// txLimits are the device transaction limits (design 8.1, M3B-55).
+const txLimits = `select set_config('statement_timeout', '2s', true), set_config('lock_timeout', '1s', true)`
+
+// SetTxLimits implements gate.Repo.
+func (Repo) SetTxLimits(ctx context.Context) error {
+	tx, err := database.MustTx(ctx)
+	if err != nil {
+		return fmt.Errorf("gate: transaction limits: %w", err)
+	}
+	if _, err := tx.Exec(ctx, txLimits); err != nil {
+		return fmt.Errorf("gate: set transaction limits: %w", err)
+	}
+	return nil
+}
