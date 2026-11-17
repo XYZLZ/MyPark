@@ -330,7 +330,7 @@ func (r *Repo) Confirm(ctx context.Context, id int64, nonce [16]byte, now time.T
 // ExpireUnpaidLate implements reservations.Repo.
 func (r *Repo) ExpireUnpaidLate(ctx context.Context, id int64, refundReason string, now time.Time) error {
 	n, err := r.q(ctx).ExpireReservationLate(ctx, dbgen.ExpireReservationLateParams{
-		ID: id, RefundReason: pgtype.Text{String: refundReason, Valid: true}, Now: ts(now),
+		ID: id, RefundReason: pgtype.Text{String: refundReason, Valid: refundReason != ""}, Now: ts(now),
 	})
 	if err != nil {
 		return fmt.Errorf("reservations: expire %d: %w", id, err)
@@ -463,4 +463,97 @@ func (r *Repo) UndoCheckIn(ctx context.Context, id int64, now time.Time) error {
 		return fmt.Errorf("reservations: undo check in %d: not checked_in", id)
 	}
 	return nil
+}
+
+// dueRow maps a locked expiry candidate.
+func dueRow(id int64, pub uuid.UUID, userID, lotID int64, status string, policyID int64, start, end, arrival pgtype.Timestamptz, fee int64) reservations.ApplyRow {
+	out := applyRow(id, pub, userID, lotID, status, start, end)
+	out.PolicyVersionID, out.ArrivalAt, out.FeeCents = policyID, arrival.Time.UTC(), fee
+	return out
+}
+
+// ListDueUnpaid implements reservations.Repo.
+func (r *Repo) ListDueUnpaid(ctx context.Context, now time.Time, afterID int64, limit int) ([]int64, error) {
+	ids, err := r.q(ctx).ListDueUnpaid(ctx, dbgen.ListDueUnpaidParams{Now: ts(now), AfterID: afterID, RowLimit: int32(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("reservations: list due unpaid: %w", err)
+	}
+	return ids, nil
+}
+
+// LockDueUnpaid implements reservations.Repo.
+func (r *Repo) LockDueUnpaid(ctx context.Context, id int64, now time.Time) (reservations.ApplyRow, bool, error) {
+	row, err := r.q(ctx).LockDueUnpaid(ctx, dbgen.LockDueUnpaidParams{ID: id, Now: ts(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.ApplyRow{}, false, nil
+	}
+	if err != nil {
+		return reservations.ApplyRow{}, false, fmt.Errorf("reservations: lock due unpaid %d: %w", id, err)
+	}
+	return dueRow(row.ID, row.PublicID, row.UserID, row.LotID, row.Status, row.PolicyVersionID,
+		row.WindowStart, row.WindowEnd, row.ArrivalAt, row.FeeCents), true, nil
+}
+
+// ListDueNoShows implements reservations.Repo.
+func (r *Repo) ListDueNoShows(ctx context.Context, now time.Time, afterID int64, limit int) ([]int64, error) {
+	ids, err := r.q(ctx).ListDueNoShows(ctx, dbgen.ListDueNoShowsParams{Now: ts(now), AfterID: afterID, RowLimit: int32(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("reservations: list due no-shows: %w", err)
+	}
+	return ids, nil
+}
+
+// LockDueNoShow implements reservations.Repo.
+func (r *Repo) LockDueNoShow(ctx context.Context, id int64, now time.Time) (reservations.ApplyRow, bool, error) {
+	row, err := r.q(ctx).LockDueNoShow(ctx, dbgen.LockDueNoShowParams{ID: id, Now: ts(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.ApplyRow{}, false, nil
+	}
+	if err != nil {
+		return reservations.ApplyRow{}, false, fmt.Errorf("reservations: lock due no-show %d: %w", id, err)
+	}
+	return dueRow(row.ID, row.PublicID, row.UserID, row.LotID, row.Status, row.PolicyVersionID,
+		row.WindowStart, row.WindowEnd, row.ArrivalAt, row.FeeCents), true, nil
+}
+
+// ExpireNoShow implements reservations.Repo.
+func (r *Repo) ExpireNoShow(ctx context.Context, id int64, now time.Time) error {
+	n, err := r.q(ctx).ExpireReservationNoShow(ctx, dbgen.ExpireReservationNoShowParams{ID: id, Now: ts(now)})
+	if err != nil {
+		return fmt.Errorf("reservations: expire no-show %d: %w", id, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("reservations: expire no-show %d: not confirmed", id)
+	}
+	return nil
+}
+
+// CountNoShows implements reservations.Repo.
+func (r *Repo) CountNoShows(ctx context.Context, userID int64, now time.Time, windowDays int) (int, error) {
+	n, err := r.q(ctx).CountNoShows(ctx, dbgen.CountNoShowsParams{UserID: userID, Now: ts(now), WindowDays: int32(windowDays)})
+	if err != nil {
+		return 0, fmt.Errorf("reservations: count no-shows: %w", err)
+	}
+	return int(n), nil
+}
+
+// BlockUser implements reservations.Repo.
+func (r *Repo) BlockUser(ctx context.Context, userID int64, now time.Time, blockDays int) (time.Time, error) {
+	t, err := r.q(ctx).BlockUserReservations(ctx, dbgen.BlockUserReservationsParams{UserID: userID, Now: ts(now), BlockDays: int32(blockDays)})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("reservations: block user %d: %w", userID, err)
+	}
+	return t.Time.UTC(), nil
+}
+
+// PolicyByID implements reservations.Repo.
+func (r *Repo) PolicyByID(ctx context.Context, id int64) (reservations.Policy, error) {
+	p, err := r.q(ctx).GetPolicyVersionByID(ctx, id)
+	if err != nil {
+		return reservations.Policy{}, fmt.Errorf("reservations: read policy %d: %w", id, err)
+	}
+	return reservations.Policy{
+		VersionID: p.ID, NoShowThreshold: int(p.NoshowBlockThreshold),
+		NoShowWindowDays: int(p.NoshowWindowDays), NoShowBlockDays: int(p.NoshowBlockDays),
+	}, nil
 }

@@ -12,6 +12,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const blockUserReservations = `-- name: BlockUserReservations :one
+update users
+set reservation_blocked_until = greatest(coalesce(reservation_blocked_until, $1::timestamptz),
+                                         $1::timestamptz + $2::int * interval '1 day')
+where id = $3
+returning reservation_blocked_until
+`
+
+type BlockUserReservationsParams struct {
+	Now       pgtype.Timestamptz
+	BlockDays int32
+	UserID    int64
+}
+
+// Design 12.2: an existing later block is kept (greatest).
+func (q *Queries) BlockUserReservations(ctx context.Context, arg BlockUserReservationsParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, blockUserReservations, arg.Now, arg.BlockDays, arg.UserID)
+	var reservation_blocked_until pgtype.Timestamptz
+	err := row.Scan(&reservation_blocked_until)
+	return reservation_blocked_until, err
+}
+
 const cancelReservation = `-- name: CancelReservation :execrows
 update reservations
 set status = 'cancelled', cancelled_at = $1, cancelled_by = $2,
@@ -120,6 +142,26 @@ func (q *Queries) CountEffectiveHolds(ctx context.Context, arg CountEffectiveHol
 	return column_1, err
 }
 
+const countNoShows = `-- name: CountNoShows :one
+select count(*)::int from reservations
+where user_id = $1 and status = 'expired_no_show'
+  and expired_at > $2::timestamptz - $3::int * interval '1 day'
+`
+
+type CountNoShowsParams struct {
+	UserID     int64
+	Now        pgtype.Timestamptz
+	WindowDays int32
+}
+
+// Design 12.2: the count includes the row just expired (same transaction).
+func (q *Queries) CountNoShows(ctx context.Context, arg CountNoShowsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countNoShows, arg.UserID, arg.Now, arg.WindowDays)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUpcomingArrivals = `-- name: CountUpcomingArrivals :one
 select count(*)::int from reservations
 where lot_id = $1 and status = 'confirmed' and arrival_at > $2 and arrival_at <= $3
@@ -188,9 +230,29 @@ type ExpireReservationLateParams struct {
 	ID           int64
 }
 
-// Late success (design 9.4 step 4): the reservation never became confirmed.
+// Late success (design 9.4 step 4) and the unpaid expiry job: the reservation
+// never became confirmed. A null refund reason means no fee was taken.
 func (q *Queries) ExpireReservationLate(ctx context.Context, arg ExpireReservationLateParams) (int64, error) {
 	result, err := q.db.Exec(ctx, expireReservationLate, arg.Now, arg.RefundReason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expireReservationNoShow = `-- name: ExpireReservationNoShow :execrows
+update reservations
+set status = 'expired_no_show', expired_at = $1, updated_at = $1
+where id = $2 and status = 'confirmed'
+`
+
+type ExpireReservationNoShowParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) ExpireReservationNoShow(ctx context.Context, arg ExpireReservationNoShowParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expireReservationNoShow, arg.Now, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -243,6 +305,33 @@ type GetPolicyVersionAtParams struct {
 // The policy in force at @at: the latest one already effective.
 func (q *Queries) GetPolicyVersionAt(ctx context.Context, arg GetPolicyVersionAtParams) (PolicyVersion, error) {
 	row := q.db.QueryRow(ctx, getPolicyVersionAt, arg.LotID, arg.At)
+	var i PolicyVersion
+	err := row.Scan(
+		&i.ID,
+		&i.LotID,
+		&i.EffectiveFrom,
+		&i.MaxReservablePct,
+		&i.BookingHorizonDays,
+		&i.ArrivalGraceMin,
+		&i.EarlyArrivalMin,
+		&i.PaymentTimeoutMin,
+		&i.MaxActivePerUser,
+		&i.SlotMin,
+		&i.NoshowBlockThreshold,
+		&i.NoshowWindowDays,
+		&i.NoshowBlockDays,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPolicyVersionByID = `-- name: GetPolicyVersionByID :one
+select id, lot_id, effective_from, max_reservable_pct, booking_horizon_days, arrival_grace_min, early_arrival_min, payment_timeout_min, max_active_per_user, slot_min, noshow_block_threshold, noshow_window_days, noshow_block_days, created_by, created_at from policy_versions where id = $1
+`
+
+func (q *Queries) GetPolicyVersionByID(ctx context.Context, id int64) (PolicyVersion, error) {
+	row := q.db.QueryRow(ctx, getPolicyVersionByID, id)
 	var i PolicyVersion
 	err := row.Scan(
 		&i.ID,
@@ -576,6 +665,75 @@ func (q *Queries) InsertReservation(ctx context.Context, arg InsertReservationPa
 	return i, err
 }
 
+const listDueNoShows = `-- name: ListDueNoShows :many
+select id from reservations
+where status = 'confirmed' and upper(hold_window) <= $1::timestamptz and id > $2
+order by id
+limit $3::int
+`
+
+type ListDueNoShowsParams struct {
+	Now      pgtype.Timestamptz
+	AfterID  int64
+	RowLimit int32
+}
+
+// The no-show job's candidates: confirmed reservations whose window has closed.
+func (q *Queries) ListDueNoShows(ctx context.Context, arg ListDueNoShowsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listDueNoShows, arg.Now, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueUnpaid = `-- name: ListDueUnpaid :many
+select id from reservations
+where status = 'pending_payment' and payment_due_at <= $1 and id > $2
+order by id
+limit $3::int
+`
+
+type ListDueUnpaidParams struct {
+	Now      pgtype.Timestamptz
+	AfterID  int64
+	RowLimit int32
+}
+
+// The unpaid expiry job's candidates (design 12), unlocked, keyset by id so
+// rows the job skips cannot hold the next page back.
+func (q *Queries) ListDueUnpaid(ctx context.Context, arg ListDueUnpaidParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listDueUnpaid, arg.Now, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReservationsForUser = `-- name: ListReservationsForUser :many
 select r.id, r.public_id, r.vehicle_id, r.arrival_at,
        lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
@@ -683,6 +841,98 @@ func (q *Queries) ListReservationsForUser(ctx context.Context, arg ListReservati
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDueNoShow = `-- name: LockDueNoShow :one
+select r.id, r.public_id, r.user_id, r.lot_id, r.status, r.policy_version_id,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.arrival_at, r.fee_cents
+from reservations r
+where r.id = $1 and r.status = 'confirmed' and upper(r.hold_window) <= $2::timestamptz
+for update skip locked
+`
+
+type LockDueNoShowParams struct {
+	ID  int64
+	Now pgtype.Timestamptz
+}
+
+type LockDueNoShowRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	UserID          int64
+	LotID           int64
+	Status          string
+	PolicyVersionID int64
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+	ArrivalAt       pgtype.Timestamptz
+	FeeCents        int64
+}
+
+func (q *Queries) LockDueNoShow(ctx context.Context, arg LockDueNoShowParams) (LockDueNoShowRow, error) {
+	row := q.db.QueryRow(ctx, lockDueNoShow, arg.ID, arg.Now)
+	var i LockDueNoShowRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.UserID,
+		&i.LotID,
+		&i.Status,
+		&i.PolicyVersionID,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.ArrivalAt,
+		&i.FeeCents,
+	)
+	return i, err
+}
+
+const lockDueUnpaid = `-- name: LockDueUnpaid :one
+select r.id, r.public_id, r.user_id, r.lot_id, r.status, r.policy_version_id,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.arrival_at, r.fee_cents
+from reservations r
+where r.id = $1 and r.status = 'pending_payment' and r.payment_due_at <= $2
+for update skip locked
+`
+
+type LockDueUnpaidParams struct {
+	ID  int64
+	Now pgtype.Timestamptz
+}
+
+type LockDueUnpaidRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	UserID          int64
+	LotID           int64
+	Status          string
+	PolicyVersionID int64
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+	ArrivalAt       pgtype.Timestamptz
+	FeeCents        int64
+}
+
+// Locks one candidate, skipping a row another runner or a request holds. The
+// predicates are re-checked: the list above was read before the lock.
+func (q *Queries) LockDueUnpaid(ctx context.Context, arg LockDueUnpaidParams) (LockDueUnpaidRow, error) {
+	row := q.db.QueryRow(ctx, lockDueUnpaid, arg.ID, arg.Now)
+	var i LockDueUnpaidRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.UserID,
+		&i.LotID,
+		&i.Status,
+		&i.PolicyVersionID,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.ArrivalAt,
+		&i.FeeCents,
+	)
+	return i, err
 }
 
 const lockReservationForApply = `-- name: LockReservationForApply :one

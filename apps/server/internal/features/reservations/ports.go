@@ -64,6 +64,7 @@ type Row struct {
 // the context, or on the pool when there is none.
 type Repo interface {
 	ReadRepo
+	ExpiryRepo
 	// SetTxLimits applies the driver-API lock and statement timeouts (M3B-55)
 	// to the current transaction.
 	SetTxLimits(ctx context.Context) error
@@ -97,7 +98,7 @@ type Repo interface {
 	// Confirm moves a pending_payment reservation to confirmed with a new QR nonce.
 	Confirm(ctx context.Context, id int64, nonce [16]byte, now time.Time) error
 	// ExpireUnpaidLate moves a pending_payment reservation to expired_unpaid
-	// with the given refund reason (late success, design 9.4).
+	// with the given refund reason (late success, design 9.4); "" stores null.
 	ExpireUnpaidLate(ctx context.Context, id int64, refundReason string, now time.Time) error
 	// Cancel moves a pending_payment or confirmed reservation to cancelled by
 	// the given actor; refundReason "" stores null. Fenced on those statuses.
@@ -178,7 +179,10 @@ type ApplyRow struct {
 	Status   Status
 	Window   Window
 
-	// Set by LockForApply only: what the confirmation email shows.
+	// Set by the due-row locks of the expiry jobs only.
+	PolicyVersionID int64
+
+	// Set by LockForApply (and the due-row locks): what the emails show.
 	ArrivalAt    time.Time
 	FeeCents     int64
 	PlateDisplay string
@@ -203,4 +207,29 @@ type EntryRow struct {
 	Status                             Status
 	Nonce                              []byte
 	Window                             Window
+}
+
+// ExpiryRepo is the part of the storage port behind the worker's expiry
+// jobs (design 12).
+type ExpiryRepo interface {
+	// ListDueUnpaid and ListDueNoShows are unlocked reads of the ids still to
+	// expire at now, ascending, after afterID (a keyset, so rows a run skips
+	// never hold the next page back).
+	ListDueUnpaid(ctx context.Context, now time.Time, afterID int64, limit int) ([]int64, error)
+	ListDueNoShows(ctx context.Context, now time.Time, afterID int64, limit int) ([]int64, error)
+	// LockDueUnpaid and LockDueNoShow lock one candidate FOR UPDATE SKIP
+	// LOCKED and re-check its predicates; ok is false when it is gone, no
+	// longer due, or held by someone else. The row carries PolicyVersionID.
+	LockDueUnpaid(ctx context.Context, id int64, now time.Time) (ApplyRow, bool, error)
+	LockDueNoShow(ctx context.Context, id int64, now time.Time) (ApplyRow, bool, error)
+	// ExpireNoShow moves a confirmed reservation to expired_no_show. Fenced.
+	ExpireNoShow(ctx context.Context, id int64, now time.Time) error
+	// CountNoShows counts the user's expired_no_show reservations whose
+	// expired_at is within windowDays of now.
+	CountNoShows(ctx context.Context, userID int64, now time.Time, windowDays int) (int, error)
+	// BlockUser sets reservation_blocked_until to the later of its current
+	// value and now + blockDays, and returns the result.
+	BlockUser(ctx context.Context, userID int64, now time.Time, blockDays int) (time.Time, error)
+	// PolicyByID reads a captured policy version; only the no-show fields are set.
+	PolicyByID(ctx context.Context, id int64) (Policy, error)
 }

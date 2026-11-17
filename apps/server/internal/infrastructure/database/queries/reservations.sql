@@ -173,9 +173,10 @@ set status = 'confirmed', confirmed_at = @now, qr_nonce = @qr_nonce, updated_at 
 where id = @id and status = 'pending_payment';
 
 -- name: ExpireReservationLate :execrows
--- Late success (design 9.4 step 4): the reservation never became confirmed.
+-- Late success (design 9.4 step 4) and the unpaid expiry job: the reservation
+-- never became confirmed. A null refund reason means no fee was taken.
 update reservations
-set status = 'expired_unpaid', expired_at = @now, refund_reason = @refund_reason, updated_at = @now
+set status = 'expired_unpaid', expired_at = @now, refund_reason = sqlc.narg('refund_reason'), updated_at = @now
 where id = @id and status = 'pending_payment';
 
 -- name: GetReservationQR :one
@@ -225,3 +226,59 @@ where id = @id and status = 'checked_in';
 update reservations
 set status = 'confirmed', checked_in_at = null, updated_at = @now
 where id = @id and status = 'checked_in';
+
+
+-- name: ListDueUnpaid :many
+-- The unpaid expiry job's candidates (design 12), unlocked, keyset by id so
+-- rows the job skips cannot hold the next page back.
+select id from reservations
+where status = 'pending_payment' and payment_due_at <= @now and id > @after_id
+order by id
+limit @row_limit::int;
+
+-- name: LockDueUnpaid :one
+-- Locks one candidate, skipping a row another runner or a request holds. The
+-- predicates are re-checked: the list above was read before the lock.
+select r.id, r.public_id, r.user_id, r.lot_id, r.status, r.policy_version_id,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.arrival_at, r.fee_cents
+from reservations r
+where r.id = @id and r.status = 'pending_payment' and r.payment_due_at <= @now
+for update skip locked;
+
+-- name: ListDueNoShows :many
+-- The no-show job's candidates: confirmed reservations whose window has closed.
+select id from reservations
+where status = 'confirmed' and upper(hold_window) <= @now::timestamptz and id > @after_id
+order by id
+limit @row_limit::int;
+
+-- name: LockDueNoShow :one
+select r.id, r.public_id, r.user_id, r.lot_id, r.status, r.policy_version_id,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.arrival_at, r.fee_cents
+from reservations r
+where r.id = @id and r.status = 'confirmed' and upper(r.hold_window) <= @now::timestamptz
+for update skip locked;
+
+-- name: ExpireReservationNoShow :execrows
+update reservations
+set status = 'expired_no_show', expired_at = @now, updated_at = @now
+where id = @id and status = 'confirmed';
+
+-- name: CountNoShows :one
+-- Design 12.2: the count includes the row just expired (same transaction).
+select count(*)::int from reservations
+where user_id = @user_id and status = 'expired_no_show'
+  and expired_at > sqlc.arg(now)::timestamptz - sqlc.arg(window_days)::int * interval '1 day';
+
+-- name: BlockUserReservations :one
+-- Design 12.2: an existing later block is kept (greatest).
+update users
+set reservation_blocked_until = greatest(coalesce(reservation_blocked_until, sqlc.arg(now)::timestamptz),
+                                         sqlc.arg(now)::timestamptz + sqlc.arg(block_days)::int * interval '1 day')
+where id = @user_id
+returning reservation_blocked_until;
+
+-- name: GetPolicyVersionByID :one
+select * from policy_versions where id = @id;

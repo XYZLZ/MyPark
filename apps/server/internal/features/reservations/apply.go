@@ -157,7 +157,7 @@ func (s *Service) confirm(ctx context.Context, rsv ApplyRow, fee payments.FeePay
 func (s *Service) lateSuccess(ctx context.Context, rsv ApplyRow, fee payments.FeePayment, res payments.ChargeResult, now time.Time) error {
 	s.log.WarnContext(ctx, "reservations: late payment success, expiring and refunding",
 		"reservation_id", rsv.PublicID, "payment_id", fee.PublicID)
-	if err := s.expireUnpaid(ctx, rsv, now); err != nil {
+	if err := s.expireUnpaid(ctx, rsv, payments.RefundFacilityUnavailable, now); err != nil {
 		return err
 	}
 	if err := s.finalizeAndRefund(ctx, fee, res, now); err != nil {
@@ -168,8 +168,9 @@ func (s *Service) lateSuccess(ctx context.Context, rsv ApplyRow, fee payments.Fe
 
 // expireUnpaid moves a pending_payment reservation to expired_unpaid and
 // releases its slot loads (the reservation row is locked by the caller).
-func (s *Service) expireUnpaid(ctx context.Context, rsv ApplyRow, now time.Time) error {
-	if err := s.repo.ExpireUnpaidLate(ctx, rsv.ID, payments.RefundFacilityUnavailable, now); err != nil {
+// refundReason "" stores null: the unpaid expiry job, where no fee was taken.
+func (s *Service) expireUnpaid(ctx context.Context, rsv ApplyRow, refundReason string, now time.Time) error {
+	if err := s.repo.ExpireUnpaidLate(ctx, rsv.ID, refundReason, now); err != nil {
 		return err
 	}
 	if _, err := s.repo.EnsureAndLockSlots(ctx, rsv.LotID, rsv.Window); err != nil {
@@ -248,7 +249,7 @@ func (s *Service) lateCharge(ctx context.Context, rsv ApplyRow, fee payments.Fee
 	// Reservation and slots come before the payment (lock order, design 8.1).
 	expire := rsv.Status == StatusPendingPayment
 	if expire {
-		if err := s.expireUnpaid(ctx, rsv, now); err != nil {
+		if err := s.expireUnpaid(ctx, rsv, payments.RefundFacilityUnavailable, now); err != nil {
 			return err
 		}
 	}
