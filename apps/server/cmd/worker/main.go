@@ -2,9 +2,10 @@
 // outbox over SMTP every 2 s, voids entries not passed within 60 s (every
 // 15 s) and purges expired rate-limit counters (every minute), expired auth
 // data (hourly), old outbox rows and device events past retention (daily). It
-// also reconciles pending fee payments with the gateway (every 15 s), and it
-// serves the health probes on WORKER_HEALTH_ADDR (default :8091), /healthz
-// for liveness and /readyz for the database and migrations.
+// also reconciles pending fee payments with the gateway (every 15 s), sends
+// queued refunds (every 10 s), and it serves the health probes on
+// WORKER_HEALTH_ADDR (default :8091), /healthz for liveness and /readyz for
+// the database and migrations.
 //
 // With -healthcheck it does not serve: it probes GET /readyz on the local
 // WORKER_HEALTH_ADDR port and exits 0 only on a 2xx answer.
@@ -70,6 +71,7 @@ const (
 	outboxPurgeEvery    = 24 * time.Hour
 	voidEvery           = 15 * time.Second
 	reconcileEvery      = 15 * time.Second
+	refundEvery         = 10 * time.Second
 	deviceEventsEvery   = 24 * time.Hour
 	// purgeBatch is the rows one purge call deletes, so a backlog never holds
 	// one long transaction.
@@ -148,6 +150,7 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	dispatcher := notifications.NewDispatcher(pool, sender, clk, cfg.SMTPFrom(), log)
 	authPurger := auth.NewPurger(pool, clk)
 	reconciler := newReconciler(pool, cfg, clk, log)
+	refunds := newRefundProcessor(pool, clk, log)
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
@@ -169,6 +172,13 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 			n, err := reconciler.Run(ctx, clk.Now())
 			if n > 0 {
 				log.InfoContext(ctx, "reconciled pending payments", "count", n)
+			}
+			return err
+		}},
+		{Name: "refund_processing", Every: refundEvery, Run: func(ctx context.Context) error {
+			n, err := refunds.Run(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "refunded payments", "count", n)
 			}
 			return err
 		}},
@@ -209,5 +219,22 @@ func newReconciler(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock,
 		}),
 		ChargeTimeout: cfg.PaymentChargeTimeout(),
 		Log:           log,
+	}
+}
+
+// newRefundProcessor builds the refund job. The reservations service sends the
+// refund_succeeded email in the same transaction that finalizes the refund.
+func newRefundProcessor(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *payments.RefundProcessor {
+	tx := database.NewTxRunner(pool)
+	return &payments.RefundProcessor{
+		Tx:      tx,
+		Refunds: paymentspg.NewRefundRepo(pool),
+		Gateway: paymentsim.New(pool, paymentsim.Config{Clock: clk}),
+		Alerts:  alertspg.NewRecorder(),
+		Notice: reservations.NewService(reservations.Deps{
+			Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
+			Fees: paymentspg.NewRepo(pool), Notify: notificationspg.NewNotifier(clk),
+		}),
+		Log: log,
 	}
 }

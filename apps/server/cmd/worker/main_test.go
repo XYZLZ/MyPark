@@ -312,3 +312,23 @@ func TestWorkerJobs_IncludeReconcile(t *testing.T) {
 		t.Fatalf("settled payments = %d, %v; want the unseen attempt failed as not_submitted", n, err)
 	}
 }
+
+// TestWorkerJobs_IncludeRefunds checks refund_processing runs every 10 s and
+// its body settles a due refund at the job clock.
+func TestWorkerJobs_IncludeRefunds(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "refund_processing" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != 10*time.Second {
+		t.Fatalf("refund_processing job = %+v, want one running every 10 s", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job on an empty queue: %v", err)
+	}
+}
