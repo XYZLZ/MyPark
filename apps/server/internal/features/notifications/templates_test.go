@@ -142,3 +142,23 @@ func TestTemplates_ReservationCancelled(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplates_RefundSucceeded(t *testing.T) {
+	data := map[string]string{"reservation_id": "r", "amount_cents": "15000", "amount_display": "RD$150.00"}
+	subjects := map[string]string{}
+	for _, locale := range []string{"es-DO", "en"} {
+		subject, text, html, err := notifications.Render(notifications.TplRefundSucceeded, locale, data)
+		if err != nil {
+			t.Fatalf("%s: %v", locale, err)
+		}
+		subjects[locale] = subject
+		for _, body := range []string{text, html} {
+			if !strings.Contains(body, "RD$150.00") || !strings.Contains(body, brandLine) {
+				t.Errorf("%s: amount or brand line missing: %s", locale, body)
+			}
+		}
+	}
+	if subjects["es-DO"] == subjects["en"] || subjects["en"] == "" {
+		t.Errorf("subjects = %v, want one per locale", subjects)
+	}
+}

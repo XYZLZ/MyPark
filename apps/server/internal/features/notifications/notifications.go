@@ -18,6 +18,7 @@ const (
 	// Reservation templates.
 	TplReservationConfirmed Template = "reservation_confirmed"
 	TplReservationCancelled Template = "reservation_cancelled"
+	TplRefundSucceeded      Template = "refund_succeeded"
 )
 
 // Email is one message to enqueue. Locale is the users.locale of the

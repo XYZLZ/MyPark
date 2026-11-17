@@ -91,3 +91,48 @@ type Fees interface {
 type OutcomeApplier interface {
 	Apply(ctx context.Context, paymentID int64, res ChargeResult) error
 }
+
+// RefundClaim is a pending refund leased to one runner (design 12.5). Attempts
+// is the attempt number the claim took; finalizing is fenced on it.
+type RefundClaim struct {
+	ID          int64
+	PublicID    uuid.UUID
+	PaymentID   int64
+	AmountCents int64
+	Attempts    int
+	// GatewayKey is the refund's idempotency key, ChargeKey the charge's.
+	GatewayKey, ChargeKey string
+	// Public ids and the lot, for the alert and the log.
+	PaymentPublicID, ReservationPublicID uuid.UUID
+	ReservationID, LotID                 int64
+}
+
+// Refunds is the storage port of the refund job. Every method runs on the
+// transaction carried by the context.
+type Refunds interface {
+	// Claim leases up to limit refunds due at now: pending, next_attempt_at <= now,
+	// skipping rows another runner holds. Each claim takes the next attempt number
+	// and a lease until leaseUntil, so no other runner is handed it meanwhile.
+	Claim(ctx context.Context, now, leaseUntil time.Time, limit int) ([]RefundClaim, error)
+	// Succeed finishes a refund: the refund succeeds and its payment goes
+	// succeeded -> refunded. It is fenced on (pending, attempts) and reports
+	// whether it applied; false changes nothing.
+	Succeed(ctx context.Context, c RefundClaim, providerRef string, now time.Time) (bool, error)
+	// Retry records a failed attempt and schedules the next one, fenced as Succeed.
+	Retry(ctx context.Context, c RefundClaim, lastError string, nextAttempt time.Time) (bool, error)
+	// Fail ends a refund for good (attempt limit reached), fenced as Succeed.
+	Fail(ctx context.Context, c RefundClaim, lastError string, now time.Time) (bool, error)
+}
+
+// RefundDone describes a refund that just succeeded.
+type RefundDone struct {
+	RefundPublicID uuid.UUID
+	ReservationID  int64
+	AmountCents    int64
+}
+
+// RefundNotifier tells the driver a refund went through. The reservations
+// service implements it; it runs in the success transaction.
+type RefundNotifier interface {
+	RefundSucceeded(ctx context.Context, r RefundDone) error
+}

@@ -1,0 +1,8 @@
+Hello{{with .first_name}} {{.}}{{end}},
+
+The reservation fee of {{.amount_display}} was refunded in full to the card you paid with. The bank may take a few days to show it.
+
+You are receiving this because your MyPark reservation did not go ahead, so its fee was returned.
+
+-- 
+{{template "brand"}}

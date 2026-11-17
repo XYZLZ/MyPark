@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
 )
 
@@ -133,4 +135,31 @@ func (s *Service) cancelLive(ctx context.Context, rec Record, rsv ApplyRow, inWi
 		return s.repo.BumpLot(ctx, rsv.LotID, now)
 	}
 	return nil
+}
+
+var _ payments.RefundNotifier = (*Service)(nil)
+
+// RefundSucceeded queues the refund_succeeded email (design 12.5, 12.6). It
+// runs in the refund job's success transaction, deduplicated per refund. The
+// email stands alone: a driver whose late charge was refunded never got a
+// cancellation email, so it states the amount and that the fee was returned.
+func (s *Service) RefundSucceeded(ctx context.Context, r payments.RefundDone) error {
+	rsv, err := s.repo.ForApply(ctx, r.ReservationID)
+	if err != nil {
+		return err
+	}
+	c, err := s.repo.UserContact(ctx, rsv.UserID)
+	if err != nil {
+		return err
+	}
+	uid := rsv.UserID
+	return s.notify.Enqueue(ctx, notifications.Email{
+		Template: notifications.TplRefundSucceeded, Locale: c.Locale, To: c.Email, UserID: &uid,
+		Data: map[string]string{
+			"reservation_id": rsv.PublicID.String(),
+			"amount_cents":   strconv.FormatInt(r.AmountCents, 10),
+			"amount_display": fmt.Sprintf("RD$%d.%02d", r.AmountCents/100, r.AmountCents%100),
+		},
+		DedupeKey: string(notifications.TplRefundSucceeded) + ":" + r.RefundPublicID.String(),
+	})
 }
