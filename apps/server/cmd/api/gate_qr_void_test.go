@@ -299,6 +299,7 @@ func TestGateQR_VoidRacesLateEntryPass(t *testing.T) {
 func TestGateQR_RePresentStale(t *testing.T) {
 	e := newQREnv(t)
 	id, qr, stay := e.stranded()
+	before, notified := e.version(), e.listenLot()
 	if again := wantQROpen(t, e.present(qr)); again != stay {
 		t.Errorf("stay_id = %s, want the same %s", again, stay)
 	}
@@ -306,6 +307,7 @@ func TestGateQR_RePresentStale(t *testing.T) {
 		stay, e.clk.Now()); n != 1 {
 		t.Error("want the stay voided and reopened at now")
 	}
+	notified(before + 1)
 	if st := e.status(id); st != "checked_in" {
 		t.Errorf("status = %s, want checked_in", st)
 	}
@@ -472,4 +474,56 @@ func TestGateQR_VoidSkipRollsBack(t *testing.T) {
 			e.invariants()
 		})
 	}
+}
+
+// listenLot listens for lot_changed; the returned check asserts that the
+// only notification since is the one for version.
+func (e *qrEnv) listenLot() func(version int) {
+	e.t.Helper()
+	conn, err := e.db.Super.Acquire(e.t.Context())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(conn.Release)
+	if _, err := conn.Exec(e.t.Context(), `listen lot_changed`); err != nil {
+		e.t.Fatal(err)
+	}
+	return func(version int) {
+		e.t.Helper()
+		if _, err := e.db.Super.Exec(e.t.Context(), `select pg_notify('lot_changed', 'sentinel')`); err != nil {
+			e.t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(e.t.Context(), 10*time.Second)
+		defer cancel()
+		for _, want := range []string{fmt.Sprintf("%d:%d", e.lotID, version), "sentinel"} {
+			if got, err := conn.Conn().WaitForNotification(ctx); err != nil || got.Payload != want {
+				e.t.Errorf("notification = %v, %v; want %s (exactly one lot_changed)", got, err, want)
+			}
+		}
+		if v := e.version(); v != version {
+			e.t.Errorf("version = %d, want %d", v, version)
+		}
+	}
+}
+
+// A stale stay re-presented after the window closed: the inline void still
+// restores the hold and publishes it once, then the QR is denied.
+func TestGateQR_RePresentStaleWindowClosed(t *testing.T) {
+	e := newQREnv(t)
+	id, _, qr := e.confirmed(arrivalInWindow)
+	_, upper := e.window(id)
+	e.clk.Set(upper.Add(-30 * time.Second))
+	stay := wantQROpen(t, e.present(qr))
+	e.clk.Set(upper.Add(31 * time.Second))
+	before, notified := e.version(), e.listenLot()
+
+	wantQRDeny(t, e.present(qr), "reservation.window_closed")
+	notified(before + 1)
+	if st := e.status(id); st != "confirmed" {
+		t.Errorf("status = %s, want confirmed", st)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'voided'`, stay); n != 1 {
+		t.Error("want the stay voided")
+	}
+	e.invariants()
 }

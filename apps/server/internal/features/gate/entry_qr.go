@@ -52,7 +52,8 @@ func (s *Service) qrEntry(ctx context.Context, d authz.Device, token string) (Re
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Result{}, err
 	}
-	if r.Status == reservationCheckedIn && stay.Status == StatusEntryPending && !now.Before(stay.AcceptedAt.Add(pendingWindow)) {
+	stale := r.Status == reservationCheckedIn && stay.Status == StatusEntryPending && !now.Before(stay.AcceptedAt.Add(pendingWindow))
+	if stale {
 		if r, stay, err = s.voidStale(ctx, r, stay, now); err != nil {
 			return Result{}, err
 		}
@@ -64,6 +65,9 @@ func (s *Service) qrEntry(ctx context.Context, d authz.Device, token string) (Re
 	})
 	switch dec.Action {
 	case QRDeny:
+		if stale { // the restored hold is published once; the other outcomes bump
+			return deny(dec.Reason), s.bumpVersion(ctx, d.LotID, now)
+		}
 		return deny(dec.Reason), nil
 	case QRPhysicallyFull:
 		if err := s.reservations.CancelUnadmitted(ctx, r, now); err != nil {
@@ -155,7 +159,8 @@ const (
 // whose stay is past its 60 s (M3B-24, M3B-60): the hold is restored without
 // a cap check and the stay voided, so the decision then takes the
 // confirmed path (reopen, physically full or window closed). The caller
-// holds the lot and reservation locks; slot loads come before the stay.
+// bumps the version once, whatever the outcome, and holds the lot and
+// reservation locks; slot loads come before the stay.
 // Nothing else can change the stay under the lot lock, so a mismatch is an
 // error that rolls everything back.
 func (s *Service) voidStale(ctx context.Context, r ReservationEntry, stay Stay, now time.Time) (ReservationEntry, Stay, error) {
@@ -174,5 +179,5 @@ func (s *Service) voidStale(ctx context.Context, r ReservationEntry, stay Stay, 
 		return r, stay, err
 	}
 	r.Status, stay.Status = reservationConfirmed, StatusVoided
-	return r, stay, s.bumpVersion(ctx, r.LotID, now)
+	return r, stay, nil
 }
