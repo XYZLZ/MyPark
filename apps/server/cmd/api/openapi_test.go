@@ -195,6 +195,47 @@ func TestOpenAPI_PostDeviceEventSecurity(t *testing.T) {
 // and S9.1 deletes this list, which makes the test strict again.
 var m3PendingAllowlist = map[string]bool{"S3.2": true, "S3.3": true, "S4.2": true, "S5.1": true, "S5.3": true}
 
+// m3Operations is the M3 driver contract published by S1, with the slice that
+// serves each operation and removes its marker (design §14.1).
+var m3Operations = []struct{ key, id, marker string }{
+	{"POST /v1/reservations/quote", "quoteReservation", "S3.2"},
+	{"POST /v1/reservations", "createReservation", "S3.2"},
+	{"GET /v1/reservations", "listReservations", "S3.3"},
+	{"GET /v1/reservations/{id}", "getReservation", "S3.3"},
+	{"PATCH /v1/reservations/{id}", "changeReservationVehicle", "S3.3"},
+	{"POST /v1/reservations/{id}/pay", "payReservation", "S4.2"},
+	{"GET /v1/reservations/{id}/qr", "getReservationQr", "S4.2"},
+	{"POST /v1/reservations/{id}/cancel", "cancelReservation", "S5.1"},
+	{"GET /v1/payments", "listPayments", "S5.3"},
+	{"GET /v1/payments/{id}", "getPayment", "S5.3"},
+}
+
+// Each M3 operation is documented under its operationId and carries either its
+// own slice marker (not yet served) or none (the serving task removed it).
+// Every marker that is present is in the allowlist, so a typo or a marker
+// moved to another slice fails here instead of hiding in the skipped set.
+func TestOpenAPI_M3PendingMarkersMatchAllowlist(t *testing.T) {
+	ops := loadOperations(t)
+	for _, want := range m3Operations {
+		op, ok := ops[want.key]
+		if !ok {
+			t.Errorf("%s is not documented in openapi.yaml", want.key)
+			continue
+		}
+		if op.id != want.id {
+			t.Errorf("%s: operationId = %q, want %q", want.key, op.id, want.id)
+		}
+		if op.pending != "" && op.pending != want.marker {
+			t.Errorf("%s: x-mypark-pending = %q, want %q or none", want.key, op.pending, want.marker)
+		}
+	}
+	for key, op := range ops {
+		if op.pending != "" && strings.HasPrefix(op.pending, "S") && !m3PendingAllowlist[op.pending] {
+			t.Errorf("%s: marker %q is not in m3PendingAllowlist", key, op.pending)
+		}
+	}
+}
+
 // Every operation of the contract is served: contract-first markers
 // (x-mypark-pending) are removed by the slice that serves the operation, and
 // none may remain at the end of M2. A failure names the slice left behind.
