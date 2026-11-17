@@ -119,6 +119,9 @@ type Repo interface {
 	LockForEntry(ctx context.Context, lotID, id int64) (EntryRow, error)
 	// CheckIn moves a confirmed reservation to checked_in at now. Fenced on confirmed.
 	CheckIn(ctx context.Context, id int64, now time.Time) error
+	// UndoCheckIn moves a checked_in reservation back to confirmed, clearing
+	// checked_in_at (M3B-60). Fenced on checked_in.
+	UndoCheckIn(ctx context.Context, id int64, now time.Time) error
 }
 
 // Availability is the public availability the no-space-now check reads

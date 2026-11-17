@@ -908,6 +908,26 @@ func (q *Queries) SetReservationVehicle(ctx context.Context, arg SetReservationV
 	return err
 }
 
+const undoCheckIn = `-- name: UndoCheckIn :execrows
+update reservations
+set status = 'confirmed', checked_in_at = null, updated_at = $1
+where id = $2 and status = 'checked_in'
+`
+
+type UndoCheckInParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+// The void of its stay returns a checked-in reservation to confirmed (M3B-60).
+func (q *Queries) UndoCheckIn(ctx context.Context, arg UndoCheckInParams) (int64, error) {
+	result, err := q.db.Exec(ctx, undoCheckIn, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const vehicleHasActiveReservation = `-- name: VehicleHasActiveReservation :one
 select exists (
     select 1 from reservations

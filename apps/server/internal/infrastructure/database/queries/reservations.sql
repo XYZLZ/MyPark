@@ -213,3 +213,9 @@ for update;
 update reservations
 set status = 'checked_in', checked_in_at = @now, updated_at = @now
 where id = @id and status = 'confirmed';
+
+-- name: UndoCheckIn :execrows
+-- The void of its stay returns a checked-in reservation to confirmed (M3B-60).
+update reservations
+set status = 'confirmed', checked_in_at = null, updated_at = @now
+where id = @id and status = 'checked_in';

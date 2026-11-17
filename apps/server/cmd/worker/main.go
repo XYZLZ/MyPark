@@ -34,6 +34,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
+	gatepg "github.com/XYZLZ/MyPark/apps/server/internal/features/gate/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
@@ -151,6 +152,7 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	authPurger := auth.NewPurger(pool, clk)
 	reconciler := newReconciler(pool, cfg, clk, log)
 	refunds := newRefundProcessor(pool, clk, log)
+	voider := newReservationVoider(pool, clk, log)
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
@@ -162,9 +164,14 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 		}},
 		{Name: "auth-purge", Every: authPurgeEvery, Run: authPurger.Purge},
 		{Name: "void_unpassed_entries", Every: voidEvery, Run: func(ctx context.Context) error {
-			n, err := gate.VoidUnpassedEntries(ctx, pool, clk.Now())
-			if n > 0 {
-				log.InfoContext(ctx, "voided unpassed entries", "count", n)
+			now := clk.Now()
+			n, err := gate.VoidUnpassedEntries(ctx, pool, now)
+			if err != nil {
+				return err
+			}
+			r, err := voider.Run(ctx, pool, now)
+			if n+r > 0 {
+				log.InfoContext(ctx, "voided unpassed entries", "count", n, "reservation_count", r)
 			}
 			return err
 		}},
@@ -237,4 +244,13 @@ func newRefundProcessor(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *
 		}),
 		Log: log,
 	}
+}
+
+// newReservationVoider builds the reservation-stay part of the void job
+// (design 12.7, M3B-60). It only touches reservations through the gate port,
+// so the service needs no gateway, mailer or QR key.
+func newReservationVoider(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *gate.ReservationVoider {
+	tx := database.NewTxRunner(pool)
+	svc := reservations.NewService(reservations.Deps{Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log})
+	return &gate.ReservationVoider{Tx: tx, Repo: gatepg.NewRepo(), Reservations: reservations.NewGateAccess(svc), Log: log}
 }

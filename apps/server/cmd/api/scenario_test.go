@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,11 +14,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
+	gatepg "github.com/XYZLZ/MyPark/apps/server/internal/features/gate/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
 	"github.com/XYZLZ/MyPark/apps/server/internal/simulator"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
@@ -109,6 +116,9 @@ func (p *pacer) WaitUntil(ctx context.Context, at time.Time) error {
 		p.e.clk.Set(p.voidAt)
 		if _, err := gate.VoidUnpassedEntries(ctx, p.e.d.pool, p.voidAt); err != nil && ctx.Err() == nil {
 			p.e.t.Errorf("void job at %s: %v", p.voidAt, err)
+		}
+		if _, err := newReservationVoider(p.e.d.pool, p.e.clk, p.e.d.log).Run(ctx, p.e.d.pool, p.voidAt); err != nil && ctx.Err() == nil {
+			p.e.t.Errorf("reservation void job at %s: %v", p.voidAt, err)
 		}
 		p.voidAt = p.voidAt.Add(voidTick)
 	}
@@ -474,4 +484,12 @@ func TestScenario_Deterministic(t *testing.T) {
 	if len(a) != len(b) {
 		t.Fatalf("trace lengths differ: %d vs %d", len(a), len(b))
 	}
+}
+
+// newReservationVoider is the reservation-stay void job as cmd/worker builds
+// it; the pacer runs it after the M2 batch, as the worker does.
+func newReservationVoider(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *gate.ReservationVoider {
+	tx := database.NewTxRunner(pool)
+	svc := reservations.NewService(reservations.Deps{Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log})
+	return &gate.ReservationVoider{Tx: tx, Repo: gatepg.NewRepo(), Reservations: reservations.NewGateAccess(svc), Log: log}
 }

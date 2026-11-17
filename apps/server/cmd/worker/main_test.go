@@ -217,6 +217,50 @@ func TestWorkerJobs_IncludeVoid(t *testing.T) {
 	}
 }
 
+// TestWorkerJobs_VoidRunsBoth checks the void job body voids a stale ticket
+// stay through the M2 batch and a stale reservation stay through the
+// reservation voider (M3B-60), in one tick.
+func TestWorkerJobs_VoidRunsBoth(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	now := clk.Now()
+	drivers := testsupport.SeedDrivers(t, db, 1)
+	testsupport.SeedReservations(t, db, lotID, drivers, now.Add(-5*time.Minute), now.Add(-15*time.Minute), now.Add(15*time.Minute), now)
+	if _, err := db.App.Exec(t.Context(),
+		`with r as (update reservations set status = 'checked_in', confirmed_at = $2, qr_nonce = '\x00000000000000000000000000000000',
+		                                    checked_in_at = $2, updated_at = $2
+		            returning id, tariff_version_id)
+		 insert into stays (lot_id, credential_kind, ticket_code_hash, reservation_id, status, tariff_version_id, accepted_at, updated_at)
+		 select $1::bigint, 'reservation', null, r.id, 'entry_pending', r.tariff_version_id, $2::timestamptz, $2::timestamptz from r
+		 union all
+		 select $1, 'ticket', sha256('t'::bytea), null, 'entry_pending', r.tariff_version_id, $2, $2 from r`,
+		lotID, now.Add(-61*time.Second)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "void_unpassed_entries" {
+			job = &list[i]
+		}
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var voided, confirmed int
+	if err := db.App.QueryRow(t.Context(),
+		`select (select count(*) from stays where status = 'voided' and voided_at = $1),
+		        (select count(*) from reservations where status = 'confirmed' and checked_in_at is null)`, now).Scan(&voided, &confirmed); err != nil {
+		t.Fatal(err)
+	}
+	if voided != 2 || confirmed != 1 {
+		t.Fatalf("voided = %d, confirmed = %d; want both stays voided and the reservation confirmed", voided, confirmed)
+	}
+	testsupport.AssertOccupancyInvariant(t, db.App, lotID)
+	testsupport.AssertSlotInvariant(t, db.App, lotID)
+}
+
 // TestWorkerJobs_IncludePurge checks device_events_purge runs daily and its
 // body deletes what is past retention in batches of 5000 (12 001 rows take
 // three calls) while it keeps the recent rows.

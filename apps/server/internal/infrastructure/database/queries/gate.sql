@@ -107,11 +107,13 @@ select pg_notify('lot_changed', sqlc.arg(lot_id)::bigint || ':' || sqlc.arg(vers
 -- name: VoidUnpassed :execrows
 -- Entries not passed within 60 s stop holding a space (M2C-30, design
 -- §12.5). Batches of 200; occupancy is untouched, so nothing is notified.
+-- Reservation stays are voided one by one with their reservation (M3B-60).
 update stays
 set status = 'voided', voided_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
 where id in (
     select id from stays
     where status = 'entry_pending' and accepted_at < sqlc.arg(now)::timestamptz - interval '60 seconds'
+      and credential_kind <> 'reservation'
     order by accepted_at
     limit 200
     for update skip locked
@@ -202,4 +204,22 @@ where lot_id = @lot_id and id = @id and credential_kind = 'reservation' and stat
 -- (M3B-24): the 60 s pending window starts again.
 update stays
 set accepted_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status = 'entry_pending';
+
+-- name: ReservationStaysToVoid :many
+-- Unlocked candidates of the reservation void (design 12.7 step 1); each is
+-- re-checked under its locks.
+select id, lot_id, reservation_id::bigint as reservation_id from stays
+where credential_kind = 'reservation' and status = 'entry_pending'
+  and accepted_at < sqlc.arg(now)::timestamptz - interval '60 seconds'
+order by accepted_at
+limit 200;
+
+-- name: GetStayForUpdateByID :one
+select * from stays where lot_id = @lot_id and id = @id for update;
+
+-- name: VoidStay :execrows
+-- The reservation void (M3B-60): one locked entry_pending stay.
+update stays
+set status = 'voided', voided_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and status = 'entry_pending';

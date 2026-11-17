@@ -93,3 +93,30 @@ func TestVoidUnpassed_Batches(t *testing.T) {
 	}
 	testsupport.AssertOccupancyInvariant(t, db.App, lotID)
 }
+
+// Reservation stays are voided one by one with their reservation (M3B-60),
+// never by the M2 batch.
+func TestVoidUnpassed_SkipsReservationStays(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	insertPending(t, db, lotID, 1, "stale", now.Add(-61*time.Second))
+	drivers := testsupport.SeedDrivers(t, db, 1)
+	testsupport.SeedReservations(t, db, lotID, drivers, now.Add(-5*time.Minute), now.Add(-15*time.Minute), now.Add(15*time.Minute), now)
+	if _, err := db.App.Exec(t.Context(),
+		`insert into stays (lot_id, credential_kind, reservation_id, status, tariff_version_id, accepted_at, updated_at)
+		 select $1, 'reservation', r.id, 'entry_pending', r.tariff_version_id, $2, $2 from reservations r where r.user_id = $3`,
+		lotID, now.Add(-61*time.Second), drivers[0].UserID); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := gate.VoidUnpassedEntries(t.Context(), db.App, now)
+	if err != nil || n != 1 {
+		t.Fatalf("VoidUnpassedEntries = %d, %v; want only the ticket stay", n, err)
+	}
+	var kind string
+	if err := db.App.QueryRow(t.Context(), `select credential_kind from stays where status = 'entry_pending'`).Scan(&kind); err != nil || kind != "reservation" {
+		t.Errorf("pending stay = %q, %v; want the reservation stay left alone", kind, err)
+	}
+	testsupport.AssertOccupancyInvariant(t, db.App, lotID)
+}

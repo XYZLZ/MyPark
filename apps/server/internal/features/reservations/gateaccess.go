@@ -148,9 +148,26 @@ func (g GateAccess) CancelUnadmitted(ctx context.Context, r gate.ReservationEntr
 	return g.s.enqueueCancelled(ctx, rsv, refundPending, payments.RefundFacilityUnavailable)
 }
 
-// RestoreAfterVoid implements gate.Reservations (S6.2).
-func (GateAccess) RestoreAfterVoid(context.Context, int64, time.Time) (bool, error) {
-	return false, errors.ErrUnsupported
+// RestoreAfterVoid implements gate.Reservations: the void of its stay moves
+// a checked_in reservation back to confirmed and restores its hold WITHOUT a
+// cap check (M3B-60: a confirmed reservation is never cancelled for cap).
+// Locks the reservation, then its slot loads (design 8.1, void job). Any
+// other status is left alone: (false, nil).
+func (g GateAccess) RestoreAfterVoid(ctx context.Context, reservationID int64, now time.Time) (bool, error) {
+	r, err := g.s.repo.LockForApply(ctx, reservationID)
+	if err != nil {
+		return false, err
+	}
+	if _, err := Transition(r.Status, EvEntryVoided); err != nil { // not checked_in
+		return false, nil
+	}
+	if _, err := g.s.repo.EnsureAndLockSlots(ctx, r.LotID, r.Window); err != nil {
+		return false, err
+	}
+	if err := g.s.repo.IncSlots(ctx, r.LotID, r.Window); err != nil {
+		return false, err
+	}
+	return true, g.s.repo.UndoCheckIn(ctx, r.ID, now)
 }
 
 // LateEntryPass implements gate.Reservations (S6.2).

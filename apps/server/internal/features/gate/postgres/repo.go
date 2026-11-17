@@ -204,6 +204,7 @@ func toStay(row dbgen.Stay, err error) (gate.Stay, error) {
 	return gate.Stay{
 		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, CredentialKind: row.CredentialKind,
 		Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64, TariffVersionID: row.TariffVersionID,
+		AcceptedAt: row.AcceptedAt.Time,
 		EnteredAt: row.EnteredAt.Time, PaidAt: row.PaidAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
 		LostTicket: row.LostTicket, ReservationID: row.ReservationID.Int64,
 	}, nil
@@ -444,4 +445,23 @@ func (Repo) RefreshAccepted(ctx context.Context, lotID, stayID int64, now time.T
 	}
 	n, err := qs.RefreshStayAccepted(ctx, dbgen.RefreshStayAcceptedParams{Now: ts(now), LotID: lotID, ID: stayID})
 	return oneRow("refresh accepted", stayID, n, err)
+}
+
+// StayForUpdateByID implements gate.Repo.
+func (Repo) StayForUpdateByID(ctx context.Context, lotID, stayID int64) (gate.Stay, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Stay{}, err
+	}
+	return toStay(qs.GetStayForUpdateByID(ctx, dbgen.GetStayForUpdateByIDParams{LotID: lotID, ID: stayID}))
+}
+
+// VoidStay implements gate.Repo.
+func (Repo) VoidStay(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.VoidStay(ctx, dbgen.VoidStayParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("void stay", stayID, n, err)
 }

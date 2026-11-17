@@ -105,6 +105,12 @@ type Repo interface {
 	ReopenReservationStay(ctx context.Context, lotID, stayID int64, now time.Time) error
 	// RefreshAccepted sets the locked entry_pending stay's accepted_at to now.
 	RefreshAccepted(ctx context.Context, lotID, stayID int64, now time.Time) error
+
+	// StayForUpdateByID locks the lot's stay with this id, or returns
+	// ErrNotFound.
+	StayForUpdateByID(ctx context.Context, lotID, stayID int64) (Stay, error)
+	// VoidStay moves the locked entry_pending stay to voided at now (M3B-60).
+	VoidStay(ctx context.Context, lotID, stayID int64, now time.Time) error
 }
 
 // ErrNotFound means the lot has no matching row.
@@ -145,6 +151,7 @@ type Stay struct {
 	Status          Status
 	EmployeeCardID  int64
 	TariffVersionID int64
+	AcceptedAt      time.Time
 	EnteredAt       time.Time
 	// PaidAt is the latest payment time: every payment moves it (design
 	// §10.3), and an overstay is billed from it (M2C-35).

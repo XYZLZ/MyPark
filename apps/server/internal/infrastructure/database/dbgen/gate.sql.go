@@ -376,6 +376,41 @@ func (q *Queries) GetStayForUpdate(ctx context.Context, arg GetStayForUpdatePara
 	return i, err
 }
 
+const getStayForUpdateByID = `-- name: GetStayForUpdateByID :one
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at, reservation_id from stays where lot_id = $1 and id = $2 for update
+`
+
+type GetStayForUpdateByIDParams struct {
+	LotID int64
+	ID    int64
+}
+
+func (q *Queries) GetStayForUpdateByID(ctx context.Context, arg GetStayForUpdateByIDParams) (Stay, error) {
+	row := q.db.QueryRow(ctx, getStayForUpdateByID, arg.LotID, arg.ID)
+	var i Stay
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.LotID,
+		&i.CredentialKind,
+		&i.TicketCodeHash,
+		&i.EmployeeCardID,
+		&i.Status,
+		&i.TariffVersionID,
+		&i.AcceptedAt,
+		&i.EnteredAt,
+		&i.PaidAt,
+		&i.ExitDeadlineAt,
+		&i.ExitAuthorizedAt,
+		&i.ExitedAt,
+		&i.VoidedAt,
+		&i.LostTicket,
+		&i.UpdatedAt,
+		&i.ReservationID,
+	)
+	return i, err
+}
+
 const insertEmployeeCard = `-- name: InsertEmployeeCard :execrows
 insert into employee_cards (lot_id, card_uid_hash, holder_name, employee_code, status, revoked_at)
 values ($1, $2, $3, $4, $5, $6)
@@ -667,6 +702,42 @@ func (q *Queries) ReopenReservationStay(ctx context.Context, arg ReopenReservati
 	return result.RowsAffected(), nil
 }
 
+const reservationStaysToVoid = `-- name: ReservationStaysToVoid :many
+select id, lot_id, reservation_id::bigint as reservation_id from stays
+where credential_kind = 'reservation' and status = 'entry_pending'
+  and accepted_at < $1::timestamptz - interval '60 seconds'
+order by accepted_at
+limit 200
+`
+
+type ReservationStaysToVoidRow struct {
+	ID            int64
+	LotID         int64
+	ReservationID int64
+}
+
+// Unlocked candidates of the reservation void (design 12.7 step 1); each is
+// re-checked under its locks.
+func (q *Queries) ReservationStaysToVoid(ctx context.Context, now pgtype.Timestamptz) ([]ReservationStaysToVoidRow, error) {
+	rows, err := q.db.Query(ctx, reservationStaysToVoid, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReservationStaysToVoidRow{}
+	for rows.Next() {
+		var i ReservationStaysToVoidRow
+		if err := rows.Scan(&i.ID, &i.LotID, &i.ReservationID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setStayExited = `-- name: SetStayExited :execrows
 update stays
 set status = 'exited', exited_at = $1::timestamptz,
@@ -768,12 +839,34 @@ func (q *Queries) UpdateSpaceFromSensor(ctx context.Context, arg UpdateSpaceFrom
 	return code, err
 }
 
+const voidStay = `-- name: VoidStay :execrows
+update stays
+set status = 'voided', voided_at = $1::timestamptz, updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status = 'entry_pending'
+`
+
+type VoidStayParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// The reservation void (M3B-60): one locked entry_pending stay.
+func (q *Queries) VoidStay(ctx context.Context, arg VoidStayParams) (int64, error) {
+	result, err := q.db.Exec(ctx, voidStay, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const voidUnpassed = `-- name: VoidUnpassed :execrows
 update stays
 set status = 'voided', voided_at = $1::timestamptz, updated_at = $1::timestamptz
 where id in (
     select id from stays
     where status = 'entry_pending' and accepted_at < $1::timestamptz - interval '60 seconds'
+      and credential_kind <> 'reservation'
     order by accepted_at
     limit 200
     for update skip locked
@@ -782,6 +875,7 @@ where id in (
 
 // Entries not passed within 60 s stop holding a space (M2C-30, design
 // §12.5). Batches of 200; occupancy is untouched, so nothing is notified.
+// Reservation stays are voided one by one with their reservation (M3B-60).
 func (q *Queries) VoidUnpassed(ctx context.Context, now pgtype.Timestamptz) (int64, error) {
 	result, err := q.db.Exec(ctx, voidUnpassed, now)
 	if err != nil {
