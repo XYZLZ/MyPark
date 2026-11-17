@@ -273,6 +273,7 @@ func TestQuote_ReadOnly(t *testing.T) {
 	if n := e.count(`select count(*) from reservation_slot_loads`); n != 0 {
 		t.Errorf("slot rows = %d, want 0", n)
 	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 }
 
 func TestQuote_SameErrorsAsCreate(t *testing.T) {
@@ -296,8 +297,7 @@ func TestQuote_SameErrorsAsCreate(t *testing.T) {
 			}
 		}},
 		{"capacity reached", "reservation.capacity_reached", arrival1502, func(e *rsvEnv, _ testsupport.Driver) {
-			testsupport.HoldSlots(e.t, e.db, e.lotID, time.Date(2026, 12, 1, 14, 50, 0, 0, time.UTC),
-				time.Date(2026, 12, 1, 15, 25, 0, 0, time.UTC), 84)
+			e.fillWindow(84)
 		}},
 	}
 	for _, c := range cases {
@@ -312,6 +312,7 @@ func TestQuote_SameErrorsAsCreate(t *testing.T) {
 			if code < 400 || errCode(body) != c.code {
 				t.Fatalf("quote = %d %v, want error %s", code, body, c.code)
 			}
+			testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 		})
 	}
 }
@@ -334,6 +335,42 @@ func TestQuote_OffsetArrivalNormalized(t *testing.T) {
 			if got := field(body, "data.arrival_at"); got != want {
 				t.Errorf("arrival_at = %v, want %s", got, want)
 			}
+			testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 		})
+	}
+}
+
+// A quote with a vehicle_id must fail fast behind a writer holding the vehicle
+// row (M3B-55): 500 within the lock timeout, never a hang. The 15s timer is
+// only the hang detector.
+func TestQuote_BlockedVehicleLockFailsFast(t *testing.T) {
+	e := newRsvEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	tok := e.token(d)
+	tx, err := e.db.Super.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err := tx.Exec(t.Context(), `select 1 from vehicles where public_id = $1 for update`, d.VehicleID); err != nil {
+		t.Fatal(err)
+	}
+	type res struct {
+		code int
+		body map[string]any
+	}
+	done := make(chan res, 1)
+	go func() {
+		code, body := e.post(tok, "/v1/reservations/quote",
+			map[string]any{"lot_id": e.publicID, "arrival_at": arrival1502, "vehicle_id": d.VehicleID.String()})
+		done <- res{code, body}
+	}()
+	select {
+	case r := <-done:
+		if r.code != http.StatusInternalServerError || errCode(r.body) != "internal.unexpected" {
+			t.Fatalf("quote = %d %v, want 500 internal.unexpected", r.code, r.body)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("quote hung behind a locked vehicle row")
 	}
 }
