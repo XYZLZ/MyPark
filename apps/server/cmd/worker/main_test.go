@@ -269,3 +269,46 @@ func TestWorkerJobs_IncludePurge(t *testing.T) {
 		t.Errorf("the job did not log the deleted count 12001: %s", logs.String())
 	}
 }
+
+// TestWorkerJobs_IncludeReconcile checks payment_reconcile runs every 15 s and
+// its body settles a fee attempt the gateway never saw (not_submitted).
+func TestWorkerJobs_IncludeReconcile(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lot := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 12, 1, 13, 58, 10, 0, time.UTC))
+	drivers := testsupport.SeedDrivers(t, db, 1)
+	arrival := clk.Now().Add(2 * time.Hour)
+	testsupport.SeedReservations(t, db, lot, drivers, arrival, arrival.Add(-15*time.Minute), arrival.Add(20*time.Minute), clk.Now())
+	var rsv int64
+	if err := db.App.QueryRow(t.Context(), `select id from reservations where user_id = $1`, drivers[0].UserID).Scan(&rsv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.App.Exec(t.Context(),
+		`insert into payments (kind, method, amount_cents, status, idempotency_key, reservation_id, user_id,
+		                       client_key, request_fingerprint, card_brand, card_last4, created_at)
+		 values ('reservation_fee', 'gateway_sim', 15000, 'pending', 'rsv-fee:worker-test', $1, $2,
+		         'key-worker-0001', $3, 'visa', '4242', $4)`,
+		rsv, drivers[0].UserID, make([]byte, 32), clk.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("seed pending fee: %v", err)
+	}
+
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "payment_reconcile" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != 15*time.Second {
+		t.Fatalf("payment_reconcile job = %+v, want one running every 15 s", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var n int
+	if err := db.App.QueryRow(t.Context(),
+		`select count(*) from payments where idempotency_key = 'rsv-fee:worker-test' and status = 'failed'
+		 and failure_code = 'not_submitted' and failed_at = $1`, clk.Now()).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("settled payments = %d, %v; want the unseen attempt failed as not_submitted", n, err)
+	}
+}

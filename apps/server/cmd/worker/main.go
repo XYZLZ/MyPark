@@ -2,7 +2,8 @@
 // outbox over SMTP every 2 s, voids entries not passed within 60 s (every
 // 15 s) and purges expired rate-limit counters (every minute), expired auth
 // data (hourly), old outbox rows and device events past retention (daily). It
-// also serves the health probes on WORKER_HEALTH_ADDR (default :8091), /healthz
+// also reconciles pending fee payments with the gateway (every 15 s), and it
+// serves the health probes on WORKER_HEALTH_ADDR (default :8091), /healthz
 // for liveness and /readyz for the database and migrations.
 //
 // With -healthcheck it does not serve: it probes GET /readyz on the local
@@ -11,6 +12,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,10 +34,16 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
+	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/email"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jobs"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/paymentsim"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
@@ -60,6 +68,7 @@ const (
 	authPurgeEvery      = time.Hour
 	outboxPurgeEvery    = 24 * time.Hour
 	voidEvery           = 15 * time.Second
+	reconcileEvery      = 15 * time.Second
 	deviceEventsEvery   = 24 * time.Hour
 	// purgeBatch is the rows one purge call deletes, so a backlog never holds
 	// one long transaction.
@@ -137,6 +146,7 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	})
 	dispatcher := notifications.NewDispatcher(pool, sender, clk, cfg.SMTPFrom(), log)
 	authPurger := auth.NewPurger(pool, clk)
+	reconciler := newReconciler(pool, cfg, clk, log)
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
@@ -151,6 +161,13 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 			n, err := gate.VoidUnpassedEntries(ctx, pool, clk.Now())
 			if n > 0 {
 				log.InfoContext(ctx, "voided unpassed entries", "count", n)
+			}
+			return err
+		}},
+		{Name: "payment_reconcile", Every: reconcileEvery, Run: func(ctx context.Context) error {
+			n, err := reconciler.Run(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "reconciled pending payments", "count", n)
 			}
 			return err
 		}},
@@ -171,5 +188,25 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 			_, err := notifications.PurgeOutbox(ctx, pool, clk)
 			return err
 		}},
+	}
+}
+
+// newReconciler builds the payment reconcile job. It re-queries the simulated
+// gateway by key and applies the answer through the reservations service, the
+// same code the pay request runs.
+func newReconciler(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, log *slog.Logger) *payments.Reconciler {
+	tx := database.NewTxRunner(pool)
+	fees := paymentspg.NewRepo(pool)
+	return &payments.Reconciler{
+		Tx:      tx,
+		Fees:    fees,
+		Gateway: paymentsim.New(pool, paymentsim.Config{Clock: clk}),
+		Outcomes: reservations.NewService(reservations.Deps{
+			Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
+			Fees: fees, Notify: notificationspg.NewNotifier(clk),
+			QRKey: cfg.QRHMACKey(), ChargeTimeout: cfg.PaymentChargeTimeout(), Rand: rand.Reader,
+		}),
+		ChargeTimeout: cfg.PaymentChargeTimeout(),
+		Log:           log,
 	}
 }
