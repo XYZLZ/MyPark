@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
@@ -122,7 +123,12 @@ func (s *Service) confirm(ctx context.Context, rsv ApplyRow, fee payments.FeePay
 		return err
 	}
 	if err := s.enqueue(ctx, rsv, notifications.TplReservationConfirmed, map[string]string{
-		"qr_token": EncodeQR(s.qrKey, rsv.PublicID, nonce),
+		"reservation_id": rsv.PublicID.String(),
+		"arrival_at":     lotTime(rsv.ArrivalAt),
+		"window":         lotTime(rsv.Window.Start) + " - " + lotTime(rsv.Window.End),
+		"plate_display":  rsv.PlateDisplay,
+		"fee_cents":      strconv.FormatInt(rsv.FeeCents, 10),
+		"qr_token":       EncodeQR(s.qrKey, rsv.PublicID, nonce),
 	}); err != nil {
 		return err
 	}
@@ -185,3 +191,9 @@ func (s *Service) settled(ctx context.Context, fee payments.FeePayment, rsv Appl
 		"payment_id", fee.PublicID, "payment_status", fee.Status, "reservation_id", rsv.PublicID)
 	return true, payments.ErrSuccessAfterFinal
 }
+
+// lotZone is the lot's civil time (America/Santo_Domingo, no DST): the emails
+// show times the driver can read off a clock in the city.
+var lotZone = time.FixedZone("America/Santo_Domingo", -4*60*60)
+
+func lotTime(t time.Time) string { return t.In(lotZone).Format("2006-01-02 15:04") }

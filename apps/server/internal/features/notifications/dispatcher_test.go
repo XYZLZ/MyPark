@@ -431,3 +431,121 @@ func waitStatus(t *testing.T, f fixture, key, want string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+const qrToken = "QRTOKEN-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789"
+
+// enqueueConfirmed enqueues a reservation_confirmed email through the real Notifier.
+func (f fixture) enqueueConfirmed(t *testing.T, key, locale string) {
+	t.Helper()
+	err := database.NewTxRunner(f.db.App).InTx(t.Context(), func(ctx context.Context) error {
+		return notificationspg.NewNotifier(f.clk).Enqueue(ctx, notifications.Email{
+			Template: notifications.TplReservationConfirmed, Locale: locale, To: f.to,
+			Data: map[string]string{
+				"reservation_id": "r-1", "arrival_at": "2026-12-01 11:02", "window": "2026-12-01 10:50 - 2026-12-01 11:25",
+				"plate_display": "A123456", "fee_cents": "15000", "qr_token": qrToken,
+			},
+			DedupeKey: key,
+		})
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+}
+
+func TestDispatcher_ConfirmedEmailHasQRAndIsScrubbed(t *testing.T) {
+	f := newFixture(t)
+	f.enqueueConfirmed(t, "reservation_confirmed:1", "es-DO")
+	f.enqueueConfirmed(t, "reservation_confirmed:2", "en")
+	s := &recorder{}
+	var logs bytes.Buffer
+	if n, err := f.dispatcher(s, slog.New(slog.NewJSONHandler(&logs, nil))).Tick(t.Context()); err != nil || n != 2 {
+		t.Fatalf("Tick = %d, %v; want 2", n, err)
+	}
+	for _, m := range s.messages() {
+		if len(m.Inline) != 1 || m.Inline[0].ContentID != "qr" || m.Inline[0].ContentType != "image/png" {
+			t.Fatalf("inline = %+v, want one image/png with Content-ID qr", m.Inline)
+		}
+		want, err := notifications.QRImage(qrToken)
+		if err != nil || !bytes.Equal(m.Inline[0].Data, want) {
+			t.Errorf("the inline image is not the QR of the token (%v)", err)
+		}
+		if strings.Contains(m.Text+m.HTML+m.Subject, qrToken) {
+			t.Error("the token must not appear in any body")
+		}
+		if !strings.Contains(m.HTML, "cid:qr") {
+			t.Error("html must reference cid:qr")
+		}
+	}
+	for _, key := range []string{"reservation_confirmed:1", "reservation_confirmed:2"} {
+		r := f.row(t, key)
+		if _, has := r.Payload["qr_token"]; has || r.Status != "sent" || r.Payload["plate_display"] != "A123456" {
+			t.Errorf("%s row = %+v, want sent, qr_token scrubbed, the rest kept", key, r)
+		}
+	}
+	if strings.Contains(logs.String(), qrToken) {
+		t.Error("the token reached the logs")
+	}
+}
+
+func TestDispatcher_ConfirmedRetryKeepsTokenAndDeadScrubsIt(t *testing.T) {
+	f := newFixture(t)
+	f.enqueueConfirmed(t, "reservation_confirmed:dead", "en")
+	s := &recorder{err: errors.New("boom")}
+	d := f.dispatcher(s, nil)
+	for i := 1; i <= 8; i++ {
+		if _, err := d.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		r := f.row(t, "reservation_confirmed:dead")
+		if i < 8 {
+			if _, has := r.Payload["qr_token"]; !has || r.Status != "pending" {
+				t.Fatalf("tick %d: row = %+v, the token must survive a retry", i, r)
+			}
+			f.clk.Advance(notifications.Backoff(i))
+		}
+	}
+	if r := f.row(t, "reservation_confirmed:dead"); r.Status != "dead" || r.Payload["qr_token"] != "" {
+		t.Errorf("row = %+v, want dead with qr_token scrubbed", r)
+	}
+}
+
+func TestDispatcher_ConfirmedWithoutTokenFails(t *testing.T) {
+	f := newFixture(t)
+	f.enqueueConfirmed(t, "reservation_confirmed:gone", "en")
+	if _, err := f.db.Super.Exec(t.Context(),
+		`update outbox_messages set payload = payload - 'qr_token' where dedupe_key = 'reservation_confirmed:gone'`); err != nil {
+		t.Fatal(err)
+	}
+	s := &recorder{}
+	if n, err := f.dispatcher(s, nil).Tick(t.Context()); err != nil || n != 0 {
+		t.Fatalf("Tick = %d, %v; want 0, nil", n, err)
+	}
+	if r := f.row(t, "reservation_confirmed:gone"); r.Status != "pending" || !strings.Contains(r.LastError, "qr") || len(s.messages()) != 0 {
+		t.Errorf("row = %+v, want a retry with a qr error and nothing sent", r)
+	}
+}
+
+func TestDispatcher_ConfirmedDeliversInlineQRToMailpit(t *testing.T) {
+	smtpAddr, api := testsupport.Mailpit(t)
+	f := newFixture(t)
+	f.to = testsupport.UniqueRecipient(t, api)
+	f.enqueueConfirmed(t, "mp:confirmed:es", "es-DO")
+	f.enqueueConfirmed(t, "mp:confirmed:en", "en")
+	host, port := testsupport.SplitHostPort(t, smtpAddr)
+	n, err := f.dispatcher(email.NewSMTP(email.SMTPConfig{Host: host, Port: port}), nil).Tick(t.Context())
+	if err != nil || n != 2 {
+		t.Fatalf("Tick = %d, %v; want 2", n, err)
+	}
+	msgs := testsupport.MailpitMessages(t, api, f.to)
+	if len(msgs) != 2 {
+		t.Fatalf("mailpit has %d messages, want 2", len(msgs))
+	}
+	for _, m := range msgs {
+		if len(m.Inline) != 1 || m.Inline[0].ContentID != "qr" || m.Inline[0].ContentType != "image/png" {
+			t.Errorf("%q inline = %+v, want one image/png with Content-ID qr", m.Subject, m.Inline)
+		}
+		if strings.Contains(m.Text+m.HTML, qrToken) || !strings.Contains(m.HTML, "cid:qr") {
+			t.Errorf("%q: the token must stay out of the bodies and the html must reference cid:qr", m.Subject)
+		}
+	}
+}

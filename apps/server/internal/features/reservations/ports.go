@@ -160,6 +160,11 @@ type ApplyRow struct {
 	LotID    int64
 	Status   Status
 	Window   Window
+
+	// Set by LockForApply only: what the confirmation email shows.
+	ArrivalAt    time.Time
+	FeeCents     int64
+	PlateDisplay string
 }
 
 // QRData is what a reservation's QR token is built from.

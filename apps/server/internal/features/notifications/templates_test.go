@@ -81,3 +81,41 @@ func TestBackoff_Schedule(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplates_ReservationConfirmedRenders(t *testing.T) {
+	const token = "SECRET-QR-TOKEN-0123456789"
+	data := map[string]string{
+		"reservation_id": "0198f5a0-0000-7000-8000-000000000001", "arrival_at": "2026-12-01 11:02",
+		"window": "2026-12-01 10:50 - 2026-12-01 11:25", "plate_display": "A123456", "fee_cents": "15000",
+		"qr_token": token,
+	}
+	for _, locale := range []string{"es-DO", "en"} {
+		t.Run(locale, func(t *testing.T) {
+			subject, text, html, err := notifications.Render(notifications.TplReservationConfirmed, locale, data)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if strings.TrimSpace(subject) == "" || strings.ContainsAny(subject, "\r\n") {
+				t.Errorf("subject = %q, want one non-empty line", subject)
+			}
+			for _, want := range []string{"2026-12-01 11:02", "2026-12-01 10:50 - 2026-12-01 11:25", "A123456", brandLine} {
+				if !strings.Contains(text, want) || !strings.Contains(html, want) {
+					t.Errorf("%q missing (text %t, html %t)", want, strings.Contains(text, want), strings.Contains(html, want))
+				}
+			}
+			if !strings.Contains(html, `src="cid:qr"`) {
+				t.Errorf("html lacks the inline image reference: %s", html)
+			}
+			for name, body := range map[string]string{"subject": subject, "text": text, "html": html} {
+				if strings.Contains(body, token) {
+					t.Errorf("%s contains the QR token", name)
+				}
+			}
+		})
+	}
+	es, _, _, _ := notifications.Render(notifications.TplReservationConfirmed, "es-DO", data)
+	en, _, _, _ := notifications.Render(notifications.TplReservationConfirmed, "en", data)
+	if es == en {
+		t.Error("the two locales must have different subjects")
+	}
+}

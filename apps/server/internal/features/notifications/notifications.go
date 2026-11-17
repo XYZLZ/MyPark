@@ -15,15 +15,16 @@ const (
 	TplAccountExists   Template = "account_exists"
 	TplAdminInvite     Template = "admin_invite"
 
-	// Reservation templates. Their files and the allNames entry arrive with S5.1.
+	// Reservation templates. TplReservationConfirmed is rendered; TplReservationCancelled
+	// gets its files and its allNames entry with S5.1.
 	TplReservationConfirmed Template = "reservation_confirmed"
 	TplReservationCancelled Template = "reservation_cancelled"
 )
 
 // Email is one message to enqueue. Locale is the users.locale of the
-// recipient. Data is the template data; a "code" entry is scrubbed once the
-// message is sent. DedupeKey makes Enqueue idempotent, for example
-// "verify_email:<auth_code id>".
+// recipient. Data is the template data; the "code" and "qr_token" entries are
+// scrubbed once the message is sent or dead. DedupeKey makes Enqueue idempotent,
+// for example "verify_email:<auth_code id>".
 type Email struct {
 	Template  Template
 	Locale    string
@@ -39,8 +40,8 @@ type Notifier interface {
 	// exists only if the action commits. A repeated DedupeKey is ignored.
 	// It fails with database.ErrNoTx when ctx has no transaction.
 	Enqueue(ctx context.Context, e Email) error
-	// ScrubPendingForUser removes payload.code from the pending and sending
-	// messages of a user (account deletion, spec 7.8). It fails with
-	// database.ErrNoTx when ctx has no transaction.
+	// ScrubPendingForUser removes payload.code and payload.qr_token from the
+	// pending and sending messages of a user (account deletion, spec 7.8). It
+	// fails with database.ErrNoTx when ctx has no transaction.
 	ScrubPendingForUser(ctx context.Context, userID int64) error
 }

@@ -310,7 +310,9 @@ func (r *Repo) LockForApply(ctx context.Context, id int64) (reservations.ApplyRo
 	if err != nil {
 		return reservations.ApplyRow{}, fmt.Errorf("reservations: lock reservation %d: %w", id, err)
 	}
-	return applyRow(row.ID, row.PublicID, row.UserID, row.LotID, row.Status, row.WindowStart, row.WindowEnd), nil
+	out := applyRow(row.ID, row.PublicID, row.UserID, row.LotID, row.Status, row.WindowStart, row.WindowEnd)
+	out.ArrivalAt, out.FeeCents, out.PlateDisplay = row.ArrivalAt.Time.UTC(), row.FeeCents, row.PlateDisplay
+	return out, nil
 }
 
 // Confirm implements reservations.Repo.

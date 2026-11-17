@@ -592,22 +592,28 @@ func (q *Queries) ListReservationsForUser(ctx context.Context, arg ListReservati
 
 const lockReservationForApply = `-- name: LockReservationForApply :one
 select r.id, r.public_id, r.user_id, r.lot_id, r.status,
-       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.arrival_at, r.fee_cents, v.plate_display
 from reservations r
+join vehicles v on v.id = r.vehicle_id
 where r.id = $1
 for update of r
 `
 
 type LockReservationForApplyRow struct {
-	ID          int64
-	PublicID    uuid.UUID
-	UserID      int64
-	LotID       int64
-	Status      string
-	WindowStart pgtype.Timestamptz
-	WindowEnd   pgtype.Timestamptz
+	ID           int64
+	PublicID     uuid.UUID
+	UserID       int64
+	LotID        int64
+	Status       string
+	WindowStart  pgtype.Timestamptz
+	WindowEnd    pgtype.Timestamptz
+	ArrivalAt    pgtype.Timestamptz
+	FeeCents     int64
+	PlateDisplay string
 }
 
+// Joins the vehicle for the confirmation email; only the reservation row is locked.
 func (q *Queries) LockReservationForApply(ctx context.Context, id int64) (LockReservationForApplyRow, error) {
 	row := q.db.QueryRow(ctx, lockReservationForApply, id)
 	var i LockReservationForApplyRow
@@ -619,6 +625,9 @@ func (q *Queries) LockReservationForApply(ctx context.Context, id int64) (LockRe
 		&i.Status,
 		&i.WindowStart,
 		&i.WindowEnd,
+		&i.ArrivalAt,
+		&i.FeeCents,
+		&i.PlateDisplay,
 	)
 	return i, err
 }

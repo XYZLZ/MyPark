@@ -18,7 +18,7 @@ var templateFS embed.FS
 
 var (
 	locales  = []string{"es-DO", "en"}
-	allNames = []Template{TplVerifyEmail, TplPasswordReset, TplPasswordChanged, TplAccountExists, TplAdminInvite}
+	allNames = []Template{TplVerifyEmail, TplPasswordReset, TplPasswordChanged, TplAccountExists, TplAdminInvite, TplReservationConfirmed}
 )
 
 // Render renders template t for locale (es-DO or en) with data. subject is a

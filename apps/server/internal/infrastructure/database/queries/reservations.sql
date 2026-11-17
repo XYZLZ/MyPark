@@ -157,9 +157,12 @@ from reservations r
 where r.id = @id;
 
 -- name: LockReservationForApply :one
+-- Joins the vehicle for the confirmation email; only the reservation row is locked.
 select r.id, r.public_id, r.user_id, r.lot_id, r.status,
-       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.arrival_at, r.fee_cents, v.plate_display
 from reservations r
+join vehicles v on v.id = r.vehicle_id
 where r.id = @id
 for update of r;
 

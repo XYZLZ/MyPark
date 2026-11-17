@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -235,4 +237,40 @@ func TestApply_SuccessMeetingAFinalPayment(t *testing.T) {
 			t.Errorf("status = %s, want pending_payment (unchanged)", got)
 		}
 	})
+}
+
+// The confirmation email carries what its template shows (design 12.6), in lot time.
+func TestApply_ConfirmEmailPayload(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	var plate string
+	var fee int64
+	if err := e.db.App.QueryRow(t.Context(), `select v.plate_display, r.fee_cents from reservations r
+		join vehicles v on v.id = r.vehicle_id where r.id = $1`, f.rsvRow).Scan(&plate, &fee); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	var raw []byte
+	if err := e.db.Super.QueryRow(t.Context(), `select payload from outbox_messages where dedupe_key = $1`,
+		"reservation_confirmed:"+f.rsvID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"reservation_id": f.rsvID, "arrival_at": "2026-12-01 11:05", "window": "2026-12-01 10:50 - 2026-12-01 11:25",
+		"plate_display": plate, "fee_cents": strconv.FormatInt(fee, 10),
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("payload[%s] = %q, want %q", k, got[k], v)
+		}
+	}
+	if got["qr_token"] == "" || len(got) != len(want)+1 {
+		t.Errorf("payload = %v, want the five keys plus qr_token", got)
+	}
 }

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="es-DO">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#ffffff;font:16px/1.5 Arial,Helvetica,sans-serif;color:#111827">
+{{template "brand_header"}}
+<div style="padding:24px">
+<p>Hola{{with .first_name}} {{.}}{{end}},</p>
+<p>Tu reserva está confirmada.</p>
+<p>Vehículo: <strong>{{.plate_display}}</strong><br>
+Llegada: <strong>{{.arrival_at}}</strong><br>
+Ventana de entrada: <strong>{{.window}}</strong><br>
+<span style="color:#6b7280">(hora de Santo Domingo)</span></p>
+<p>Muestra este código QR, o el de la app, en la barrera de entrada.</p>
+<p><img src="cid:qr" alt="Código QR de la reserva" width="240" height="240" style="display:block;margin:16px 0"></p>
+{{template "brand_footer"}}
+</div>
+</body>
+</html>
