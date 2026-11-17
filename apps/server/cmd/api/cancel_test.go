@@ -5,9 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
@@ -125,7 +133,7 @@ func TestCancel_ConfirmedAtArrival(t *testing.T) {
 		t.Fatalf("pay = %d %v", code, body)
 	}
 	e.clk.Set(time.Date(2026, 12, 1, 15, 5, 0, 0, time.UTC)) // arrival_at after normalization
-	tok := e.token(d)             // the first token has expired by now
+	tok := e.token(d)                                        // the first token has expired by now
 
 	code, body := e.cancel(tok, id)
 	if code != http.StatusOK {
@@ -270,5 +278,52 @@ func TestCancel_NotTheOwners(t *testing.T) {
 	}
 	if got := e.status(id); got != "pending_payment" {
 		t.Errorf("status = %s, want untouched", got)
+	}
+}
+
+// tickClock answers the times in order, then the last one forever.
+type tickClock struct {
+	mu    sync.Mutex
+	times []time.Time
+}
+
+func (c *tickClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.times[0]
+	if len(c.times) > 1 {
+		c.times = c.times[1:]
+	}
+	return t
+}
+
+// F3: a cancel that waits on locks across arrival_at decides the refund at the
+// time it holds them. The first read (lot-lock decision) is just before arrival,
+// the next ones are at arrival.
+func TestCancel_RefundDecidedAfterTheLocks(t *testing.T) {
+	e := newFeeEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	id := e.reserve(d, arrival1502)
+	if code, body, _ := e.pay(e.token(d), id, "key-cancel-0001", goodCard()); code != http.StatusOK {
+		t.Fatalf("pay = %d %v", code, body)
+	}
+	arrival := time.Date(2026, 12, 1, 15, 5, 0, 0, time.UTC)
+	svc := reservations.NewService(reservations.Deps{
+		Tx: database.NewTxRunner(e.db.App), Repo: reservationspg.NewRepo(e.db.App),
+		Clock: &tickClock{times: []time.Time{arrival.Add(-time.Second), arrival}}, Log: slogOf(e.logs),
+		Fees: paymentspg.NewRepo(e.db.App), Notify: notificationspg.NewNotifier(e.clk),
+	})
+	v, err := svc.Cancel(t.Context(), d.UserID, uuid.MustParse(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.RefundReason == nil || *v.RefundReason != "none_after_arrival" || v.Refund != nil {
+		t.Errorf("refund_reason = %v refund = %v, want none_after_arrival and no refund", v.RefundReason, v.Refund)
+	}
+	if v.CancelledAt == nil || !v.CancelledAt.Equal(arrival) {
+		t.Errorf("cancelled_at = %v, want %v (the time under the locks)", v.CancelledAt, arrival)
+	}
+	if n := e.count(`select count(*) from refunds`); n != 0 {
+		t.Errorf("refund rows = %d, want none", n)
 	}
 }

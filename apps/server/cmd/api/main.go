@@ -23,10 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
-	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/availability"
 	availabilitypg "github.com/XYZLZ/MyPark/apps/server/internal/features/availability/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"

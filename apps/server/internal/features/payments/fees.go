@@ -14,7 +14,7 @@ const (
 
 // Refund reasons stored on refunds and reservations.
 const (
-	RefundFacilityUnavailable = "facility_unavailable"
+	RefundFacilityUnavailable    = "facility_unavailable"
 	RefundCancelledBeforeArrival = "cancelled_before_arrival"
 
 	// ReasonNoneAfterArrival is the reservation refund_reason of a cancel at or

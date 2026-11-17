@@ -29,8 +29,8 @@ func (s *Service) Cancel(ctx context.Context, userID int64, id uuid.UUID) (View,
 		if err := s.repo.SetTxLimits(ctx); err != nil {
 			return err
 		}
-		now := s.clock.Now()
-		// Unlocked reads decide the lot lock; the window never changes.
+		// Unlocked reads decide the lot lock; the window never changes. This
+		// early time serves only that decision.
 		pre, err := s.repo.Get(ctx, userID, id)
 		if errors.Is(err, ErrNotFound) {
 			return apperr.NotFound(errcodes.ReservationNotFound)
@@ -42,7 +42,7 @@ func (s *Service) Cancel(ctx context.Context, userID int64, id uuid.UUID) (View,
 		if err != nil {
 			return err
 		}
-		inWindow := ap.Window.Contains(now)
+		inWindow := ap.Window.Contains(s.clock.Now())
 		if inWindow {
 			if err := s.repo.LockLot(ctx, ap.LotID); err != nil {
 				return err
@@ -52,6 +52,9 @@ func (s *Service) Cancel(ctx context.Context, userID int64, id uuid.UUID) (View,
 		if err != nil {
 			return err
 		}
+		// The refund decision and the timestamps use the time the locks were
+		// won: a cancel that waited across arrival_at must not be refunded.
+		now := s.clock.Now()
 		switch rec.Status {
 		case StatusPendingPayment, StatusConfirmed:
 			if err := s.cancelLive(ctx, rec, ap, inWindow, now); err != nil {

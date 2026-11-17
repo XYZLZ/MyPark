@@ -35,9 +35,9 @@ type Deps struct {
 	Gateway       payments.Gateway
 	Notify        notifications.Notifier
 	Alerts        alerts.Recorder // nil in tests that never meet a duplicate charge
-	QRKey         []byte        // signs QR tokens (QR_HMAC_KEY)
-	ChargeTimeout time.Duration // PAYMENT_CHARGE_TIMEOUT
-	Rand          io.Reader     // QR nonces; nil means crypto/rand
+	QRKey         []byte          // signs QR tokens (QR_HMAC_KEY)
+	ChargeTimeout time.Duration   // PAYMENT_CHARGE_TIMEOUT
+	Rand          io.Reader       // QR nonces; nil means crypto/rand
 }
 
 // Service holds the reservation use cases.

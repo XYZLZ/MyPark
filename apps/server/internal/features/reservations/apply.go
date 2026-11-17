@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/alerts"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
@@ -41,7 +43,7 @@ func (s *Service) Apply(ctx context.Context, paymentID int64, res payments.Charg
 		if errors.Is(err, payments.ErrSuccessAfterFinal) {
 			// The refused apply rolled back, so the alert goes in its own
 			// transaction. The error still reaches the caller.
-			s.alertDuplicateCharge(ctx, paymentID)
+			s.alertUnrefundedCharge(ctx, paymentID)
 		}
 		return err
 	}
@@ -272,16 +274,28 @@ const (
 	refundNone    = "none"
 )
 
-// alertDuplicateCharge opens an admin alert for a charge the gateway took that
+// Reasons of the alert for a charge no refund covers (public codes, M4 shows them).
+const (
+	alertDuplicateCharge     = "duplicate_charge"     // another live fee of the reservation succeeded
+	alertOrphanCharge        = "orphan_charge"        // another live fee is still pending
+	alertGatewayInconsistent = "gateway_inconsistent" // a declined payment later reported success
+)
+
+// alertUnrefundedCharge opens an admin alert for a charge the gateway took that
 // no refund covers: a success meeting a payment that cannot become succeeded
-// (payments.ErrSuccessAfterFinal). The row holds public ids and a short reason
-// only. A failure here is logged, never returned: the caller already has the
-// loud error, and the alert must not hide it.
-func (s *Service) alertDuplicateCharge(ctx context.Context, paymentID int64) {
+// (payments.ErrSuccessAfterFinal). The row holds public ids and short codes
+// only. It runs on its own budget, detached from the request: the refused
+// apply may have used up the context it came with, and the alert is what makes
+// the loss visible. A failure here is logged, never returned: the caller
+// already has the loud error.
+func (s *Service) alertUnrefundedCharge(ctx context.Context, paymentID int64) {
 	if s.alerts == nil {
 		return
 	}
-	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+	actx, stop := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer stop()
+	var publicID uuid.UUID
+	err := s.tx.InTx(actx, func(ctx context.Context) error {
 		if err := s.repo.SetTxLimits(ctx); err != nil {
 			return err
 		}
@@ -289,17 +303,32 @@ func (s *Service) alertDuplicateCharge(ctx context.Context, paymentID int64) {
 		if err != nil {
 			return err
 		}
+		publicID = fee.PublicID
 		rsv, err := s.repo.ForApply(ctx, fee.ReservationID)
 		if err != nil {
 			return err
 		}
-		return s.alerts.Open(ctx, rsv.LotID, alerts.KindRefundFailed, map[string]string{
-			"reason":         "duplicate_charge",
+		details := map[string]string{
+			"reason":         alertGatewayInconsistent,
 			"reservation_id": rsv.PublicID.String(),
 			"payment_id":     fee.PublicID.String(),
-		}, s.clock.Now())
+		}
+		live, found, err := s.fees.LiveFee(ctx, fee.ReservationID)
+		if err != nil {
+			return err
+		}
+		if found {
+			details["live_fee_status"] = live.Status
+			if fee.Status == payments.StatusFailed && fee.FailureCode == payments.FailureNotSubmitted {
+				details["reason"] = alertOrphanCharge
+				if live.Status != payments.StatusPending {
+					details["reason"] = alertDuplicateCharge
+				}
+			}
+		}
+		return s.alerts.Open(ctx, rsv.LotID, alerts.KindRefundFailed, details, s.clock.Now())
 	})
 	if err != nil {
-		s.log.ErrorContext(ctx, "reservations: could not record the duplicate charge alert", "payment_id", paymentID, "err", err)
+		s.log.ErrorContext(actx, "reservations: could not record the unrefunded charge alert", "payment_id", publicID, "err", err)
 	}
 }
