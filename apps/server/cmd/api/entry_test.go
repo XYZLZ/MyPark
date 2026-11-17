@@ -244,34 +244,6 @@ func TestEntry_LotClosedDenied(t *testing.T) {
 	e.invariant()
 }
 
-// M2 has no reservations: a QR is denied without touching the lot lock, so
-// a side transaction holding it does not delay the answer.
-func TestEntry_ReservationQRDenied(t *testing.T) {
-	e := newDeviceEnv(t)
-	d := e.device(authz.DeviceEntryBarrier)
-	side, err := e.db.Super.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = side.Rollback(context.WithoutCancel(t.Context())) }()
-	if _, err := side.Exec(t.Context(), `select 1 from lot_occupancy where lot_id = $1 for update`, e.lotID); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	body := e.eventBody(uuid.New(), "entry.credential_presented", map[string]any{"kind": "reservation_qr", "value": "RSV-123"})
-	req := d.Request(t, deviceEventsPath, body, e.clk.Now()).WithContext(ctx)
-	wantDeny(t, e.serve(req, ""), "gate.credential_invalid")
-	if err := side.Rollback(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if n := e.count(`select count(*) from stays`); n != 0 {
-		t.Errorf("stays = %d, want 0", n)
-	}
-	e.invariant()
-}
-
 func TestEntry_EmployeeCard(t *testing.T) {
 	e := newDeviceEnv(t)
 	d := e.device(authz.DeviceEntryBarrier)

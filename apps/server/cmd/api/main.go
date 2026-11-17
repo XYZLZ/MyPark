@@ -292,6 +292,18 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 
 	tx := database.NewTxRunner(d.pool)
 	auditRec := auditpg.NewRecorder()
+	notifier := notificationspg.NewNotifier(d.clock)
+	gateway := d.gateway
+	if gateway == nil {
+		gateway = paymentsim.New(d.pool, paymentsim.Config{
+			Clock: d.clock, Latency: d.cfg.SimGatewayLatency(), TimeoutDelay: d.cfg.SimGatewayTimeoutDelay(),
+		})
+	}
+	reservationSvc := reservations.NewService(reservations.Deps{
+		Tx: tx, Repo: reservationspg.NewRepo(d.pool), Tariffs: tariffSvc, Avail: availSvc, Clock: d.clock, Log: d.log,
+		Fees: paymentspg.NewRepo(d.pool), Gateway: gateway, Notify: notifier, Alerts: alertspg.NewRecorder(),
+		QRKey: d.cfg.QRHMACKey(), ChargeTimeout: d.cfg.PaymentChargeTimeout(), Rand: rand.Reader,
+	})
 	devices.NewHandler(devices.HandlerDeps{
 		Tx:    tx,
 		Store: deviceRepo,
@@ -299,6 +311,7 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 			Repo: gatepg.NewRepo(), Clock: d.clock, Log: d.log, Tariffs: tariffSvc, Audit: auditRec,
 			// Real reservation holds since M3; ticket codes come from crypto/rand.
 			Holds: reservations.NewHolds(d.pool), CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
+			Reservations: reservations.NewGateAccess(reservationSvc),
 		}),
 		Sealer:     d.sealer,
 		CardPepper: d.cfg.CardUIDPepper(),
@@ -306,7 +319,6 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		Log:        d.log,
 	}).Register(r)
 
-	notifier := notificationspg.NewNotifier(d.clock)
 	authSvc := auth.NewService(auth.Deps{
 		Tx:     tx,
 		Repo:   authRepo,
@@ -325,17 +337,7 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		reservations.NewVehicleChecker(d.pool), d.cfg.MaxVehiclesPerUser(), d.clock)
 	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
 
-	gateway := d.gateway
-	if gateway == nil {
-		gateway = paymentsim.New(d.pool, paymentsim.Config{
-			Clock: d.clock, Latency: d.cfg.SimGatewayLatency(), TimeoutDelay: d.cfg.SimGatewayTimeoutDelay(),
-		})
-	}
-	reservations.NewHandler(reservations.NewService(reservations.Deps{
-		Tx: tx, Repo: reservationspg.NewRepo(d.pool), Tariffs: tariffSvc, Avail: availSvc, Clock: d.clock, Log: d.log,
-		Fees: paymentspg.NewRepo(d.pool), Gateway: gateway, Notify: notifier, Alerts: alertspg.NewRecorder(),
-		QRKey: d.cfg.QRHMACKey(), ChargeTimeout: d.cfg.PaymentChargeTimeout(), Rand: rand.Reader,
-	}), validation.New(), d.log).Register(r)
+	reservations.NewHandler(reservationSvc, validation.New(), d.log).Register(r)
 
 	payments.NewReceiptHandler(payments.NewReceiptService(tx, paymentspg.NewReceiptRepo(d.pool)), d.log).Register(r)
 

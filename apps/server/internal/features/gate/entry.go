@@ -26,8 +26,7 @@ func (s *Service) entry(ctx context.Context, d authz.Device, ev Event) (Result, 
 	case KindEmployeeCard:
 		return s.cardEntry(ctx, d, p.Value)
 	case KindReservationQR:
-		// No reservations before M3 (M2C-1, M2C-27): denied without the lock.
-		return deny(errcodes.GateCredentialInvalid), nil
+		return s.qrEntry(ctx, d, p.Value)
 	default:
 		return Result{}, fmt.Errorf("gate: entry credential kind %q", p.Kind)
 	}
