@@ -171,8 +171,8 @@ func TestApply_DeclineFailsThePaymentOnly(t *testing.T) {
 
 func slogOf(w *testsupport.SyncBuffer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
 
-// F2: a success that meets an already succeeded payment is a quiet no-op; one
-// that meets a failed payment is loud (error log, public ids only) and returns
+// F2: a success that meets an already succeeded or refunded payment is a quiet
+// no-op; one that meets a failed payment is loud (error log, public ids only) and returns
 // payments.ErrSuccessAfterFinal.
 func TestApply_SuccessMeetingAFinalPayment(t *testing.T) {
 	t.Run("already succeeded is quiet", func(t *testing.T) {
@@ -191,6 +191,26 @@ func TestApply_SuccessMeetingAFinalPayment(t *testing.T) {
 		}
 		if got := e.status(f.rsvID); got != "confirmed" {
 			t.Errorf("status = %s, want confirmed", got)
+		}
+	})
+	t.Run("already refunded is quiet", func(t *testing.T) {
+		e := newFeeEnv(t)
+		f := e.pendingAttempt(arrival1502)
+		if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.db.Super.Exec(t.Context(),
+			`update payments set status = 'refunded', refunded_at = $2 where id = $1`, f.paymentID, e.clk.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+			t.Fatalf("apply = %v, want nil", err)
+		}
+		if strings.Contains(e.logs.String(), "level=ERROR") {
+			t.Errorf("a success on a refunded payment logged an error: %s", e.logs.String())
+		}
+		if n := e.count(`select count(*) from payments where id = $1 and status = 'refunded'`, f.paymentID); n != 1 {
+			t.Error("the refunded payment must stay refunded")
 		}
 	})
 	t.Run("already failed is loud", func(t *testing.T) {

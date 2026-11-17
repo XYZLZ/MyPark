@@ -14,9 +14,10 @@ import (
 // decline only fails the payment. A success is always either honoured
 // (confirm) or refunded (late and defensive branches, design 9.4), and
 // follows the lock order of design 8.1: lot, reservation, slots, payment,
-// refund, outbox. It is idempotent: a payment that is no longer pending is
-// left alone, which makes it safe for the pay request and the reconcile job to
-// race.
+// refund, outbox. It is idempotent: a success meeting a payment that already
+// succeeded or was refunded is a quiet no-op, which makes it safe for the pay
+// request and the reconcile job to race. Only a success meeting a failed
+// payment is loud (payments.ErrSuccessAfterFinal).
 func (s *Service) Apply(ctx context.Context, paymentID int64, res payments.ChargeResult) error {
 	switch res.Outcome {
 	case payments.ChargeDeclined:
@@ -44,7 +45,7 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 	if err != nil {
 		return err
 	}
-	if fee.Status == payments.StatusSucceeded {
+	if fee.Status == payments.StatusSucceeded || fee.Status == payments.StatusRefunded {
 		return nil // idempotent re-apply
 	}
 	// The window never changes, so this unlocked read decides whether the
@@ -68,7 +69,7 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 	if fee, err = s.fees.FeeByID(ctx, paymentID); err != nil {
 		return err
 	}
-	if done, err := s.settled(ctx, fee, &rsv); done {
+	if done, err := s.settled(ctx, fee, rsv); done {
 		return err
 	}
 
@@ -169,20 +170,18 @@ func (s *Service) enqueue(ctx context.Context, rsv ApplyRow, tpl notifications.T
 }
 
 // settled reports whether a success has nothing left to apply. A payment that
-// already succeeded is an idempotent re-apply (quiet nil). One that failed or
-// was refunded meets a success it can no longer honour: that is logged at error
+// already succeeded or was refunded is an idempotent re-apply (quiet nil): the
+// charge was honoured once, and a refund follows a success by design. One that
+// failed meets a success it can no longer honour: that is logged at error
 // (public ids only) and returned as payments.ErrSuccessAfterFinal.
-func (s *Service) settled(ctx context.Context, fee payments.FeePayment, rsv *ApplyRow) (bool, error) {
+func (s *Service) settled(ctx context.Context, fee payments.FeePayment, rsv ApplyRow) (bool, error) {
 	switch fee.Status {
 	case payments.StatusPending:
 		return false, nil
-	case payments.StatusSucceeded:
+	case payments.StatusSucceeded, payments.StatusRefunded:
 		return true, nil
 	}
-	args := []any{"payment_id", fee.PublicID, "payment_status", fee.Status}
-	if rsv != nil {
-		args = append(args, "reservation_id", rsv.PublicID)
-	}
-	s.log.ErrorContext(ctx, "reservations: charge succeeded on a payment that is already final", args...)
+	s.log.ErrorContext(ctx, "reservations: charge succeeded on a payment that is already final",
+		"payment_id", fee.PublicID, "payment_status", fee.Status, "reservation_id", rsv.PublicID)
 	return true, payments.ErrSuccessAfterFinal
 }
