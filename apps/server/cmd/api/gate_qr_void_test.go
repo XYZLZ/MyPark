@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
@@ -176,4 +180,114 @@ func TestGateQR_StrandedCheckIn(t *testing.T) {
 		}
 		e.invariants()
 	})
+}
+
+// age makes the stay's QR acceptance 61 s old without moving the clock, so
+// many rounds fit inside one reservation window.
+func (e *qrEnv) age(stay uuid.UUID) {
+	e.t.Helper()
+	if _, err := e.db.App.Exec(e.t.Context(), `update stays set accepted_at = $2 where public_id = $1`,
+		stay, e.clk.Now().Add(-61*time.Second)); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// race runs the void job and one device request together, failing on a
+// hang (deadlock).
+func (e *qrEnv) race(round int, req *http.Request) *httptest.ResponseRecorder {
+	e.t.Helper()
+	ctx, stop := context.WithTimeout(e.t.Context(), 10*time.Second)
+	defer stop()
+	voider := newReservationVoider(e.db.App, e.clk, slogOf(e.logs))
+	rec, start := httptest.NewRecorder(), make(chan struct{})
+	var voidErr error
+	var wg sync.WaitGroup
+	wg.Go(func() { <-start; _, voidErr = voider.Run(ctx, e.db.App, e.clk.Now()) })
+	wg.Go(func() { <-start; e.h.ServeHTTP(rec, req.WithContext(ctx)) })
+	close(start)
+	wg.Wait()
+	if ctx.Err() != nil || voidErr != nil {
+		e.t.Fatalf("round %d: did not finish within 10 s (deadlock?) or failed: %v", round, voidErr)
+	}
+	return rec
+}
+
+// design 12.7: the car of a voided stay passes after all; its confirmed
+// reservation is checked in again and its hold released.
+func TestGateQR_LateEntryPassAfterVoid(t *testing.T) {
+	e := newQREnv(t)
+	id, _, stay := e.stranded()
+	e.void()
+	occupied := e.count(`select occupied from lot_occupancy where lot_id = $1`, e.lotID)
+
+	if got := e.dev.pass(e.barrier, stay); got != (passData{Result: "ack"}) {
+		t.Fatalf("late entry pass = %+v, want ack", got)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'active'`, stay); n != 1 {
+		t.Error("want the stay active")
+	}
+	if n := e.count(`select count(*) from reservations where public_id = $1 and status = 'checked_in' and checked_in_at = $2`, id, e.clk.Now()); n != 1 {
+		t.Error("want the reservation checked_in at now")
+	}
+	if h := e.held(); h != 0 {
+		t.Errorf("slots holding = %d, want 0 (released)", h)
+	}
+	if o := e.count(`select occupied from lot_occupancy where lot_id = $1`, e.lotID); o != occupied+1 {
+		t.Errorf("occupied = %d, want %d", o, occupied+1)
+	}
+	e.invariants()
+}
+
+// A reservation cancelled after the void stays cancelled; only the stay
+// changes, and the car inside is billed normally.
+func TestGateQR_LateEntryPassAfterCancel(t *testing.T) {
+	e := newQREnv(t)
+	id, tok, qr := e.confirmed(arrivalInWindow)
+	stay := wantQROpen(t, e.present(qr))
+	e.clk.Advance(61 * time.Second)
+	e.void()
+	if code, body := e.cancel(tok, id); code != http.StatusOK {
+		t.Fatalf("cancel = %d %v", code, body)
+	}
+
+	if got := e.dev.pass(e.barrier, stay); got != (passData{Result: "ack"}) {
+		t.Fatalf("late entry pass = %+v, want ack", got)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'active'`, stay); n != 1 {
+		t.Error("want the stay active")
+	}
+	if st := e.status(id); st != "cancelled" {
+		t.Errorf("status = %s, want cancelled", st)
+	}
+	if h := e.held(); h != 0 {
+		t.Errorf("slots holding = %d, want 0", h)
+	}
+	e.invariants()
+}
+
+// The void job and the entry pass race on a stale stay: the lot lock
+// orders them. Either the pass wins (the void's re-check rolls back) or the
+// void wins and the pass is a late entry pass; both end active and
+// checked_in, with the hold released.
+func TestGateQR_VoidRacesLateEntryPass(t *testing.T) {
+	e := newQREnv(t)
+	for round := range 20 {
+		id, _, qr := e.confirmed(arrivalInWindow)
+		stay := wantQROpen(t, e.present(qr))
+		e.age(stay)
+		req := e.barrier.Request(t, deviceEventsPath, e.dev.passBody(gate.DirectionEntry, stay), e.clk.Now())
+
+		if got := passOf(t, e.race(round, req)); got.Result != "ack" {
+			t.Errorf("round %d: pass = %+v, want ack", round, got)
+		}
+		if n := e.count(`select count(*) from stays s join reservations r on r.id = s.reservation_id
+		                 where r.public_id = $1 and s.status = 'active' and r.status = 'checked_in'`, id); n != 1 {
+			t.Errorf("round %d: want the stay active and the reservation checked_in", round)
+		}
+	}
+	t.Logf("void won %d of 20 rounds", e.count(`select count(*) from stays where voided_at is not null`))
+	if h := e.held(); h != 0 {
+		t.Errorf("slots holding = %d, want 0", h)
+	}
+	e.invariants()
 }

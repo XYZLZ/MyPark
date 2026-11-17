@@ -170,9 +170,25 @@ func (g GateAccess) RestoreAfterVoid(ctx context.Context, reservationID int64, n
 	return true, g.s.repo.UndoCheckIn(ctx, r.ID, now)
 }
 
-// LateEntryPass implements gate.Reservations (S6.2).
-func (GateAccess) LateEntryPass(context.Context, int64, time.Time) (bool, error) {
-	return false, errors.ErrUnsupported
+// LateEntryPass implements gate.Reservations: the car of a voided stay
+// passed after all, so a confirmed reservation is checked in at now and its
+// hold released (design 12.7). Called under the lot and stay locks. Any
+// other status (cancelled or expired meanwhile) is left alone: (false, nil).
+func (g GateAccess) LateEntryPass(ctx context.Context, reservationID int64, now time.Time) (bool, error) {
+	r, err := g.s.repo.LockForApply(ctx, reservationID)
+	if err != nil {
+		return false, err
+	}
+	if _, err := Transition(r.Status, EvLateEntryPass); err != nil { // not confirmed
+		return false, nil
+	}
+	if err := g.s.repo.CheckIn(ctx, r.ID, now); err != nil {
+		return false, err
+	}
+	if _, err := g.s.repo.EnsureAndLockSlots(ctx, r.LotID, r.Window); err != nil {
+		return false, err
+	}
+	return true, g.s.repo.DecSlots(ctx, r.LotID, r.Window)
 }
 
 // Complete implements gate.Reservations (S6.3).
