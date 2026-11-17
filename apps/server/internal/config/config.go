@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 
@@ -48,6 +49,12 @@ const (
 	EnvSSEMaxStreams       = "SSE_MAX_STREAMS"
 	EnvDeviceRateLimitPerS = "DEVICE_RATE_LIMIT_PER_S"
 	EnvRateLimitPepper     = "RATE_LIMIT_PEPPER"
+
+	EnvQRHMACKey              = "QR_HMAC_KEY"
+	EnvPaymentGateway         = "PAYMENT_GATEWAY"
+	EnvPaymentChargeTimeout   = "PAYMENT_CHARGE_TIMEOUT"
+	EnvSimGatewayLatency      = "SIM_GATEWAY_LATENCY"
+	EnvSimGatewayTimeoutDelay = "SIM_GATEWAY_TIMEOUT_DELAY"
 )
 
 // Default values applied when an optional variable is unset or empty.
@@ -65,6 +72,14 @@ const (
 	DefaultSSEMaxPerIP         = 20
 	DefaultSSEMaxStreams       = 2000
 	DefaultDeviceRateLimitPerS = 100
+
+	// PaymentGatewaySimulated is the only payment gateway M3 supports.
+	PaymentGatewaySimulated = "simulated"
+
+	// Payment and simulated gateway timings when unset.
+	DefaultPaymentChargeTimeout   = 5 * time.Second
+	DefaultSimGatewayLatency      = 300 * time.Millisecond
+	DefaultSimGatewayTimeoutDelay = 30 * time.Second
 )
 
 const (
@@ -99,6 +114,8 @@ type Config struct {
 	sseMaxStreams       int
 	deviceRateLimitPerS int
 	rateLimitPepper     []byte
+
+	paymentSettings
 }
 
 // Env returns the deployment environment: development, test or production.
@@ -198,6 +215,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("sse_max_streams", c.sseMaxStreams),
 		slog.Int("device_rate_limit_per_s", c.deviceRateLimitPerS),
 		slog.String("rate_limit_pepper", redacted),
+		slog.Group("payments", c.logAttrs()...),
 	)
 }
 
@@ -405,6 +423,8 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvRateLimitPepper))
 		}
 	}
+	pay, payErrs := loadPaymentSettings(getenv, production)
+	errs = append(errs, payErrs...)
 	verifyKeys := map[string]ed25519.PublicKey{}
 	if seed != nil {
 		verifyKeys[raw.JWTKeyID] = ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
@@ -459,7 +479,113 @@ func Load(getenv func(string) string) (Config, error) {
 		sseMaxStreams:       int(raw.SSEMaxStreams),
 		deviceRateLimitPerS: int(raw.DeviceRateLimitPerS),
 		rateLimitPepper:     limitPepper,
+
+		paymentSettings: pay,
 	}, nil
+}
+
+// paymentSettings holds the M3 settings the API and the worker share: the QR
+// signing key and the payment gateway timings. Config and WorkerConfig embed
+// it, so both expose the same accessors.
+type paymentSettings struct {
+	qrHMACKey              []byte
+	paymentGateway         string
+	paymentChargeTimeout   time.Duration
+	simGatewayLatency      time.Duration
+	simGatewayTimeoutDelay time.Duration
+}
+
+// QRHMACKey returns a copy of the HMAC key that signs reservation QR
+// payloads. Never log it.
+func (p paymentSettings) QRHMACKey() []byte { return slices.Clone(p.qrHMACKey) }
+
+// PaymentGateway returns the payment gateway in use; "simulated" is the only
+// value.
+func (p paymentSettings) PaymentGateway() string { return p.paymentGateway }
+
+// PaymentChargeTimeout returns how long a charge may take before it is
+// treated as timed out.
+func (p paymentSettings) PaymentChargeTimeout() time.Duration { return p.paymentChargeTimeout }
+
+// SimGatewayLatency returns the simulated gateway's normal response delay.
+func (p paymentSettings) SimGatewayLatency() time.Duration { return p.simGatewayLatency }
+
+// SimGatewayTimeoutDelay returns how long the simulated gateway stalls when
+// it simulates a timeout.
+func (p paymentSettings) SimGatewayTimeoutDelay() time.Duration { return p.simGatewayTimeoutDelay }
+
+func (p paymentSettings) logAttrs() []any {
+	return []any{
+		slog.String("qr_hmac_key", redacted),
+		slog.String("gateway", p.paymentGateway),
+		slog.Duration("charge_timeout", p.paymentChargeTimeout),
+		slog.Duration("sim_latency", p.simGatewayLatency),
+		slog.Duration("sim_timeout_delay", p.simGatewayTimeoutDelay),
+	}
+}
+
+// loadPaymentSettings reads the M3 payment variables. Outside production the
+// QR key and the gateway have development defaults; in production the QR key
+// must be set to something other than the development key and the gateway
+// must be set explicitly. Every problem is returned; none echoes the QR key.
+func loadPaymentSettings(getenv func(string) string, production bool) (paymentSettings, []error) {
+	var errs []error
+	p := paymentSettings{}
+
+	switch raw := strings.TrimSpace(getenv(EnvQRHMACKey)); {
+	case raw == "" && production:
+		errs = append(errs, fmt.Errorf("%s is required", EnvQRHMACKey))
+	case raw == "":
+		p.qrHMACKey = devBytes(DevQRHMACKey)
+	default:
+		key, err := decodeKey(EnvQRHMACKey, raw, minPepperLen, false)
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+		case production && bytes.Equal(key, devBytes(DevQRHMACKey)):
+			errs = append(errs, fmt.Errorf("%s must not be the development default in production", EnvQRHMACKey))
+		default:
+			p.qrHMACKey = key
+		}
+	}
+
+	switch gw := strings.TrimSpace(getenv(EnvPaymentGateway)); {
+	case gw == "" && production:
+		errs = append(errs, fmt.Errorf("%s is required in production", EnvPaymentGateway))
+	case gw == "":
+		p.paymentGateway = PaymentGatewaySimulated
+	case gw != PaymentGatewaySimulated:
+		errs = append(errs, fmt.Errorf("%s must be %s, got %q", EnvPaymentGateway, PaymentGatewaySimulated, gw))
+	default:
+		p.paymentGateway = gw
+	}
+
+	for _, d := range []struct {
+		name     string
+		def      time.Duration
+		min, max time.Duration
+		dst      *time.Duration
+	}{
+		{EnvPaymentChargeTimeout, DefaultPaymentChargeTimeout, time.Second, 10 * time.Second, &p.paymentChargeTimeout},
+		{EnvSimGatewayLatency, DefaultSimGatewayLatency, 0, 5 * time.Second, &p.simGatewayLatency},
+		{EnvSimGatewayTimeoutDelay, DefaultSimGatewayTimeoutDelay, time.Second, 120 * time.Second, &p.simGatewayTimeoutDelay},
+	} {
+		*d.dst = d.def
+		raw := strings.TrimSpace(getenv(d.name))
+		if raw == "" {
+			continue
+		}
+		v, err := time.ParseDuration(raw)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s must be a duration such as %s, got %q", d.name, d.def, raw))
+		case v < d.min || v > d.max:
+			errs = append(errs, fmt.Errorf("%s must be between %s and %s, got %q", d.name, d.min, d.max, raw))
+		default:
+			*d.dst = v
+		}
+	}
+	return p, errs
 }
 
 // devBytes decodes a Dev* constant; they are valid base64 by construction.

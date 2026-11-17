@@ -31,3 +31,8 @@ const (
 // DevRateLimitPepper is base64 of a 32-byte HMAC pepper for the rate-limit
 // key hashes. A compose default; Load refuses it when APP_ENV=production.
 const DevRateLimitPepper = "cpGwr3/gFKhLD9QtFMbcf9OFi4/rq004pDlCcvhdRTw=" // dev only
+
+// DevQRHMACKey is base64 of a 32-byte HMAC key that signs reservation QR
+// payloads. A compose default; Load and LoadWorker refuse it when
+// APP_ENV=production.
+const DevQRHMACKey = "Ip8tGiGlHYRtL89ghWgbY+I0C9ROBONVRnhMKdleggU=" // dev only
