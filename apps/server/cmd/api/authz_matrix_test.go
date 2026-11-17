@@ -71,6 +71,20 @@ func (f *fixture) seedReservation(unpaid bool) {
 	}
 }
 
+// holdSlots gives the seeded reservation its slot holds, as a created one has.
+func (f *fixture) holdSlots() {
+	f.env.t.Helper()
+	_, err := f.env.db.Super.Exec(f.env.t.Context(),
+		`insert into reservation_slot_loads (lot_id, slot_start, held)
+		 select r.lot_id, s, 1 from reservations r,
+		   generate_series(lower(r.hold_window), upper(r.hold_window) - interval '5 minutes', interval '5 minutes') s
+		 where r.public_id = $1
+		 on conflict (lot_id, slot_start) do update set held = 1`, f.reservationID)
+	if err != nil {
+		f.env.t.Fatalf("hold slots: %v", err)
+	}
+}
+
 // pilotLotPublicID seeds the pilot lot (idempotent) and returns its public id.
 func pilotLotPublicID(f *fixture) string {
 	f.env.t.Helper()
@@ -203,6 +217,13 @@ var matrix = map[string]matrixEntry{
 			})
 			req.Header.Set("Idempotency-Key", "matrix-key-0001")
 			return req
+		}},
+	// The owner cancels a payable (pending_payment) reservation, whose slots the
+	// seed row does not hold, so the build holds them first.
+	"POST /v1/reservations/{id}/cancel": {owned: true, reservation: true, unpaid: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request {
+			f.holdSlots()
+			return jsonReq("POST", reservationPath(f)+"/cancel", nil)
 		}},
 	"GET /v1/reservations/{id}/qr": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
 		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f)+"/qr", nil) }},
@@ -513,6 +534,7 @@ var specPolicy = map[string]struct {
 	"GET /v1/reservations/{id}":        {access: "driver"},
 	"PATCH /v1/reservations/{id}":      {access: "driver", limit: &ratelimit.ReservationWriteUser},
 	"POST /v1/reservations/{id}/pay":   {access: "driver", limit: &ratelimit.ReservationPayUser},
+	"POST /v1/reservations/{id}/cancel": {access: "driver", limit: &ratelimit.ReservationWriteUser},
 	"GET /v1/reservations/{id}/qr":     {access: "driver"},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},

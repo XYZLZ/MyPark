@@ -119,3 +119,26 @@ func TestTemplates_ReservationConfirmedRenders(t *testing.T) {
 		t.Error("the two locales must have different subjects")
 	}
 }
+
+func TestTemplates_ReservationCancelled(t *testing.T) {
+	for _, locale := range []string{"es-DO", "en"} {
+		pending := map[string]string{"refund_status": "pending", "refund_reason": "cancelled_before_arrival", "fee_cents": "15000"}
+		none := map[string]string{"refund_status": "none", "refund_reason": "none_after_arrival", "fee_cents": "15000"}
+		sp, tp, hp, err := notifications.Render(notifications.TplReservationCancelled, locale, pending)
+		if err != nil {
+			t.Fatalf("%s pending: %v", locale, err)
+		}
+		sn, tn, hn, err := notifications.Render(notifications.TplReservationCancelled, locale, none)
+		if err != nil {
+			t.Fatalf("%s none: %v", locale, err)
+		}
+		if sp == "" || sn == "" || tp == tn || hp == hn {
+			t.Errorf("%s: the refund wording must differ by refund_status (subject %q/%q)", locale, sp, sn)
+		}
+		for _, s := range []string{tp, hp, tn, hn} {
+			if !strings.Contains(s, brandLine) {
+				t.Errorf("%s: brand line missing", locale)
+			}
+		}
+	}
+}

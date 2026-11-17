@@ -13,6 +13,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
 	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
@@ -39,7 +40,7 @@ func (e *feeEnv) pendingAttempt(arrival string) applyFixture {
 	fees := paymentspg.NewRepo(e.db.App)
 	f.svc = reservations.NewService(reservations.Deps{
 		Tx: tx, Repo: reservationspg.NewRepo(e.db.App), Clock: e.clk, Log: slogOf(e.logs),
-		Fees: fees, Notify: notificationspg.NewNotifier(e.clk), QRKey: e.cfg.QRHMACKey(),
+		Fees: fees, Notify: notificationspg.NewNotifier(e.clk), Alerts: alertspg.NewRecorder(), QRKey: e.cfg.QRHMACKey(),
 	})
 	var pub = f.rsvID
 	if err := e.db.App.QueryRow(e.t.Context(), `select id from reservations where public_id = $1`, pub).Scan(&f.rsvRow); err != nil {
@@ -334,7 +335,7 @@ func TestApply_LateChargeAfterNotSubmitted(t *testing.T) {
 // Ruling: when the driver already paid again (key B) and the reservation is
 // confirmed, a late charge for the not_submitted attempt A cannot become
 // succeeded (one live fee per reservation). It stays loud and queues no refund;
-// an admin alert and a manual refund follow (S5.1, M4).
+// the driver pays twice and an admin alert opens for the manual refund.
 func TestApply_LateChargeWhileRepaid(t *testing.T) {
 	e := newFeeEnv(t)
 	f := e.pendingAttempt(arrival1502) // attempt A
@@ -398,6 +399,18 @@ func TestApply_LateChargeWhileRepaid(t *testing.T) {
 	logs := e.logs.String()
 	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, f.rsvID) || strings.Contains(logs, res.ProviderRef) || strings.Contains(logs, keyA) {
 		t.Errorf("want an error log naming the reservation and no provider ref or key, got %q", logs)
+	}
+	var kind, reason, rsvPub, payPub string
+	if err := e.db.App.QueryRow(t.Context(),
+		`select a.kind, a.details->>'reason', a.details->>'reservation_id', a.details->>'payment_id'
+		 from reconciliation_alerts a where a.lot_id = $1 and a.resolved_at is null`, e.lotID).Scan(&kind, &reason, &rsvPub, &payPub); err != nil {
+		t.Fatalf("want one open alert: %v", err)
+	}
+	if kind != "refund_failed" || reason != "duplicate_charge" || rsvPub != f.rsvID {
+		t.Errorf("alert = %s %s %s, want refund_failed duplicate_charge for the reservation", kind, reason, rsvPub)
+	}
+	if n := e.count(`select count(*) from reconciliation_alerts where details::text like '%' || $1 || '%' or details::text like '%' || $2 || '%'`, res.ProviderRef, keyA); n != 0 {
+		t.Error("the alert must carry public ids only, no provider ref or gateway key")
 	}
 	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 }
