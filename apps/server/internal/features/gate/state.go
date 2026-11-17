@@ -18,9 +18,11 @@ const (
 // directly: the exit pass hops through paid (design §10.5).
 var transitions = map[Status][]Status{
 	StatusEntryPending: {StatusActive, StatusVoided},
-	StatusVoided:       {StatusActive}, // late entry pass (M2C-31)
-	StatusActive:       {StatusPaid},
-	StatusPaid:         {StatusActive, StatusExited}, // overstay or lost ticket; exit
+	// Late entry pass (M2C-31); a reservation QR re-presented after the void
+	// (M3B-24, reservation stays only).
+	StatusVoided: {StatusActive, StatusEntryPending},
+	StatusActive: {StatusPaid},
+	StatusPaid:   {StatusActive, StatusExited}, // overstay or lost ticket; exit
 }
 
 // CanTransition reports whether a stay may move from one status to another.
