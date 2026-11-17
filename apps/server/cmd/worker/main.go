@@ -4,7 +4,8 @@
 // data (hourly), old outbox rows and device events past retention (daily). It
 // also reconciles pending fee payments with the gateway (every 15 s), sends
 // queued refunds (every 10 s), expires unpaid and no-show reservations (every
-// 30 s), and it serves the health probes on
+// 30 s), publishes hold-window openings and closings (every 30 s), queues
+// reservation reminders (every minute), and it serves the health probes on
 // WORKER_HEALTH_ADDR (default :8091), /healthz for liveness and /readyz for
 // the database and migrations.
 //
@@ -75,6 +76,8 @@ const (
 	reconcileEvery      = 15 * time.Second
 	refundEvery         = 10 * time.Second
 	expireEvery         = 30 * time.Second
+	boundaryEvery       = 30 * time.Second
+	remindEvery         = time.Minute
 	deviceEventsEvery   = 24 * time.Hour
 	// purgeBatch is the rows one purge call deletes, so a backlog never holds
 	// one long transaction.
@@ -156,6 +159,7 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	refunds := newRefundProcessor(pool, clk, log)
 	voider := newReservationVoider(pool, clk, log)
 	expiry := newReservationExpiry(pool, clk, log)
+	boundary := reservations.NewHoldBoundary(pool, log)
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
@@ -198,6 +202,20 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 			n, err := expiry.ExpireNoShows(ctx, clk.Now())
 			if n > 0 {
 				log.InfoContext(ctx, "expired no-show reservations", "count", n)
+			}
+			return err
+		}},
+		{Name: "hold_boundary_notify", Every: boundaryEvery, Run: func(ctx context.Context) error {
+			n, err := boundary.Tick(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "published hold changes", "lots", n)
+			}
+			return err
+		}},
+		{Name: "reservation_reminders", Every: remindEvery, Run: func(ctx context.Context) error {
+			n, err := expiry.Reminders(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "queued reservation reminders", "count", n)
 			}
 			return err
 		}},

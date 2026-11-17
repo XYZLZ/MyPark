@@ -415,3 +415,39 @@ func TestWorkerJobs_IncludeExpiry(t *testing.T) {
 	}
 	testsupport.AssertSlotInvariant(t, db.App, lot)
 }
+
+// TestWorkerJobs_IncludeBoundaryAndReminders checks the hold boundary job runs
+// every 30 s and notifies on its first tick, and the reminder job every minute.
+func TestWorkerJobs_IncludeBoundaryAndReminders(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lot := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 12, 1, 13, 0, 0, 0, time.UTC))
+	found := map[string]*jobs.Job{}
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		found[list[i].Name] = &list[i]
+	}
+	for name, every := range map[string]time.Duration{"hold_boundary_notify": 30 * time.Second, "reservation_reminders": time.Minute} {
+		if found[name] == nil || found[name].Every != every {
+			t.Fatalf("%s job = %+v, want one running every %s", name, found[name], every)
+		}
+	}
+	version := func() (v int64) {
+		if err := db.App.QueryRow(t.Context(), `select version from lot_occupancy where lot_id = $1`, lot).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before := version()
+	for range 2 {
+		if err := found["hold_boundary_notify"].Run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := version(); got != before+1 {
+		t.Errorf("version = %d, want %d (the first tick bumps, the second finds nothing changed)", got, before+1)
+	}
+	if err := found["reservation_reminders"].Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}

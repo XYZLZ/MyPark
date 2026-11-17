@@ -59,17 +59,18 @@ type feeEnv struct {
 	logs *testsupport.SyncBuffer
 }
 
-func newFeeEnv(t *testing.T) *feeEnv {
+func newFeeEnv(t *testing.T, mods ...func(*deps)) *feeEnv {
 	t.Helper()
 	logs := &testsupport.SyncBuffer{}
 	gw := &gatewayDouble{}
-	e := newLotEnv(t, func(d *deps) {
+	mods = append([]func(*deps){func(d *deps) {
 		d.log = slog.New(slog.NewTextHandler(logs, nil))
 		gw.inner = paymentsim.New(d.pool, paymentsim.Config{
 			Clock: d.clock, Sleep: func(context.Context, time.Duration) error { return nil },
 		})
 		d.gateway = gw
-	})
+	}}, mods...)
+	e := newLotEnv(t, mods...)
 	e.clk.Set(rsvNow)
 	return &feeEnv{lotEnv: e, gw: gw, logs: logs}
 }
