@@ -606,6 +606,9 @@ func TestApply_LateChargeAfterCancel(t *testing.T) {
 	if got := e.status(f.rsvID); got != "cancelled" {
 		t.Errorf("reservation = %s, want cancelled", got)
 	}
+	if n := e.count(`select count(*) from reservations where id = $1 and refund_reason is null`, f.rsvRow); n != 1 {
+		t.Error("refund_reason must stay null")
+	}
 	if n := e.count(`select count(*) from outbox_messages where template = $1`, string(notifications.TplReservationCancelled)); n != 0 {
 		t.Errorf("cancellation emails = %d, want none", n)
 	}

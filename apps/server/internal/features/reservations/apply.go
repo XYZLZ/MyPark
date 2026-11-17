@@ -309,7 +309,6 @@ func (s *Service) alertUnrefundedCharge(ctx context.Context, paymentID int64) {
 			return err
 		}
 		details := map[string]string{
-			"reason":         alertGatewayInconsistent,
 			"reservation_id": rsv.PublicID.String(),
 			"payment_id":     fee.PublicID.String(),
 		}
@@ -317,18 +316,28 @@ func (s *Service) alertUnrefundedCharge(ctx context.Context, paymentID int64) {
 		if err != nil {
 			return err
 		}
+		details["reason"] = alertReason(fee, live, found)
 		if found {
 			details["live_fee_status"] = live.Status
-			if fee.Status == payments.StatusFailed && fee.FailureCode == payments.FailureNotSubmitted {
-				details["reason"] = alertOrphanCharge
-				if live.Status != payments.StatusPending {
-					details["reason"] = alertDuplicateCharge
-				}
-			}
 		}
 		return s.alerts.Open(ctx, rsv.LotID, alerts.KindRefundFailed, details, s.clock.Now())
 	})
 	if err != nil {
 		s.log.ErrorContext(actx, "reservations: could not record the unrefunded charge alert", "payment_id", publicID, "err", err)
 	}
+}
+
+// alertReason names why a success could not be honoured. A not_submitted
+// payment lost a race with its own late charge: next to a succeeded or
+// refunded live fee that is a duplicate, otherwise (the live fee is pending,
+// or stopped being live after the refused apply) it is an orphan. Any other
+// payment is a gateway that contradicts itself.
+func alertReason(fee, live payments.FeePayment, liveFound bool) string {
+	if fee.Status != payments.StatusFailed || fee.FailureCode != payments.FailureNotSubmitted {
+		return alertGatewayInconsistent
+	}
+	if liveFound && live.Status != payments.StatusPending {
+		return alertDuplicateCharge
+	}
+	return alertOrphanCharge
 }
