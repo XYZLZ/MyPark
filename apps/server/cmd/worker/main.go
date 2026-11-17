@@ -3,7 +3,8 @@
 // 15 s) and purges expired rate-limit counters (every minute), expired auth
 // data (hourly), old outbox rows and device events past retention (daily). It
 // also reconciles pending fee payments with the gateway (every 15 s), sends
-// queued refunds (every 10 s), and it serves the health probes on
+// queued refunds (every 10 s), expires unpaid and no-show reservations (every
+// 30 s), and it serves the health probes on
 // WORKER_HEALTH_ADDR (default :8091), /healthz for liveness and /readyz for
 // the database and migrations.
 //
@@ -73,6 +74,7 @@ const (
 	voidEvery           = 15 * time.Second
 	reconcileEvery      = 15 * time.Second
 	refundEvery         = 10 * time.Second
+	expireEvery         = 30 * time.Second
 	deviceEventsEvery   = 24 * time.Hour
 	// purgeBatch is the rows one purge call deletes, so a backlog never holds
 	// one long transaction.
@@ -153,6 +155,7 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	reconciler := newReconciler(pool, cfg, clk, log)
 	refunds := newRefundProcessor(pool, clk, log)
 	voider := newReservationVoider(pool, clk, log)
+	expiry := newReservationExpiry(pool, clk, log)
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
@@ -181,6 +184,20 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 			n, err := reconciler.Run(ctx, clk.Now())
 			if n > 0 {
 				log.InfoContext(ctx, "reconciled pending payments", "count", n)
+			}
+			return err
+		}},
+		{Name: "expire_unpaid_reservations", Every: expireEvery, Run: func(ctx context.Context) error {
+			n, err := expiry.ExpireUnpaid(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "expired unpaid reservations", "count", n)
+			}
+			return err
+		}},
+		{Name: "expire_no_shows", Every: expireEvery, Run: func(ctx context.Context) error {
+			n, err := expiry.ExpireNoShows(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "expired no-show reservations", "count", n)
 			}
 			return err
 		}},
@@ -255,4 +272,13 @@ func newReservationVoider(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger)
 	tx := database.NewTxRunner(pool)
 	svc := reservations.NewService(reservations.Deps{Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log})
 	return &gate.ReservationVoider{Tx: tx, Repo: gatepg.NewRepo(), Reservations: reservations.NewGateAccess(svc), Log: log}
+}
+
+// newReservationExpiry builds the unpaid and no-show expiry jobs (design 12).
+// They never charge or refund, so the service needs no gateway or QR key.
+func newReservationExpiry(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *reservations.Jobs {
+	return reservations.NewJobs(reservations.Deps{
+		Tx: database.NewTxRunner(pool), Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
+		Fees: paymentspg.NewRepo(pool), Notify: notificationspg.NewNotifier(clk),
+	})
 }

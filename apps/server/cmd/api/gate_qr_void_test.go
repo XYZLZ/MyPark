@@ -171,9 +171,15 @@ func TestGateQR_StrandedCheckIn(t *testing.T) {
 		if n := e.void(); n != 0 {
 			t.Errorf("voided = %d, want 0", n)
 		}
-		// The no-show job (S7.1) expires it; until then it stays confirmed.
+		// Until the no-show job runs it stays confirmed; the job then expires it.
 		if st := e.status(id); st != "confirmed" {
 			t.Errorf("status = %s, want confirmed until the no-show job", st)
+		}
+		if n := e.expireNoShows(); n != 1 {
+			t.Errorf("expired no-shows = %d, want 1", n)
+		}
+		if st := e.status(id); st != "expired_no_show" {
+			t.Errorf("status = %s, want expired_no_show through ExpireNoShows", st)
 		}
 		e.invariants()
 	})

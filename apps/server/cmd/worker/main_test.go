@@ -376,3 +376,42 @@ func TestWorkerJobs_IncludeRefunds(t *testing.T) {
 		t.Fatalf("job on an empty queue: %v", err)
 	}
 }
+
+// TestWorkerJobs_IncludeExpiry checks both reservation expiry jobs run every
+// 30 s, that the unpaid one acts at the job clock, and that the pool size
+// stays at M3B-51's target.
+func TestWorkerJobs_IncludeExpiry(t *testing.T) {
+	if maxConns != 8 {
+		t.Errorf("maxConns = %d, want 8", maxConns)
+	}
+	db := testsupport.NewTestDB(t)
+	lot := testsupport.SeedPilotLot(t, db)
+	now := time.Date(2026, 12, 1, 13, 0, 0, 0, time.UTC)
+	clk := testsupport.NewFakeClock(now)
+	d := testsupport.SeedDrivers(t, db, 1)
+	arrival := now.Add(2 * time.Hour)
+	testsupport.SeedReservations(t, db, lot, d, arrival, arrival.Add(-15*time.Minute), arrival.Add(20*time.Minute), now)
+	testsupport.HoldSlots(t, db, lot, arrival.Add(-15*time.Minute), arrival.Add(20*time.Minute), 1)
+
+	found := map[string]*jobs.Job{}
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		found[list[i].Name] = &list[i]
+	}
+	for _, name := range []string{"expire_unpaid_reservations", "expire_no_shows"} {
+		if found[name] == nil || found[name].Every != 30*time.Second {
+			t.Fatalf("%s job = %+v, want one running every 30 s", name, found[name])
+		}
+	}
+	clk.Set(now.Add(11 * time.Minute)) // payment_due_at is now + 10 min
+	for _, name := range []string{"expire_no_shows", "expire_unpaid_reservations"} {
+		if err := found[name].Run(t.Context()); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	var status string
+	if err := db.App.QueryRow(t.Context(), `select status from reservations`).Scan(&status); err != nil || status != "expired_unpaid" {
+		t.Fatalf("status = %q, %v; want expired_unpaid", status, err)
+	}
+	testsupport.AssertSlotInvariant(t, db.App, lot)
+}
