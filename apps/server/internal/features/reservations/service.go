@@ -179,22 +179,32 @@ func (s *Service) check(ctx context.Context, userID int64, lotID uuid.UUID, vehi
 	return c, nil
 }
 
-// Quote runs the create checks read-only and prices the reservation. Its
-// capacity answer comes from an unlocked slot read (M3B-57).
+// Quote runs the create checks and prices the reservation. It writes nothing,
+// but runs in a transaction with the same timeouts as create (M3B-55) so the
+// vehicle share lock cannot wait without limit. Its capacity answer comes
+// from an unlocked slot read (M3B-57).
 func (s *Service) Quote(ctx context.Context, userID int64, in QuoteInput) (QuoteResult, error) {
-	c, err := s.check(ctx, userID, in.LotID, in.VehicleID, in.ArrivalAt, s.clock.Now())
-	if err != nil {
-		return QuoteResult{}, err
-	}
-	held, err := s.repo.SlotLoads(ctx, c.lot.ID, c.window)
-	if err != nil {
-		return QuoteResult{}, err
-	}
-	if CapReached(held, c.capacity()) {
-		return QuoteResult{}, apperr.Conflict(errcodes.ReservationCapacityReached)
-	}
-	return QuoteResult{
-		LotID: c.lot.PublicID, ArrivalAt: c.arrival, Window: c.window,
-		FeeCents: c.fee, PaymentTimeoutMin: c.policy.PaymentTimeoutMin,
-	}, nil
+	var out QuoteResult
+	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SetTxLimits(ctx); err != nil {
+			return err
+		}
+		c, err := s.check(ctx, userID, in.LotID, in.VehicleID, in.ArrivalAt, s.clock.Now())
+		if err != nil {
+			return err
+		}
+		held, err := s.repo.SlotLoads(ctx, c.lot.ID, c.window)
+		if err != nil {
+			return err
+		}
+		if CapReached(held, c.capacity()) {
+			return apperr.Conflict(errcodes.ReservationCapacityReached)
+		}
+		out = QuoteResult{
+			LotID: c.lot.PublicID, ArrivalAt: c.arrival, Window: c.window,
+			FeeCents: c.fee, PaymentTimeoutMin: c.policy.PaymentTimeoutMin,
+		}
+		return nil
+	})
+	return out, err
 }
