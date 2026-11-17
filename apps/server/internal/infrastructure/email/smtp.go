@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -27,9 +29,17 @@ import (
 const ioTimeout = 30 * time.Second
 
 // Message is one outbound email. From and To are RFC 5322 addresses
-// ("Name <a@b>" or "a@b"); MessageID includes the angle brackets.
+// ("Name <a@b>" or "a@b"); MessageID includes the angle brackets. Inline
+// images are referenced from the HTML as cid:<ContentID>.
 type Message struct {
 	From, To, Subject, Text, HTML, MessageID string
+	Inline                                   []Inline
+}
+
+// Inline is an image embedded in the message body.
+type Inline struct {
+	ContentID, ContentType string
+	Data                   []byte
 }
 
 // Sender delivers a Message.
@@ -140,9 +150,15 @@ func (s *SMTP) deliver(conn net.Conn, from, to string, body []byte) error {
 }
 
 // build validates m and renders the RFC 5322 message. It rejects CR and LF in
-// header values, which would allow header injection.
+// header values, which would allow header injection. Without inline images the
+// body is multipart/alternative; with them it is multipart/related holding the
+// alternative part and each image.
 func (s *SMTP) build(m Message) (from, to string, body []byte, err error) {
-	for _, v := range []string{m.From, m.To, m.Subject, m.MessageID} {
+	headers := []string{m.From, m.To, m.Subject, m.MessageID}
+	for _, in := range m.Inline {
+		headers = append(headers, in.ContentID, in.ContentType)
+	}
+	for _, v := range headers {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", "", nil, errors.New("email: header value contains a line break")
 		}
@@ -156,8 +172,18 @@ func (s *SMTP) build(m Message) (from, to string, body []byte, err error) {
 		return "", "", nil, errors.New("email: invalid To address")
 	}
 
+	altType, alt, err := alternative(m)
+	if err != nil {
+		return "", "", nil, err
+	}
+	contentType, content := altType, alt
+	if len(m.Inline) > 0 {
+		if contentType, content, err = related(altType, alt, m.Inline); err != nil {
+			return "", "", nil, err
+		}
+	}
+
 	var buf bytes.Buffer
-	mp := multipart.NewWriter(&buf)
 	hdr := func(k, v string) { fmt.Fprintf(&buf, "%s: %s\r\n", k, v) }
 	hdr("From", f.String())
 	hdr("To", t.String())
@@ -167,9 +193,16 @@ func (s *SMTP) build(m Message) (from, to string, body []byte, err error) {
 		hdr("Message-ID", m.MessageID)
 	}
 	hdr("MIME-Version", "1.0")
-	hdr("Content-Type", "multipart/alternative; boundary="+mp.Boundary())
+	hdr("Content-Type", contentType)
 	buf.WriteString("\r\n")
+	buf.Write(content)
+	return f.Address, t.Address, buf.Bytes(), nil
+}
 
+// alternative renders the text and HTML parts of m, as quoted-printable.
+func alternative(m Message) (contentType string, body []byte, err error) {
+	var buf bytes.Buffer
+	mp := multipart.NewWriter(&buf)
 	for _, part := range []struct{ typ, content string }{
 		{"text/plain", m.Text}, {"text/html", m.HTML},
 	} {
@@ -178,18 +211,63 @@ func (s *SMTP) build(m Message) (from, to string, body []byte, err error) {
 			"Content-Transfer-Encoding": {"quoted-printable"},
 		})
 		if err != nil {
-			return "", "", nil, fmt.Errorf("email: part: %w", err)
+			return "", nil, fmt.Errorf("email: part: %w", err)
 		}
 		qp := quotedprintable.NewWriter(w)
 		if _, err := qp.Write([]byte(part.content)); err != nil {
-			return "", "", nil, fmt.Errorf("email: encode: %w", err)
+			return "", nil, fmt.Errorf("email: encode: %w", err)
 		}
 		if err := qp.Close(); err != nil {
-			return "", "", nil, fmt.Errorf("email: encode: %w", err)
+			return "", nil, fmt.Errorf("email: encode: %w", err)
 		}
 	}
 	if err := mp.Close(); err != nil {
-		return "", "", nil, fmt.Errorf("email: close: %w", err)
+		return "", nil, fmt.Errorf("email: close: %w", err)
 	}
-	return f.Address, t.Address, buf.Bytes(), nil
+	return "multipart/alternative; boundary=" + mp.Boundary(), buf.Bytes(), nil
+}
+
+// related wraps the alternative body and the inline images in multipart/related.
+func related(altType string, alt []byte, images []Inline) (contentType string, body []byte, err error) {
+	var buf bytes.Buffer
+	mp := multipart.NewWriter(&buf)
+	w, err := mp.CreatePart(textproto.MIMEHeader{"Content-Type": {altType}})
+	if err != nil {
+		return "", nil, fmt.Errorf("email: part: %w", err)
+	}
+	if _, err := w.Write(alt); err != nil {
+		return "", nil, fmt.Errorf("email: part: %w", err)
+	}
+	for _, in := range images {
+		w, err := mp.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {in.ContentType},
+			"Content-Transfer-Encoding": {"base64"},
+			"Content-ID":                {"<" + in.ContentID + ">"},
+			"Content-Disposition":       {"inline"},
+		})
+		if err != nil {
+			return "", nil, fmt.Errorf("email: part: %w", err)
+		}
+		if err := writeBase64(w, in.Data); err != nil {
+			return "", nil, fmt.Errorf("email: encode: %w", err)
+		}
+	}
+	if err := mp.Close(); err != nil {
+		return "", nil, fmt.Errorf("email: close: %w", err)
+	}
+	return "multipart/related; boundary=" + mp.Boundary(), buf.Bytes(), nil
+}
+
+// writeBase64 writes data as base64 wrapped at 76 characters (RFC 2045), which
+// keeps every line far below the 998-character SMTP limit.
+func writeBase64(w io.Writer, data []byte) error {
+	enc := base64.StdEncoding.EncodeToString(data)
+	for len(enc) > 0 {
+		n := min(76, len(enc))
+		if _, err := io.WriteString(w, enc[:n]+"\r\n"); err != nil {
+			return err
+		}
+		enc = enc[n:]
+	}
+	return nil
 }
