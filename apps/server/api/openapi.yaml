@@ -24,6 +24,10 @@ tags:
     description: The current driver's vehicles.
   - name: lots
     description: Public lot discovery, availability, spaces and tariff.
+  - name: reservations
+    description: The current driver's reservations, QR and card payment.
+  - name: payments
+    description: The current driver's payments and receipts.
   - name: admin
     description: Admin user management.
   - name: devices
@@ -1374,7 +1378,16 @@ components:
       additionalProperties: false
       required: [credential]
       properties:
-        credential: { type: string, enum: [ticket, employee_card] }
+        credential:
+          type: string
+          enum: [ticket, employee_card, reservation_qr]
+        qr:
+          description: >-
+            The reservation QR token the car presents at the entry barrier,
+            the pay station and the exit. Required with `reservation_qr` and
+            not allowed with any other credential.
+          type: string
+          pattern: '^[A-Za-z0-9_-]{86}$'
         card:
           description: An employee card label. Only with `employee_card`.
           type: string
@@ -2036,8 +2049,9 @@ components:
       description: >-
         The synchronous answer to a device event. `open` and `deny` answer
         credential events, `ack` a handled event, `rejected` a refused one;
-        `reason` carries the error code of a refusal (`gate.*`, `lot.*`) or
-        `gate.duplicate_pass` on an acknowledged duplicate. Which optional
+        `reason` carries the error code of a refusal (`gate.*`, `lot.*`,
+        `reservation.too_early` and `reservation.window_closed` for a reservation
+        QR outside its window) or `gate.duplicate_pass` on an acknowledged duplicate. Which optional
         fields appear depends on the event type.
       required: [result]
       properties:
@@ -2051,6 +2065,222 @@ components:
         receipt_no: { type: string }
         paid_at: { type: string, format: date-time }
         exit_deadline: { type: string, format: date-time }
+    ReservationVehicle:
+      type: object
+      additionalProperties: false
+      required: [id, plate_display, make, model, color]
+      properties:
+        id: { type: string, format: uuid }
+        plate_display: { type: string }
+        make: { type: string }
+        model: { type: string }
+        color: { type: string }
+    HoldWindow:
+      type: object
+      additionalProperties: false
+      description: The window in which a space is held for the reservation. `ends_at` is exclusive.
+      required: [starts_at, ends_at]
+      properties:
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+    LatestPayment:
+      type: object
+      additionalProperties: false
+      description: The newest fee attempt, so a client sees `pending` (the 202 path) or `failed` with its `failure_code`.
+      required: [id, status, failure_code]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, succeeded, failed, refunded] }
+        failure_code:
+          type: [string, "null"]
+          enum: [card_declined, card_not_supported, not_submitted, null]
+    ReservationRefund:
+      type: object
+      additionalProperties: false
+      required: [id, status, amount_cents, reason, succeeded_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, succeeded, failed] }
+        amount_cents: { type: integer, format: int64 }
+        reason: { type: string, enum: [cancelled_before_arrival, facility_unavailable, facility_closed, admin_override] }
+        succeeded_at: { type: [string, "null"], format: date-time }
+    ReservationStay:
+      type: object
+      additionalProperties: false
+      description: The stay summary of a checked-in or completed reservation.
+      required: [entered_at, exited_at, parking_paid_cents]
+      properties:
+        entered_at: { type: string, format: date-time }
+        exited_at: { type: [string, "null"], format: date-time }
+        parking_paid_cents: { type: integer, format: int64 }
+    Reservation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - lot_id
+        - vehicle
+        - arrival_at
+        - hold_window
+        - status
+        - fee_cents
+        - payment_due_at
+        - created_at
+        - confirmed_at
+        - cancelled_at
+        - cancelled_by
+        - refund_reason
+        - checked_in_at
+        - completed_at
+        - expired_at
+        - latest_payment
+        - refund
+        - stay
+      properties:
+        id: { type: string, format: uuid }
+        lot_id: { type: string, format: uuid }
+        vehicle: { $ref: "#/components/schemas/ReservationVehicle" }
+        arrival_at: { type: string, format: date-time, description: Normalized to a 5-minute UTC boundary. }
+        hold_window: { $ref: "#/components/schemas/HoldWindow" }
+        status:
+          type: string
+          enum: [pending_payment, confirmed, checked_in, completed, cancelled, expired_unpaid, expired_no_show]
+        fee_cents: { type: integer, format: int64 }
+        payment_due_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        confirmed_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        cancelled_by: { type: [string, "null"], enum: [driver, admin, system, null] }
+        refund_reason:
+          type: [string, "null"]
+          enum: [cancelled_before_arrival, none_after_arrival, facility_unavailable, facility_closed, admin_override, null]
+        checked_in_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        expired_at: { type: [string, "null"], format: date-time }
+        latest_payment:
+          oneOf: [{ $ref: "#/components/schemas/LatestPayment" }, { type: "null" }]
+        refund:
+          oneOf: [{ $ref: "#/components/schemas/ReservationRefund" }, { type: "null" }]
+        stay:
+          oneOf: [{ $ref: "#/components/schemas/ReservationStay" }, { type: "null" }]
+    ReservationList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Reservation" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [lot_id, arrival_at]
+      properties:
+        lot_id: { type: string, format: uuid }
+        arrival_at: { type: string, format: date-time, description: Any UTC offset or fraction of a second. }
+        vehicle_id: { type: string, format: uuid }
+    Quote:
+      type: object
+      additionalProperties: false
+      required: [lot_id, arrival_at, hold_window, fee_cents, payment_timeout_min]
+      properties:
+        lot_id: { type: string, format: uuid }
+        arrival_at: { type: string, format: date-time, description: Normalized to a 5-minute UTC boundary. }
+        hold_window: { $ref: "#/components/schemas/HoldWindow" }
+        fee_cents: { type: integer, format: int64 }
+        payment_timeout_min: { type: integer }
+    CreateReservationRequest:
+      type: object
+      additionalProperties: false
+      required: [lot_id, vehicle_id, arrival_at]
+      properties:
+        lot_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        arrival_at: { type: string, format: date-time, description: Any UTC offset or fraction of a second. }
+    ChangeVehicleRequest:
+      type: object
+      additionalProperties: false
+      required: [vehicle_id]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+    PayRequest:
+      type: object
+      additionalProperties: false
+      required: [card_number, exp_month, exp_year, cvc]
+      properties:
+        card_number: { type: string, description: Spaces and hyphens are ignored. }
+        exp_month: { type: integer, minimum: 1, maximum: 12 }
+        exp_year: { type: integer, minimum: 2000, maximum: 2099, description: Four digits. }
+        cvc: { type: string }
+    PayPending:
+      type: object
+      additionalProperties: false
+      required: [reservation, payment]
+      properties:
+        reservation: { $ref: "#/components/schemas/Reservation" }
+        payment:
+          type: object
+          additionalProperties: false
+          required: [id, status]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [pending] }
+    ReservationQr:
+      type: object
+      additionalProperties: false
+      description: >-
+        `entry_valid_from` and `entry_valid_until` bound entry only. They are
+        not the token's expiry: the same token keeps working at the pay
+        station and at exit while the reservation is `checked_in`, so clients
+        must keep showing it after `entry_valid_until` once checked in.
+      required: [token, entry_valid_from, entry_valid_until]
+      properties:
+        token: { type: string, pattern: '^[A-Za-z0-9_-]{86}$', description: Secret. Never log or share it. }
+        entry_valid_from: { type: string, format: date-time }
+        entry_valid_until: { type: string, format: date-time }
+    Receipt:
+      type: object
+      additionalProperties: false
+      description: A payment of the current driver. `receipt_no` is null unless it is `succeeded` or `refunded`.
+      required:
+        - id
+        - receipt_no
+        - kind
+        - method
+        - amount_cents
+        - status
+        - card_brand
+        - card_last4
+        - failure_code
+        - reservation_id
+        - created_at
+        - succeeded_at
+        - refunded_at
+        - refund
+      properties:
+        id: { type: string, format: uuid }
+        receipt_no: { type: [string, "null"] }
+        kind: { type: string, enum: [reservation_fee, parking_fee] }
+        method: { type: string, enum: [gateway_sim, cash, none] }
+        amount_cents: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, succeeded, failed, refunded] }
+        card_brand: { type: [string, "null"], enum: [visa, mastercard, amex, other, null] }
+        card_last4: { type: [string, "null"], pattern: '^[0-9]{4}$' }
+        failure_code: { type: [string, "null"], enum: [card_declined, card_not_supported, not_submitted, null] }
+        reservation_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        succeeded_at: { type: [string, "null"], format: date-time }
+        refunded_at: { type: [string, "null"], format: date-time }
+        refund:
+          oneOf: [{ $ref: "#/components/schemas/ReservationRefund" }, { type: "null" }]
+    ReceiptList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Receipt" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
   parameters:
     CarId:
       name: car_id
@@ -2058,6 +2288,12 @@ components:
       required: true
       description: Simulator car id, for example `car-000001`.
       schema: { type: string, pattern: '^car-[0-9]{6,}$' }
+    ReservationId:
+      name: id
+      in: path
+      required: true
+      description: Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found.
+      schema: { type: string, format: uuid }
     DeviceId:
       name: X-Device-Id
       in: header
@@ -2082,6 +2318,10 @@ components:
       required: true
       description: Lot public id. A slug, a malformed id or an unknown id is answered 404 lot.not_found.
       schema: { type: string, format: uuid }
+  headers:
+    IdempotentReplayed:
+      description: Present, with the value `true`, only when this is the stored answer of an earlier call.
+      schema: { type: string, enum: ["true"] }
   securitySchemes:
     simulatorToken:
       type: apiKey
@@ -2300,3 +2540,60 @@ components:
           example:
             error: { code: lot.not_found, message: lot not found, details: {} }
             meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+    ReservationOk:
+      description: The reservation.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: "#/components/schemas/Reservation" }
+              meta: { $ref: "#/components/schemas/Meta" }
+    ReservationNotFound:
+      description: The reservation does not exist, is not the driver's, or the id is malformed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example: { error: { code: reservation.not_found, message: reservation not found, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+    LotOrVehicleNotFound:
+      description: The lot or the vehicle does not exist, or the vehicle is not the driver's.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            lotNotFound:
+              value: { error: { code: lot.not_found, message: lot not found, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            vehicleNotFound:
+              value: { error: { code: vehicle.not_found, message: vehicle not found, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+    ReservationRefused:
+      description: >-
+        The reservation is refused: a no-show block (`details.blocked_until`),
+        a closed lot, an active reservation already held, no free space for an
+        arrival this soon, or the cap reached in the window.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            blockedNoShows:
+              value: { error: { code: reservation.blocked_no_shows, message: reservations blocked, details: { blocked_until: "2026-12-08T15:00:00Z" } }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            lotClosed:
+              value: { error: { code: reservation.lot_closed, message: lot closed, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            activeExists:
+              value: { error: { code: reservation.active_exists, message: active reservation exists, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            noSpaceNow:
+              value: { error: { code: reservation.no_space_now, message: no space now, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            capacityReached:
+              value: { error: { code: reservation.capacity_reached, message: capacity reached, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+    ReservationArrivalInvalid:
+      description: Input validation failed, the arrival time is in the past, or it is beyond the booking horizon.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            validationFailed:
+              value: { error: { code: validation.failed, message: validation failed, details: { fields: [{ field: arrival_at, rule: datetime }] } }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            arrivalInPast:
+              value: { error: { code: reservation.arrival_in_past, message: arrival in the past, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+            beyondHorizon:
+              value: { error: { code: reservation.beyond_horizon, message: arrival beyond horizon, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }

@@ -685,7 +685,9 @@ export interface components {
         };
         InjectCarRequest: {
             /** @enum {string} */
-            credential: "ticket" | "employee_card";
+            credential: "ticket" | "employee_card" | "reservation_qr";
+            /** @description The reservation QR token the car presents at the entry barrier, the pay station and the exit. Required with `reservation_qr` and not allowed with any other credential. */
+            qr?: string;
             /** @description An employee card label. Only with `employee_card`. */
             card?: string;
             /** @default false */
@@ -1195,7 +1197,7 @@ export interface components {
             /** Format: date-time */
             tariff_effective_from: string;
         };
-        /** @description The synchronous answer to a device event. `open` and `deny` answer credential events, `ack` a handled event, `rejected` a refused one; `reason` carries the error code of a refusal (`gate.*`, `lot.*`) or `gate.duplicate_pass` on an acknowledged duplicate. Which optional fields appear depends on the event type. */
+        /** @description The synchronous answer to a device event. `open` and `deny` answer credential events, `ack` a handled event, `rejected` a refused one; `reason` carries the error code of a refusal (`gate.*`, `lot.*`, `reservation.too_early` and `reservation.window_closed` for a reservation QR outside its window) or `gate.duplicate_pass` on an acknowledged duplicate. Which optional fields appear depends on the event type. */
         DeviceEventResult: {
             /** @enum {string} */
             result: "ack" | "open" | "deny" | "rejected";
@@ -1212,6 +1214,190 @@ export interface components {
             paid_at?: string;
             /** Format: date-time */
             exit_deadline?: string;
+        };
+        ReservationVehicle: {
+            /** Format: uuid */
+            id: string;
+            plate_display: string;
+            make: string;
+            model: string;
+            color: string;
+        };
+        /** @description The window in which a space is held for the reservation. `ends_at` is exclusive. */
+        HoldWindow: {
+            /** Format: date-time */
+            starts_at: string;
+            /** Format: date-time */
+            ends_at: string;
+        };
+        /** @description The newest fee attempt, so a client sees `pending` (the 202 path) or `failed` with its `failure_code`. */
+        LatestPayment: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "pending" | "succeeded" | "failed" | "refunded";
+            /** @enum {string|null} */
+            failure_code: "card_declined" | "card_not_supported" | "not_submitted" | null;
+        };
+        ReservationRefund: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "pending" | "succeeded" | "failed";
+            /** Format: int64 */
+            amount_cents: number;
+            /** @enum {string} */
+            reason: "cancelled_before_arrival" | "facility_unavailable" | "facility_closed" | "admin_override";
+            /** Format: date-time */
+            succeeded_at: string | null;
+        };
+        /** @description The stay summary of a checked-in or completed reservation. */
+        ReservationStay: {
+            /** Format: date-time */
+            entered_at: string;
+            /** Format: date-time */
+            exited_at: string | null;
+            /** Format: int64 */
+            parking_paid_cents: number;
+        };
+        Reservation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            lot_id: string;
+            vehicle: components["schemas"]["ReservationVehicle"];
+            /**
+             * Format: date-time
+             * @description Normalized to a 5-minute UTC boundary.
+             */
+            arrival_at: string;
+            hold_window: components["schemas"]["HoldWindow"];
+            /** @enum {string} */
+            status: "pending_payment" | "confirmed" | "checked_in" | "completed" | "cancelled" | "expired_unpaid" | "expired_no_show";
+            /** Format: int64 */
+            fee_cents: number;
+            /** Format: date-time */
+            payment_due_at: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            confirmed_at: string | null;
+            /** Format: date-time */
+            cancelled_at: string | null;
+            /** @enum {string|null} */
+            cancelled_by: "driver" | "admin" | "system" | null;
+            /** @enum {string|null} */
+            refund_reason: "cancelled_before_arrival" | "none_after_arrival" | "facility_unavailable" | "facility_closed" | "admin_override" | null;
+            /** Format: date-time */
+            checked_in_at: string | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            expired_at: string | null;
+            latest_payment: components["schemas"]["LatestPayment"] | null;
+            refund: components["schemas"]["ReservationRefund"] | null;
+            stay: components["schemas"]["ReservationStay"] | null;
+        };
+        ReservationList: {
+            data: components["schemas"]["Reservation"][];
+            meta: components["schemas"]["ListMeta"];
+        };
+        QuoteRequest: {
+            /** Format: uuid */
+            lot_id: string;
+            /**
+             * Format: date-time
+             * @description Any UTC offset or fraction of a second.
+             */
+            arrival_at: string;
+            /** Format: uuid */
+            vehicle_id?: string;
+        };
+        Quote: {
+            /** Format: uuid */
+            lot_id: string;
+            /**
+             * Format: date-time
+             * @description Normalized to a 5-minute UTC boundary.
+             */
+            arrival_at: string;
+            hold_window: components["schemas"]["HoldWindow"];
+            /** Format: int64 */
+            fee_cents: number;
+            payment_timeout_min: number;
+        };
+        CreateReservationRequest: {
+            /** Format: uuid */
+            lot_id: string;
+            /** Format: uuid */
+            vehicle_id: string;
+            /**
+             * Format: date-time
+             * @description Any UTC offset or fraction of a second.
+             */
+            arrival_at: string;
+        };
+        ChangeVehicleRequest: {
+            /** Format: uuid */
+            vehicle_id: string;
+        };
+        PayRequest: {
+            /** @description Spaces and hyphens are ignored. */
+            card_number: string;
+            exp_month: number;
+            /** @description Four digits. */
+            exp_year: number;
+            cvc: string;
+        };
+        PayPending: {
+            reservation: components["schemas"]["Reservation"];
+            payment: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                status: "pending";
+            };
+        };
+        /** @description `entry_valid_from` and `entry_valid_until` bound entry only. They are not the token's expiry: the same token keeps working at the pay station and at exit while the reservation is `checked_in`, so clients must keep showing it after `entry_valid_until` once checked in. */
+        ReservationQr: {
+            /** @description Secret. Never log or share it. */
+            token: string;
+            /** Format: date-time */
+            entry_valid_from: string;
+            /** Format: date-time */
+            entry_valid_until: string;
+        };
+        /** @description A payment of the current driver. `receipt_no` is null unless it is `succeeded` or `refunded`. */
+        Receipt: {
+            /** Format: uuid */
+            id: string;
+            receipt_no: string | null;
+            /** @enum {string} */
+            kind: "reservation_fee" | "parking_fee";
+            /** @enum {string} */
+            method: "gateway_sim" | "cash" | "none";
+            /** Format: int64 */
+            amount_cents: number;
+            /** @enum {string} */
+            status: "pending" | "succeeded" | "failed" | "refunded";
+            /** @enum {string|null} */
+            card_brand: "visa" | "mastercard" | "amex" | "other" | null;
+            card_last4: string | null;
+            /** @enum {string|null} */
+            failure_code: "card_declined" | "card_not_supported" | "not_submitted" | null;
+            /** Format: uuid */
+            reservation_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            succeeded_at: string | null;
+            /** Format: date-time */
+            refunded_at: string | null;
+            refund: components["schemas"]["ReservationRefund"] | null;
+        };
+        ReceiptList: {
+            data: components["schemas"]["Receipt"][];
+            meta: components["schemas"]["ListMeta"];
         };
     };
     responses: {
@@ -1484,10 +1670,72 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
+        /** @description The reservation. */
+        ReservationOk: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    data: components["schemas"]["Reservation"];
+                    meta: components["schemas"]["Meta"];
+                };
+            };
+        };
+        /** @description The reservation does not exist, is not the driver's, or the id is malformed. */
+        ReservationNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "reservation.not_found",
+                 *         "message": "reservation not found",
+                 *         "details": {}
+                 *       },
+                 *       "meta": {
+                 *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description The lot or the vehicle does not exist, or the vehicle is not the driver's. */
+        LotOrVehicleNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description The reservation is refused: a no-show block (`details.blocked_until`), a closed lot, an active reservation already held, no free space for an arrival this soon, or the cap reached in the window. */
+        ReservationRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description Input validation failed, the arrival time is in the past, or it is beyond the booking horizon. */
+        ReservationArrivalInvalid: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
     };
     parameters: {
         /** @description Simulator car id, for example `car-000001`. */
         CarId: string;
+        /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+        ReservationId: string;
         /** @description Device public id (uuid). */
         DeviceId: string;
         /** @description Signing time, RFC 3339 UTC with `Z`, within 60 s of the server clock. Used verbatim in the canonical string. */
@@ -1498,7 +1746,10 @@ export interface components {
         LotId: string;
     };
     requestBodies: never;
-    headers: never;
+    headers: {
+        /** @description Present, with the value `true`, only when this is the stored answer of an earlier call. */
+        IdempotentReplayed: "true";
+    };
     pathItems: never;
 }
 export type $defs = Record<string, never>;
