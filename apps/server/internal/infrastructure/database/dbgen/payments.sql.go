@@ -12,6 +12,78 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDueRefunds = `-- name: ClaimDueRefunds :many
+with due as (
+    select refunds.id from refunds
+    where refunds.status = 'pending' and refunds.next_attempt_at <= $2
+    order by refunds.next_attempt_at, refunds.id
+    limit $3
+    for update skip locked
+)
+update refunds r
+set attempts = r.attempts + 1, next_attempt_at = $1
+from due, payments p, reservations rv
+where r.id = due.id and r.status = 'pending' and p.id = r.payment_id and rv.id = p.reservation_id
+returning r.id, r.public_id, r.payment_id, r.amount_cents, r.attempts::int as attempts,
+          r.idempotency_key, p.idempotency_key as charge_key, p.public_id as payment_public_id,
+          rv.id as reservation_id, rv.public_id as reservation_public_id, rv.lot_id
+`
+
+type ClaimDueRefundsParams struct {
+	LeaseUntil pgtype.Timestamptz
+	Now        pgtype.Timestamptz
+	Batch      int32
+}
+
+type ClaimDueRefundsRow struct {
+	ID                  int64
+	PublicID            uuid.UUID
+	PaymentID           int64
+	AmountCents         int64
+	Attempts            int32
+	IdempotencyKey      string
+	ChargeKey           string
+	PaymentPublicID     uuid.UUID
+	ReservationID       int64
+	ReservationPublicID uuid.UUID
+	LotID               int64
+}
+
+// Design 12.5 step 1 (M3B-29): lease the due refunds. skip locked keeps two
+// runners apart while the claim runs; the lease (next_attempt_at moved ahead)
+// keeps them apart after it commits, and attempts+1 is the finalize fence.
+func (q *Queries) ClaimDueRefunds(ctx context.Context, arg ClaimDueRefundsParams) ([]ClaimDueRefundsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueRefunds, arg.LeaseUntil, arg.Now, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimDueRefundsRow{}
+	for rows.Next() {
+		var i ClaimDueRefundsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.PaymentID,
+			&i.AmountCents,
+			&i.Attempts,
+			&i.IdempotencyKey,
+			&i.ChargeKey,
+			&i.PaymentPublicID,
+			&i.ReservationID,
+			&i.ReservationPublicID,
+			&i.LotID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const finalizeFeeFailed = `-- name: FinalizeFeeFailed :execrows
 update payments
 set status = 'failed', failed_at = $1, failure_code = $2
@@ -93,6 +165,84 @@ type FinalizeFeeSucceededParams struct {
 // the same attempt, and only the first one writes.
 func (q *Queries) FinalizeFeeSucceeded(ctx context.Context, arg FinalizeFeeSucceededParams) (int64, error) {
 	result, err := q.db.Exec(ctx, finalizeFeeSucceeded, arg.Now, arg.ProviderRef, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finalizeRefundFailed = `-- name: FinalizeRefundFailed :execrows
+update refunds
+set status = 'failed', failed_at = $1, last_error = $2
+where id = $3 and status = 'pending' and attempts = $4
+`
+
+type FinalizeRefundFailedParams struct {
+	Now       pgtype.Timestamptz
+	LastError pgtype.Text
+	ID        int64
+	Attempts  int16
+}
+
+func (q *Queries) FinalizeRefundFailed(ctx context.Context, arg FinalizeRefundFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finalizeRefundFailed,
+		arg.Now,
+		arg.LastError,
+		arg.ID,
+		arg.Attempts,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finalizeRefundRetry = `-- name: FinalizeRefundRetry :execrows
+update refunds
+set last_error = $1, next_attempt_at = $2
+where id = $3 and status = 'pending' and attempts = $4
+`
+
+type FinalizeRefundRetryParams struct {
+	LastError     pgtype.Text
+	NextAttemptAt pgtype.Timestamptz
+	ID            int64
+	Attempts      int16
+}
+
+func (q *Queries) FinalizeRefundRetry(ctx context.Context, arg FinalizeRefundRetryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finalizeRefundRetry,
+		arg.LastError,
+		arg.NextAttemptAt,
+		arg.ID,
+		arg.Attempts,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finalizeRefundSucceeded = `-- name: FinalizeRefundSucceeded :execrows
+update refunds
+set status = 'succeeded', provider_ref = $1, succeeded_at = $2, last_error = null
+where id = $3 and status = 'pending' and attempts = $4
+`
+
+type FinalizeRefundSucceededParams struct {
+	ProviderRef pgtype.Text
+	Now         pgtype.Timestamptz
+	ID          int64
+	Attempts    int16
+}
+
+func (q *Queries) FinalizeRefundSucceeded(ctx context.Context, arg FinalizeRefundSucceededParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finalizeRefundSucceeded,
+		arg.ProviderRef,
+		arg.Now,
+		arg.ID,
+		arg.Attempts,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -422,6 +572,18 @@ func (q *Queries) ListPendingFeesBefore(ctx context.Context, arg ListPendingFees
 	return items, nil
 }
 
+const lockPaymentForRefund = `-- name: LockPaymentForRefund :one
+select id from payments where id = $1 for update
+`
+
+// Lock order: payments before refunds (design 8.1).
+func (q *Queries) LockPaymentForRefund(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockPaymentForRefund, id)
+	var id_2 int64
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const lockReservationOfFee = `-- name: LockReservationOfFee :one
 select r.id
 from reservations r
@@ -436,4 +598,23 @@ func (q *Queries) LockReservationOfFee(ctx context.Context, paymentID int64) (in
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const markPaymentRefunded = `-- name: MarkPaymentRefunded :execrows
+update payments
+set status = 'refunded', refunded_at = $1
+where id = $2 and kind = 'reservation_fee' and status = 'succeeded'
+`
+
+type MarkPaymentRefundedParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) MarkPaymentRefunded(ctx context.Context, arg MarkPaymentRefundedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markPaymentRefunded, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

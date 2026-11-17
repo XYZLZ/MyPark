@@ -92,3 +92,46 @@ from refunds
 where payment_id = @payment_id
 order by created_at desc, id desc
 limit 1;
+
+-- name: ClaimDueRefunds :many
+-- Design 12.5 step 1 (M3B-29): lease the due refunds. skip locked keeps two
+-- runners apart while the claim runs; the lease (next_attempt_at moved ahead)
+-- keeps them apart after it commits, and attempts+1 is the finalize fence.
+with due as (
+    select refunds.id from refunds
+    where refunds.status = 'pending' and refunds.next_attempt_at <= @now
+    order by refunds.next_attempt_at, refunds.id
+    limit sqlc.arg('batch')
+    for update skip locked
+)
+update refunds r
+set attempts = r.attempts + 1, next_attempt_at = @lease_until
+from due, payments p, reservations rv
+where r.id = due.id and r.status = 'pending' and p.id = r.payment_id and rv.id = p.reservation_id
+returning r.id, r.public_id, r.payment_id, r.amount_cents, r.attempts::int as attempts,
+          r.idempotency_key, p.idempotency_key as charge_key, p.public_id as payment_public_id,
+          rv.id as reservation_id, rv.public_id as reservation_public_id, rv.lot_id;
+
+-- name: LockPaymentForRefund :one
+-- Lock order: payments before refunds (design 8.1).
+select id from payments where id = @id for update;
+
+-- name: FinalizeRefundSucceeded :execrows
+update refunds
+set status = 'succeeded', provider_ref = @provider_ref, succeeded_at = @now, last_error = null
+where id = @id and status = 'pending' and attempts = @attempts;
+
+-- name: MarkPaymentRefunded :execrows
+update payments
+set status = 'refunded', refunded_at = @now
+where id = @id and kind = 'reservation_fee' and status = 'succeeded';
+
+-- name: FinalizeRefundRetry :execrows
+update refunds
+set last_error = @last_error, next_attempt_at = @next_attempt_at
+where id = @id and status = 'pending' and attempts = @attempts;
+
+-- name: FinalizeRefundFailed :execrows
+update refunds
+set status = 'failed', failed_at = @now, last_error = @last_error
+where id = @id and status = 'pending' and attempts = @attempts;
