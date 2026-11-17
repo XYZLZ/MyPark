@@ -177,7 +177,7 @@ func (q *Queries) GetCardByHash(ctx context.Context, arg GetCardByHashParams) (G
 }
 
 const getOpenStayByCardForUpdate = `-- name: GetOpenStayByCardForUpdate :one
-select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at from stays
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at, reservation_id from stays
 where lot_id = $1 and employee_card_id = $2
   and status in ('entry_pending', 'active', 'paid')
 for update
@@ -209,12 +209,13 @@ func (q *Queries) GetOpenStayByCardForUpdate(ctx context.Context, arg GetOpenSta
 		&i.VoidedAt,
 		&i.LostTicket,
 		&i.UpdatedAt,
+		&i.ReservationID,
 	)
 	return i, err
 }
 
 const getStayByTicketHashForUpdate = `-- name: GetStayByTicketHashForUpdate :one
-select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at from stays where lot_id = $1 and ticket_code_hash = $2 for update
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at, reservation_id from stays where lot_id = $1 and ticket_code_hash = $2 for update
 `
 
 type GetStayByTicketHashForUpdateParams struct {
@@ -243,12 +244,13 @@ func (q *Queries) GetStayByTicketHashForUpdate(ctx context.Context, arg GetStayB
 		&i.VoidedAt,
 		&i.LostTicket,
 		&i.UpdatedAt,
+		&i.ReservationID,
 	)
 	return i, err
 }
 
 const getStayForUpdate = `-- name: GetStayForUpdate :one
-select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at from stays where lot_id = $1 and public_id = $2 for update
+select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at, reservation_id from stays where lot_id = $1 and public_id = $2 for update
 `
 
 type GetStayForUpdateParams struct {
@@ -277,6 +279,7 @@ func (q *Queries) GetStayForUpdate(ctx context.Context, arg GetStayForUpdatePara
 		&i.VoidedAt,
 		&i.LostTicket,
 		&i.UpdatedAt,
+		&i.ReservationID,
 	)
 	return i, err
 }
@@ -322,7 +325,7 @@ returning id
 
 type InsertPaymentParams struct {
 	Kind           string
-	StayID         int64
+	StayID         pgtype.Int8
 	Method         string
 	AmountCents    int64
 	Status         string
@@ -486,7 +489,7 @@ where s.lot_id = $1 and p.stay_id = $2 and p.status = 'succeeded'
 
 type PaymentTotalsParams struct {
 	LotID  int64
-	StayID int64
+	StayID pgtype.Int8
 }
 
 type PaymentTotalsRow struct {

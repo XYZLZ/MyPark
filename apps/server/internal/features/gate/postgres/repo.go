@@ -273,7 +273,7 @@ func (Repo) PaymentTotals(ctx context.Context, lotID, stayID int64) (int64, erro
 	if err != nil {
 		return 0, err
 	}
-	row, err := qs.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: stayID})
+	row, err := qs.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: pgtype.Int8{Int64: stayID, Valid: true}})
 	if err != nil {
 		return 0, fmt.Errorf("gate: payment totals: %w", err)
 	}
@@ -287,7 +287,7 @@ func (Repo) InsertPayment(ctx context.Context, p gate.NewPayment) (int64, error)
 		return 0, err
 	}
 	id, err := qs.InsertPayment(ctx, dbgen.InsertPaymentParams{
-		Kind: "parking_fee", StayID: p.StayID, Method: p.Method, AmountCents: p.AmountCents, Status: "succeeded",
+		Kind: "parking_fee", StayID: pgtype.Int8{Int64: p.StayID, Valid: true}, Method: p.Method, AmountCents: p.AmountCents, Status: "succeeded",
 		IdempotencyKey: p.IdempotencyKey, DeviceID: pgtype.Int8{Int64: p.DeviceID, Valid: p.DeviceID != 0},
 		Now: ts(p.SucceededAt), SucceededAt: ts(p.SucceededAt),
 	})

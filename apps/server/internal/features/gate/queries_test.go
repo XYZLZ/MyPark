@@ -60,14 +60,14 @@ func TestGateQueries_LotScopedAndTotals(t *testing.T) {
 		t.Errorf("GetOpenStayByCardForUpdate = %v, %v", got.ID, err)
 	}
 
-	totals, err := q.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: stay.ID})
+	totals, err := q.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: pgtype.Int8{Int64: stay.ID, Valid: true}})
 	if err != nil || totals.PaidCents != 0 || totals.LastSucceededAt.Valid {
 		t.Fatalf("empty totals = %+v, %v", totals, err)
 	}
 	pay := func(amount int64, status, key string, at time.Time) {
 		t.Helper()
 		if _, err := q.InsertPayment(ctx, dbgen.InsertPaymentParams{
-			Kind: "parking_fee", StayID: stay.ID, Method: "cash", AmountCents: amount, Status: status,
+			Kind: "parking_fee", StayID: pgtype.Int8{Int64: stay.ID, Valid: true}, Method: "cash", AmountCents: amount, Status: status,
 			IdempotencyKey: key, Now: ts(now), SucceededAt: ts(at),
 		}); err != nil {
 			t.Fatalf("InsertPayment %s: %v", key, err)
@@ -75,12 +75,12 @@ func TestGateQueries_LotScopedAndTotals(t *testing.T) {
 	}
 	pay(5000, "succeeded", "a", now.Add(time.Minute))
 	pay(2500, "succeeded", "b", now.Add(2*time.Minute))
-	pay(9999, "failed", "c", now.Add(3*time.Minute))
-	totals, err = q.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: stay.ID})
+	pay(9999, "pending", "c", now.Add(3*time.Minute))
+	totals, err = q.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID, StayID: pgtype.Int8{Int64: stay.ID, Valid: true}})
 	if err != nil || totals.PaidCents != 7500 || !totals.LastSucceededAt.Time.Equal(now.Add(2*time.Minute)) {
 		t.Errorf("totals = %+v, %v, want 7500 at +2m", totals, err)
 	}
-	if other, err := q.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID + 1, StayID: stay.ID}); err != nil || other.PaidCents != 0 {
+	if other, err := q.PaymentTotals(ctx, dbgen.PaymentTotalsParams{LotID: lotID + 1, StayID: pgtype.Int8{Int64: stay.ID, Valid: true}}); err != nil || other.PaidCents != 0 {
 		t.Errorf("totals through another lot = %+v, %v, want 0", other, err)
 	}
 

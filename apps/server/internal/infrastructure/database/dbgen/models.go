@@ -140,17 +140,27 @@ type OutboxMessage struct {
 }
 
 type Payment struct {
-	ID             int64
-	PublicID       uuid.UUID
-	Kind           string
-	StayID         int64
-	Method         string
-	AmountCents    int64
-	Status         string
-	IdempotencyKey string
-	DeviceID       pgtype.Int8
-	CreatedAt      pgtype.Timestamptz
-	SucceededAt    pgtype.Timestamptz
+	ID                 int64
+	PublicID           uuid.UUID
+	Kind               string
+	StayID             pgtype.Int8
+	Method             string
+	AmountCents        int64
+	Status             string
+	IdempotencyKey     string
+	DeviceID           pgtype.Int8
+	CreatedAt          pgtype.Timestamptz
+	SucceededAt        pgtype.Timestamptz
+	ReservationID      pgtype.Int8
+	UserID             pgtype.Int8
+	ClientKey          pgtype.Text
+	RequestFingerprint []byte
+	ProviderRef        pgtype.Text
+	CardBrand          pgtype.Text
+	CardLast4          pgtype.Text
+	FailureCode        pgtype.Text
+	FailedAt           pgtype.Timestamptz
+	RefundedAt         pgtype.Timestamptz
 }
 
 type PolicyVersion struct {
@@ -178,6 +188,18 @@ type RateLimitCounter struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type ReconciliationAlert struct {
+	ID             int64
+	PublicID       uuid.UUID
+	LotID          int64
+	Kind           string
+	Details        []byte
+	OpenedAt       pgtype.Timestamptz
+	ResolvedAt     pgtype.Timestamptz
+	ResolvedBy     pgtype.Int8
+	ResolutionNote pgtype.Text
+}
+
 type RefreshToken struct {
 	ID        int64
 	SessionID int64
@@ -185,6 +207,71 @@ type RefreshToken struct {
 	CreatedAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
 	RotatedAt pgtype.Timestamptz
+}
+
+type Refund struct {
+	ID             int64
+	PublicID       uuid.UUID
+	PaymentID      int64
+	AmountCents    int64
+	Reason         string
+	Status         string
+	IdempotencyKey string
+	Attempts       int16
+	NextAttemptAt  pgtype.Timestamptz
+	LastError      pgtype.Text
+	ProviderRef    pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	SucceededAt    pgtype.Timestamptz
+	FailedAt       pgtype.Timestamptz
+}
+
+type Reservation struct {
+	ID              int64
+	PublicID        uuid.UUID
+	UserID          int64
+	VehicleID       int64
+	LotID           int64
+	ArrivalAt       pgtype.Timestamptz
+	HoldWindow      pgtype.Range[pgtype.Timestamptz]
+	Status          string
+	FeeCents        int64
+	TariffVersionID int64
+	PolicyVersionID int64
+	QrNonce         []byte
+	PaymentDueAt    pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ConfirmedAt     pgtype.Timestamptz
+	CancelledAt     pgtype.Timestamptz
+	CancelledBy     pgtype.Text
+	RefundReason    pgtype.Text
+	CheckedInAt     pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	ExpiredAt       pgtype.Timestamptz
+}
+
+type ReservationSlotLoad struct {
+	LotID     int64
+	SlotStart pgtype.Timestamptz
+	Held      int32
+}
+
+type SimGatewayCharge struct {
+	ID                   int64
+	IdempotencyKey       string
+	AmountCents          int64
+	Currency             string
+	Outcome              string
+	DeclineCode          pgtype.Text
+	CardBrand            string
+	CardLast4            string
+	ProviderRef          string
+	Delayed              bool
+	CreatedAt            pgtype.Timestamptz
+	RefundIdempotencyKey pgtype.Text
+	RefundProviderRef    pgtype.Text
+	RefundedAt           pgtype.Timestamptz
 }
 
 type Space struct {
@@ -214,6 +301,7 @@ type Stay struct {
 	VoidedAt         pgtype.Timestamptz
 	LostTicket       bool
 	UpdatedAt        pgtype.Timestamptz
+	ReservationID    pgtype.Int8
 }
 
 type TariffVersion struct {
@@ -232,25 +320,26 @@ type TariffVersion struct {
 }
 
 type User struct {
-	ID                int64
-	PublicID          uuid.UUID
-	Email             string
-	PasswordHash      pgtype.Text
-	PasswordChangedAt pgtype.Timestamptz
-	FirstName         string
-	LastName          string
-	Phone             pgtype.Text
-	Role              string
-	Status            string
-	Locale            string
-	EmailVerifiedAt   pgtype.Timestamptz
-	TermsVersion      pgtype.Text
-	TermsAcceptedAt   pgtype.Timestamptz
-	PrivacyVersion    pgtype.Text
-	PrivacyAcceptedAt pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	DeletedAt         pgtype.Timestamptz
+	ID                      int64
+	PublicID                uuid.UUID
+	Email                   string
+	PasswordHash            pgtype.Text
+	PasswordChangedAt       pgtype.Timestamptz
+	FirstName               string
+	LastName                string
+	Phone                   pgtype.Text
+	Role                    string
+	Status                  string
+	Locale                  string
+	EmailVerifiedAt         pgtype.Timestamptz
+	TermsVersion            pgtype.Text
+	TermsAcceptedAt         pgtype.Timestamptz
+	PrivacyVersion          pgtype.Text
+	PrivacyAcceptedAt       pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	DeletedAt               pgtype.Timestamptz
+	ReservationBlockedUntil pgtype.Timestamptz
 }
 
 type Vehicle struct {
