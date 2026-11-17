@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -26,7 +27,7 @@ import (
 var (
 	ErrAlreadyRunning      = errors.New("simulator: a scenario is already running")
 	ErrNotRunning          = errors.New("simulator: no scenario is running")
-	ErrScenarioUnavailable = errors.New("simulator: scenario unavailable in M2")
+	ErrScenarioUnavailable = errors.New("simulator: scenario unavailable")
 	// ErrInvalidParams wraps a request the runner refuses: bad scenario, speed
 	// or injected-car fields.
 	ErrInvalidParams = errors.New("simulator: invalid parameters")
@@ -102,6 +103,11 @@ type RunnerDeps struct {
 	// Spaces reads the lot's space codes at each start (see PublicSpaces); nil
 	// keeps the pilot lot's E001..E280.
 	Spaces func(ctx context.Context) ([]string, error)
+	// Drivers returns the driver API for reservation_arrivals and no_show; nil
+	// makes those scenarios unavailable.
+	Drivers func(ctx context.Context) (DriverAPI, error)
+	// Logger receives the reserved-car booking diagnostics; nil discards.
+	Logger *slog.Logger
 }
 
 // Runner runs one scenario at a time (design §13.4) and keeps its engine
@@ -145,10 +151,11 @@ type session struct {
 	denials int
 
 	mu       sync.Mutex
-	closed   bool     // no more arrivals: Stop was called
-	drainReq bool     // that Stop asked for a drain
-	implicit bool     // started by Inject, not by a scenario; Start takes it over
-	ids      []string // every car handed to the fleet
+	closed   bool      // no more arrivals: Stop was called
+	drainReq bool      // that Stop asked for a drain
+	implicit bool      // started by Inject, not by a scenario; Start takes it over
+	res      *Reserver // reservation_arrivals and no_show only
+	ids      []string  // every car handed to the fleet
 }
 
 // Start validates p, reads the lot's spaces and starts the scenario. ctx
@@ -170,6 +177,10 @@ func (r *Runner) Start(ctx context.Context, p StartParams) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	res, err := r.reserver(ctx, p)
+	if err != nil {
+		return Status{}, err
+	}
 	for {
 		if r.busy() {
 			return Status{}, ErrAlreadyRunning
@@ -188,7 +199,7 @@ func (r *Runner) Start(ctx context.Context, p StartParams) (Status, error) {
 				r.mu.Unlock()
 				return Status{}, ErrAlreadyRunning
 			}
-			applied := s.takeover(p)
+			applied := s.takeover(p, res)
 			r.mu.Unlock()
 			switch ok, retry := s.awaitTakeover(applied); {
 			case ok:
@@ -203,10 +214,38 @@ func (r *Runner) Start(ctx context.Context, p StartParams) (Status, error) {
 			r.mu.Unlock()
 			continue // the implicit session ended meanwhile: read the spaces
 		}
-		st := r.newSession(ctx, p, codes, false).status()
+		st := r.newSession(ctx, p, codes, false, res).status()
 		r.mu.Unlock()
 		return st, nil
 	}
+}
+
+// reserver builds the Reserver of a reserved-car scenario, or nil for any other.
+// It signs in the pool's first driver: a 401 means the simulated drivers are
+// not seeded (design §13.1).
+func (r *Runner) reserver(ctx context.Context, p StartParams) (*Reserver, error) {
+	pool := PoolArrivals
+	switch p.Scenario {
+	case ScenarioReservationArrivals:
+	case ScenarioNoShow:
+		pool = PoolNoShow
+	default:
+		return nil, nil
+	}
+	if r.d.Drivers == nil {
+		return nil, fmt.Errorf("%w: %s needs the simulated drivers", ErrScenarioUnavailable, p.Scenario)
+	}
+	api, err := r.d.Drivers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("simulator: driver API: %w", err)
+	}
+	if err := api.Login(ctx, pool[0]); err != nil {
+		if apiErr, ok := errors.AsType[*DriverAPIError](err); ok && apiErr.Status == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: %s needs the simulated drivers", ErrScenarioUnavailable, p.Scenario)
+		}
+		return nil, fmt.Errorf("simulator: sign in a simulated driver: %w", err)
+	}
+	return NewReserver(api, r.d.Wall.Now, r.d.Logger), nil
 }
 
 // lotSpaces reads the lot's space codes, or none when no reader is set.
@@ -229,12 +268,12 @@ func (r *Runner) newClock(start time.Time, speed int) Clock {
 }
 
 // newSession builds and starts a run. The caller holds r.mu.
-func (r *Runner) newSession(ctx context.Context, p StartParams, codes []string, implicit bool) *session {
+func (r *Runner) newSession(ctx context.Context, p StartParams, codes []string, implicit bool, res *Reserver) *session {
 	clk := r.newClock(p.StartAt, p.Speed)
 	eng := NewEngine(clk, p.Seed)
 	s := &session{
 		r: r, p: p, startedAt: r.d.Wall.Now(), clock: clk, eng: eng, done: make(chan struct{}), drained: make(chan struct{}),
-		fleet: NewFleetSim(eng, r.d.Client, r.d.FleetSecret, r.d.Log), implicit: implicit,
+		fleet: NewFleetSim(eng, r.d.Client, r.d.FleetSecret, r.d.Log), implicit: implicit, res: res,
 	}
 	if len(codes) > 0 {
 		s.fleet.SetSpaces(codes)
@@ -264,9 +303,9 @@ func (s *session) takeable() bool {
 // cars in flight carry on and parked cars stay where they are. The returned
 // channel receives true once the switch is done, or false when the session
 // was stopped first and nothing was switched.
-func (s *session) takeover(p StartParams) <-chan bool {
+func (s *session) takeover(p StartParams, res *Reserver) <-chan bool {
 	s.mu.Lock()
-	s.implicit = false
+	s.implicit, s.res = false, res
 	s.mu.Unlock()
 	applied := make(chan bool, 1)
 	s.eng.At(s.eng.Now(), func(context.Context) {
@@ -309,9 +348,8 @@ func (s *session) awaitTakeover(applied <-chan bool) (ok, retry bool) {
 
 func (r *Runner) resolve(p StartParams) (StartParams, error) {
 	switch p.Scenario {
-	case ScenarioIdle, ScenarioWeekday, ScenarioWeekendPeak, ScenarioFillToFull, ScenarioSensorDrift:
-	case ScenarioReservationArrivals, ScenarioNoShow:
-		return p, fmt.Errorf("%w: %s", ErrScenarioUnavailable, p.Scenario)
+	case ScenarioIdle, ScenarioWeekday, ScenarioWeekendPeak, ScenarioFillToFull, ScenarioSensorDrift,
+		ScenarioReservationArrivals, ScenarioNoShow:
 	default:
 		return p, fmt.Errorf("%w: unknown scenario %q", ErrInvalidParams, p.Scenario)
 	}
@@ -486,7 +524,7 @@ func (r *Runner) activeOrImplicit() (*session, error) {
 		}
 		return s, nil
 	}
-	return r.newSession(ctx, StartParams{Scenario: ScenarioIdle, Speed: 1, StartAt: r.d.Wall.Now()}, codes, true), nil
+	return r.newSession(ctx, StartParams{Scenario: ScenarioIdle, Speed: 1, StartAt: r.d.Wall.Now()}, codes, true, nil), nil
 }
 
 // Leave sends a car out: ErrNotRunning without a run, ErrCarNotFound for an
@@ -667,6 +705,32 @@ func (s *session) begin(context.Context) {
 		s.employees()
 	}
 	s.eng.At(nextArrival(s.eng.Rand(), s.p.Scenario, s.eng.Now()), s.arrive)
+	if ReservedPerHour(s.p.Scenario) > 0 {
+		s.eng.At(nextReserved(s.eng.Rand(), s.p.Scenario, s.eng.Now()), s.arriveReserved)
+	}
+}
+
+// arriveReserved books one reserved car and queues the next. Every draw
+// happens before the booking, so the server's answer never changes the random
+// sequence (FR-SIM-7). A reservation_arrivals car presents its QR 1-5 virtual
+// minutes later; a no_show car is never sent.
+func (s *session) arriveReserved(ctx context.Context) {
+	s.mu.Lock()
+	res, closed := s.res, s.closed
+	s.mu.Unlock()
+	if closed || res == nil {
+		return
+	}
+	r := s.eng.Rand()
+	s.eng.At(nextReserved(r, s.p.Scenario, s.eng.Now()), s.arriveReserved)
+	walk := time.Duration(60+r.Int64N(241)) * time.Second
+	drive := s.newCar()
+	car, ok := res.Book(ctx, s.p.Scenario)
+	if !ok || s.p.Scenario == ScenarioNoShow {
+		return
+	}
+	car.Dwell, car.PayLate = drive.Dwell, drive.PayLate
+	s.eng.At(s.eng.Now().Add(walk), func(context.Context) { s.admit(car) })
 }
 
 // employees schedules today's 30 card holders (07:30-08:30, 8-9 h stays) and
@@ -740,25 +804,47 @@ func (s *session) sawFull() bool {
 	return s.reachedFull.Load()
 }
 
+// PublicLotID reads the first lot's id from the API's public endpoint, so the
+// simulator never hard-codes a database id.
+func PublicLotID(ctx context.Context, hc *http.Client, baseURL string) (uuid.UUID, error) {
+	id, err := firstLotID(ctx, hc, baseURL)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	lot, err := uuid.Parse(id)
+	if err != nil {
+		return uuid.Nil, errors.New("simulator: the API lists a lot with a malformed id")
+	}
+	return lot, nil
+}
+
+func firstLotID(ctx context.Context, hc *http.Client, baseURL string) (string, error) {
+	var lots []struct {
+		ID string `json:"id"`
+	}
+	if err := getData(ctx, hc, baseURL+"/v1/lots", &lots); err != nil {
+		return "", err
+	}
+	if len(lots) == 0 {
+		return "", errors.New("simulator: the API lists no lot")
+	}
+	return lots[0].ID, nil
+}
+
 // PublicSpaces returns a RunnerDeps.Spaces that reads the first lot's space
 // codes from the API's public endpoints (design §11.1).
 func PublicSpaces(hc *http.Client, baseURL string) func(context.Context) ([]string, error) {
 	return func(ctx context.Context) ([]string, error) {
-		var lots []struct {
-			ID string `json:"id"`
-		}
-		if err := getData(ctx, hc, baseURL+"/v1/lots", &lots); err != nil {
+		lot, err := firstLotID(ctx, hc, baseURL)
+		if err != nil {
 			return nil, err
-		}
-		if len(lots) == 0 {
-			return nil, errors.New("simulator: the API lists no lot")
 		}
 		var spaces struct {
 			Spaces []struct {
 				Code string `json:"code"`
 			} `json:"spaces"`
 		}
-		if err := getData(ctx, hc, baseURL+"/v1/lots/"+url.PathEscape(lots[0].ID)+"/spaces", &spaces); err != nil {
+		if err := getData(ctx, hc, baseURL+"/v1/lots/"+url.PathEscape(lot)+"/spaces", &spaces); err != nil {
 			return nil, err
 		}
 		codes := make([]string, len(spaces.Spaces))

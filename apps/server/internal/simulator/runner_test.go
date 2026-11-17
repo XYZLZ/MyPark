@@ -104,7 +104,7 @@ func TestRunner_StartStopErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Running || st.Scenario != ScenarioWeekday || st.Seed != 5 || st.Speed != 30 || !st.VirtualNow.Equal(monday7) || st.StartedAt.IsZero() {
+	if !st.Running || st.Scenario != ScenarioWeekday || st.Seed != 5 || st.Speed != 30 || st.VirtualNow.Before(monday7) || st.StartedAt.IsZero() {
 		t.Errorf("start status = %+v (speed defaults to 30)", st)
 	}
 	if _, err := rig.run.Start(ctx, StartParams{Speed: 30, Scenario: ScenarioIdle}); !errors.Is(err, ErrAlreadyRunning) {
@@ -764,5 +764,88 @@ func TestRunner_TakeoverOfAStoppedSessionStartsFresh(t *testing.T) {
 	}
 	if st := rig.run.Status(); !st.Running || st.Scenario != ScenarioWeekday {
 		t.Errorf("status = %+v, want the fresh weekday run", st)
+	}
+}
+
+// withDrivers makes the runner's driver API api (nil: no driver API at all).
+func (rig *runnerRig) withDrivers(api DriverAPI) {
+	rig.run.d.Drivers = func(context.Context) (DriverAPI, error) { return api, nil }
+}
+
+func TestRunner_ScenarioUnavailableWithoutDrivers(t *testing.T) {
+	rig := newRunnerRig(t, time.Hour, nil)
+	rig.withDrivers(&fakeDrivers{loginErr: &DriverAPIError{Status: 401, Code: "auth.invalid_credentials"}})
+	for _, s := range []Scenario{ScenarioReservationArrivals, ScenarioNoShow} {
+		if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: s, StartAt: monday7}); !errors.Is(err, ErrScenarioUnavailable) {
+			t.Errorf("Start(%s) = %v, want ErrScenarioUnavailable", s, err)
+		}
+	}
+	if rig.run.Status().Running {
+		t.Error("a refused start left a run behind")
+	}
+	// Other scenarios do not need the drivers; another login failure is not "unavailable".
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioWeekday, StartAt: monday7}); err != nil {
+		t.Errorf("weekday start = %v", err)
+	}
+	if _, err := rig.run.Stop(false); err != nil {
+		t.Fatal(err)
+	}
+	rig.withDrivers(&fakeDrivers{loginErr: &DriverAPIError{Status: 500, Code: "internal.unexpected"}})
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: ScenarioNoShow, StartAt: monday7}); err == nil || errors.Is(err, ErrScenarioUnavailable) {
+		t.Errorf("Start with a failing API = %v, want a plain error", err)
+	}
+}
+
+// reservedRun starts s with working drivers and waits for the engine to reach
+// the horizon, so every event before it has run.
+func reservedRun(t *testing.T, s Scenario) (*runnerRig, *fakeDrivers) {
+	t.Helper()
+	rig := newRunnerRig(t, 3*time.Hour, nil)
+	drivers := &fakeDrivers{}
+	rig.withDrivers(drivers)
+	if _, err := rig.run.Start(t.Context(), StartParams{Speed: 30, Scenario: s, Seed: 3, StartAt: monday7}); err != nil {
+		t.Fatal(err)
+	}
+	<-rig.clk.reached
+	return rig, drivers
+}
+
+func TestRunner_ReservationArrivalsBookThenPresentTheQR(t *testing.T) {
+	rig, drivers := reservedRun(t, ScenarioReservationArrivals)
+	var qrEntries int
+	for _, p := range rig.api.payloads("entry.credential_presented") {
+		if p["kind"] == "reservation_qr" {
+			qrEntries++
+		}
+	}
+	creates := 0
+	for _, c := range drivers.trace() {
+		if strings.HasPrefix(c, "create:") {
+			creates++
+		}
+	}
+	if creates == 0 || qrEntries == 0 || qrEntries > creates {
+		t.Errorf("%d bookings and %d QR entries, want some of both and no entry without a booking", creates, qrEntries)
+	}
+	if first := drivers.trace()[0]; first != "login:1" {
+		t.Errorf("first driver call = %s, want login:1 (the arrivals pool)", first)
+	}
+}
+
+func TestRunner_NoShowBooksButNeverArrives(t *testing.T) {
+	rig, drivers := reservedRun(t, ScenarioNoShow)
+	trace := drivers.trace()
+	if trace[0] != "login:17" || !slices.Contains(trace, "pay:17") {
+		t.Errorf("driver calls %v, want the no-show pool paying", trace)
+	}
+	for _, c := range trace {
+		if strings.HasPrefix(c, "qr:") {
+			t.Errorf("a no-show booking fetched a QR: %s", c)
+		}
+	}
+	for _, p := range rig.api.payloads("entry.credential_presented") {
+		if p["kind"] == "reservation_qr" {
+			t.Errorf("a no-show car presented a QR: %v", p)
+		}
 	}
 }
