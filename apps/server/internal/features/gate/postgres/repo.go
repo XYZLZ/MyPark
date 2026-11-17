@@ -293,7 +293,8 @@ func (Repo) InsertPayment(ctx context.Context, p gate.NewPayment) (int64, error)
 	id, err := qs.InsertPayment(ctx, dbgen.InsertPaymentParams{
 		Kind: "parking_fee", StayID: pgtype.Int8{Int64: p.StayID, Valid: true}, Method: p.Method, AmountCents: p.AmountCents, Status: "succeeded",
 		IdempotencyKey: p.IdempotencyKey, DeviceID: pgtype.Int8{Int64: p.DeviceID, Valid: p.DeviceID != 0},
-		Now: ts(p.SucceededAt), SucceededAt: ts(p.SucceededAt),
+		UserID: pgtype.Int8{Int64: p.UserID, Valid: p.UserID != 0},
+		Now:    ts(p.SucceededAt), SucceededAt: ts(p.SucceededAt),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("gate: insert payment: %w", err)
@@ -424,6 +425,19 @@ func reservationStay(row dbgen.Stay, userID int64, err error) (gate.Stay, error)
 		s.ReservationUserID = userID
 	}
 	return s, err
+}
+
+// ReservationUserID implements gate.Repo.
+func (Repo) ReservationUserID(ctx context.Context, reservationID int64) (int64, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return 0, err
+	}
+	id, err := qs.GetReservationUserID(ctx, reservationID)
+	if err != nil {
+		return 0, fmt.Errorf("gate: owner of reservation %d: %w", reservationID, err)
+	}
+	return id, nil
 }
 
 // ReopenReservationStay implements gate.Repo.

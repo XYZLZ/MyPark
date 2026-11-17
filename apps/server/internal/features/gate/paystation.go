@@ -115,9 +115,13 @@ func (s *Service) cashPaid(ctx context.Context, d authz.Device, ev Event) (Resul
 		return Result{}, fmt.Errorf("gate: stay %s cannot go from %s to %s", stay.PublicID, stay.Status, StatusPaid)
 	}
 
+	userID, err := s.paymentUser(ctx, stay)
+	if err != nil {
+		return Result{}, err
+	}
 	deadline := now.Add(tariff.PostPaymentExit)
 	paymentID, err := s.repo.InsertPayment(ctx, NewPayment{
-		StayID: stay.ID, Method: "cash", AmountCents: due, DeviceID: d.ID, SucceededAt: now,
+		StayID: stay.ID, UserID: userID, Method: "cash", AmountCents: due, DeviceID: d.ID, SucceededAt: now,
 		IdempotencyKey: "cash:" + d.PublicID.String() + ":" + ev.ID.String(),
 	})
 	if err != nil {
@@ -151,9 +155,32 @@ func (s *Service) stayByCredential(ctx context.Context, lotID int64, c Credentia
 			return Stay{}, err
 		}
 		return s.repo.OpenCardStayForUpdate(ctx, lotID, card.ID)
-	default: // reservation_qr: no reservations before M3 (M2C-1)
-		return Stay{}, ErrNotFound
+	default: // reservation_qr
+		return s.reservationStay(ctx, lotID, c.Value)
 	}
+}
+
+// reservationStay locks the stay of the reservation a QR token names. The
+// reservation is only read, never locked (design 8.1: the pay station and the
+// exit credential take stays first); the token never reaches an error.
+func (s *Service) reservationStay(ctx context.Context, lotID int64, token string) (Stay, error) {
+	ref, err := s.reservations.Resolve(ctx, lotID, token)
+	if err != nil {
+		return Stay{}, err
+	}
+	return s.repo.ReservationStayForUpdate(ctx, lotID, ref.ID)
+}
+
+// paymentUser is the user a parking fee of the stay is attributed to: the
+// reservation's for a reservation stay, 0 (null) for every other (M3B-27).
+func (s *Service) paymentUser(ctx context.Context, stay Stay) (int64, error) {
+	switch {
+	case stay.ReservationID == 0:
+		return 0, nil
+	case stay.ReservationUserID != 0:
+		return stay.ReservationUserID, nil
+	}
+	return s.repo.ReservationUserID(ctx, stay.ReservationID)
 }
 
 // inside reports whether a stay's car is in the lot: the only stays the pay

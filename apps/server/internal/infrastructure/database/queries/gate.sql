@@ -55,8 +55,8 @@ for update;
 -- Lot scoping is the caller's: stay_id must come from a lot-scoped FOR UPDATE
 -- lookup (GetStayForUpdate and friends, design §8.2); the insert does not
 -- re-check the lot. A succeeded or refunded payment needs succeeded_at.
-insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at)
-values (@kind, @stay_id, @method, @amount_cents, @status, @idempotency_key, sqlc.narg(device_id),
+insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, user_id, created_at, succeeded_at)
+values (@kind, @stay_id, @method, @amount_cents, @status, @idempotency_key, sqlc.narg(device_id), sqlc.narg(user_id),
         sqlc.arg(now)::timestamptz, sqlc.narg(succeeded_at))
 returning id;
 
@@ -214,6 +214,11 @@ where credential_kind = 'reservation' and status = 'entry_pending'
   and accepted_at < sqlc.arg(now)::timestamptz - interval '60 seconds'
 order by accepted_at
 limit 200;
+
+-- name: GetReservationUserID :one
+-- The owner of a reservation stay's reservation, read without a lock: the
+-- user never changes (M3B-27 attributes the stay's payments to it).
+select user_id from reservations where id = @id;
 
 -- name: GetStayForUpdateByID :one
 select * from stays where lot_id = @lot_id and id = @id for update;

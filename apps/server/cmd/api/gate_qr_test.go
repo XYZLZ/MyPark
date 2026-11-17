@@ -447,3 +447,252 @@ func TestGateQR_ReopenVoidedStayPhysicallyFull(t *testing.T) {
 	}
 	e.invariants()
 }
+
+// qrStay is a reservation stay inside the lot, with the devices that serve it.
+type qrStay struct {
+	e      *qrEnv
+	d      testsupport.Driver
+	id     string
+	qr     string
+	stay   uuid.UUID
+	ps, ex testsupport.TestDevice
+}
+
+// inside reserves, pays and checks a fresh driver in by the QR, and lets the
+// car pass the entry barrier at the clock's now.
+func (e *qrEnv) inside() *qrStay {
+	e.t.Helper()
+	s := e.booked()
+	s.stay = wantQROpen(e.t, e.present(s.qr))
+	if p := e.dev.pass(e.barrier, s.stay); p.Result != "ack" {
+		e.t.Fatalf("entry pass = %+v", p)
+	}
+	return s
+}
+
+// booked reserves and pays for a fresh driver and reads the QR token.
+func (e *qrEnv) booked() *qrStay {
+	e.t.Helper()
+	d := testsupport.SeedDrivers(e.t, e.db, 1)[0]
+	id, tok := e.reserve(d, arrivalInWindow), e.token(d)
+	if code, body, _ := e.pay(tok, id, "key-qr-pay-0001", goodCard()); code != http.StatusOK {
+		e.t.Fatalf("pay = %d %v", code, body)
+	}
+	rec := e.serve(jsonReq(http.MethodGet, "/v1/reservations/"+id+"/qr", nil), tok)
+	qr, _ := field(decodeBody(e.t, rec), "data.token").(string)
+	if qr == "" {
+		e.t.Fatalf("qr = %d %s", rec.Code, rec.Body)
+	}
+	return &qrStay{e: e, d: d, id: id, qr: qr,
+		ps: e.dev.device(authz.DevicePayStation), ex: e.dev.device(authz.DeviceExitBarrier)}
+}
+
+func qrCredential(token string) map[string]any {
+	return map[string]any{"credential": map[string]any{"kind": gate.KindReservationQR, "value": token}}
+}
+
+func (s *qrStay) scan(token string) payData {
+	s.e.t.Helper()
+	return payOf(s.e.t, s.e.dev.send(s.ps, s.e.dev.eventBody(uuid.New(), "paystation.scan", qrCredential(token))))
+}
+
+func (s *qrStay) cash(stay uuid.UUID, amount int64) payData {
+	s.e.t.Helper()
+	return payOf(s.e.t, s.e.dev.send(s.ps, s.e.dev.eventBody(uuid.New(), "paystation.cash_paid",
+		map[string]any{"stay_id": stay, "amount_cents": amount})))
+}
+
+func (s *qrStay) exitCred(token string) payData {
+	s.e.t.Helper()
+	return payOf(s.e.t, s.e.dev.send(s.ex, s.e.dev.eventBody(uuid.New(), "exit.credential_presented", qrCredential(token))))
+}
+
+func (s *qrStay) exitPass() passData {
+	s.e.t.Helper()
+	return passOf(s.e.t, s.e.dev.send(s.ex, s.e.dev.passBody(gate.DirectionExit, s.stay)))
+}
+
+// parkingUsers counts the parking_fee payments of the stay and how many of
+// them carry the reservation's user (M3B-27).
+func (s *qrStay) parkingUsers() (total, withUser int) {
+	s.e.t.Helper()
+	total = s.e.count(`select count(*) from payments p join stays st on st.id = p.stay_id
+	                   where st.public_id = $1 and p.kind = 'parking_fee'`, s.stay)
+	withUser = s.e.count(`select count(*) from payments p join stays st on st.id = p.stay_id
+	                      join reservations r on r.id = st.reservation_id
+	                      where st.public_id = $1 and p.kind = 'parking_fee' and p.user_id = r.user_id`, s.stay)
+	return total, withUser
+}
+
+func (s *qrStay) wantCompleted(at time.Time) {
+	s.e.t.Helper()
+	if n := s.e.count(`select count(*) from reservations where public_id = $1 and status = 'completed' and completed_at = $2`,
+		s.id, at); n != 1 {
+		s.e.t.Errorf("want the reservation completed at %s", at)
+	}
+}
+
+func TestGateQR_PayStationAndExit(t *testing.T) {
+	e := newQREnv(t)
+	s := e.inside()
+	// A newer tariff after the booking must not reprice the stay (M3B-25).
+	if _, err := e.db.Super.Exec(t.Context(),
+		`insert into tariff_versions (lot_id, effective_from, first_hour_cents, additional_hour_cents, exit_grace_min,
+		                              post_payment_exit_min, daily_cap_cents, lost_ticket_cents, reservation_fee_cents)
+		 select lot_id, '2026-11-30T00:00:00Z', 9000, 9000, exit_grace_min, post_payment_exit_min, 90000,
+		        lost_ticket_cents, reservation_fee_cents
+		 from tariff_versions where lot_id = $1 order by effective_from limit 1`, e.lotID); err != nil {
+		t.Fatal(err)
+	}
+	e.clk.Advance(2*time.Hour + 10*time.Minute)
+
+	got := s.scan(s.qr)
+	if got.Result != "ack" || got.StayID == nil || *got.StayID != s.stay || got.amount() != 10000 {
+		t.Fatalf("scan = %+v amount %d, want ack 10000 on the reservation's tariff", got, got.amount())
+	}
+	if due := s.exitCred(s.qr); due.Result != "deny" || due.Reason != "gate.payment_required" {
+		t.Fatalf("exit with a fee due = %+v, want deny gate.payment_required", due)
+	}
+	paid := s.cash(s.stay, 10000)
+	if paid.Result != "ack" || paid.ReceiptNo == "" {
+		t.Fatalf("cash = %+v, want ack with a receipt", paid)
+	}
+	if total, withUser := s.parkingUsers(); total != 1 || withUser != 1 {
+		t.Errorf("cash payments = %d, with the reservation's user = %d, want 1 and 1", total, withUser)
+	}
+	wantOpen(t, s.exitCred(s.qr), s.stay)
+	if p := s.exitPass(); p.Result != "ack" || p.Reason != "" {
+		t.Fatalf("exit pass = %+v, want ack", p)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'exited' and exited_at = $2`, s.stay, e.clk.Now()); n != 1 {
+		t.Error("want the stay exited at now")
+	}
+	s.wantCompleted(e.clk.Now())
+
+	// The driver's receipt names the reservation; another driver sees none.
+	rsv := &rsvEnv{lotEnv: e.lotEnv}
+	_, body := rsv.do(rsv.token(s.d), http.MethodGet, "/v1/payments", nil)
+	var cash map[string]any
+	for _, it := range body["data"].([]any) {
+		if m := it.(map[string]any); m["kind"] == "parking_fee" {
+			cash = m
+		}
+	}
+	if cash == nil || cash["method"] != "cash" || cash["reservation_id"] != s.id || cash["receipt_no"] != paid.ReceiptNo {
+		t.Errorf("parking receipt = %v, want the cash payment of reservation %s", cash, s.id)
+	}
+	other := testsupport.SeedDrivers(t, e.db, 1)[0]
+	if _, body := rsv.do(rsv.token(other), http.MethodGet, "/v1/payments", nil); len(body["data"].([]any)) != 0 {
+		t.Errorf("another driver's receipts = %v, want none", body["data"])
+	}
+	e.invariants()
+}
+
+func TestGateQR_ZeroFeeExitSetsUser(t *testing.T) {
+	e := newQREnv(t)
+	s := e.inside()
+	e.clk.Advance(5 * time.Minute)
+
+	wantOpen(t, s.exitCred(s.qr), s.stay)
+	if p := s.exitPass(); p.Result != "ack" {
+		t.Fatalf("exit pass = %+v, want ack", p)
+	}
+	if total, withUser := s.parkingUsers(); total != 1 || withUser != 1 {
+		t.Errorf("zero payments = %d, with the reservation's user = %d, want 1 and 1", total, withUser)
+	}
+	if n := e.count(`select count(*) from payments where method = 'none' and amount_cents = 0`); n != 1 {
+		t.Error("want one zero payment")
+	}
+	s.wantCompleted(e.clk.Now())
+	e.invariants()
+}
+
+// FR-PAY-7: the 150.00 reservation fee does not reduce the hourly charge.
+func TestGateQR_FeeNotCredited(t *testing.T) {
+	e := newQREnv(t)
+	s := e.inside()
+	e.clk.Advance(30 * time.Minute)
+	if got := s.scan(s.qr); got.amount() != 5000 {
+		t.Errorf("scan = %+v, want the full first hour 5000", got)
+	}
+	e.invariants()
+}
+
+// void, late entry pass, pay, exit: the reservation ends completed.
+func TestGateQR_LateEntryThenExitCompletes(t *testing.T) {
+	e := newQREnv(t)
+	s := e.booked()
+	s.stay = wantQROpen(t, e.present(s.qr))
+	e.clk.Advance(61 * time.Second)
+	if n := e.void(); n != 1 {
+		t.Fatalf("voided = %d, want 1", n)
+	}
+	if p := e.dev.pass(e.barrier, s.stay); p.Result != "ack" {
+		t.Fatalf("late entry pass = %+v, want ack", p)
+	}
+	e.clk.Advance(2*time.Hour + 10*time.Minute)
+
+	got := s.scan(s.qr)
+	if got.Result != "ack" || got.amount() != 10000 {
+		t.Fatalf("scan = %+v, want ack 10000", got)
+	}
+	if paid := s.cash(s.stay, 10000); paid.Result != "ack" {
+		t.Fatalf("cash = %+v", paid)
+	}
+	wantOpen(t, s.exitCred(s.qr), s.stay)
+	if p := s.exitPass(); p.Result != "ack" {
+		t.Fatalf("exit pass = %+v", p)
+	}
+	s.wantCompleted(e.clk.Now())
+	if total, withUser := s.parkingUsers(); total != 1 || withUser != 1 {
+		t.Errorf("parking payments = %d, with the user = %d, want 1 and 1", total, withUser)
+	}
+	e.invariants()
+}
+
+// The late pass of a cancelled reservation's stay: the car still leaves and
+// the reservation stays cancelled (Complete is a no-op).
+func TestGateQR_ExitAfterCancelledLatePass(t *testing.T) {
+	e := newQREnv(t)
+	s := e.booked()
+	s.stay = wantQROpen(t, e.present(s.qr))
+	e.clk.Advance(61 * time.Second)
+	if n := e.void(); n != 1 {
+		t.Fatalf("voided = %d, want 1", n)
+	}
+	rsv := &rsvEnv{lotEnv: e.lotEnv}
+	if code, body := rsv.post(rsv.token(s.d), "/v1/reservations/"+s.id+"/cancel", nil); code != http.StatusOK {
+		t.Fatalf("cancel = %d %v", code, body)
+	}
+	if p := e.dev.pass(e.barrier, s.stay); p.Result != "ack" {
+		t.Fatalf("late entry pass = %+v, want ack", p)
+	}
+	e.clk.Advance(5 * time.Minute)
+
+	wantOpen(t, s.exitCred(s.qr), s.stay)
+	if p := s.exitPass(); p.Result != "ack" || p.Reason != "" {
+		t.Fatalf("exit pass = %+v, want ack", p)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'exited'`, s.stay); n != 1 {
+		t.Error("want the stay exited")
+	}
+	if n := e.count(`select count(*) from reservations where public_id = $1 and status = 'cancelled' and completed_at is null`, s.id); n != 1 {
+		t.Error("want the reservation still cancelled")
+	}
+	e.invariants()
+}
+
+func TestGateQR_PayStationUnknownToken(t *testing.T) {
+	e := newQREnv(t)
+	s := e.inside()
+	forged := s.qr[:len(s.qr)-2] + "xx"
+	for name, tok := range map[string]string{"forged": forged, "garbage": "not-a-token"} {
+		if got := s.scan(tok); got.Result != "rejected" || got.Reason != "gate.credential_invalid" {
+			t.Errorf("%s scan = %+v, want rejected gate.credential_invalid", name, got)
+		}
+		if got := s.exitCred(tok); got.Result != "deny" || got.Reason != "gate.credential_invalid" {
+			t.Errorf("%s exit = %+v, want deny gate.credential_invalid", name, got)
+		}
+	}
+	e.invariants()
+}

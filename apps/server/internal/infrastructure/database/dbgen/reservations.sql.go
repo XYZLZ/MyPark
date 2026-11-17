@@ -61,6 +61,26 @@ func (q *Queries) CheckInReservation(ctx context.Context, arg CheckInReservation
 	return result.RowsAffected(), nil
 }
 
+const completeReservation = `-- name: CompleteReservation :execrows
+update reservations
+set status = 'completed', completed_at = $1, updated_at = $1
+where id = $2 and status = 'checked_in'
+`
+
+type CompleteReservationParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+// The exit pass of its stay (design 11.4): checked_in only.
+func (q *Queries) CompleteReservation(ctx context.Context, arg CompleteReservationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeReservation, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const confirmReservation = `-- name: ConfirmReservation :execrows
 update reservations
 set status = 'confirmed', confirmed_at = $1, qr_nonce = $2, updated_at = $1

@@ -122,6 +122,9 @@ type Repo interface {
 	// UndoCheckIn moves a checked_in reservation back to confirmed, clearing
 	// checked_in_at (M3B-60). Fenced on checked_in.
 	UndoCheckIn(ctx context.Context, id int64, now time.Time) error
+	// Complete moves a checked_in reservation to completed at now (the exit
+	// pass of its stay). Fenced on checked_in.
+	Complete(ctx context.Context, id int64, now time.Time) error
 }
 
 // Availability is the public availability the no-space-now check reads

@@ -100,6 +100,9 @@ type Repo interface {
 	// ReservationStayForUpdate locks the reservation's stay, or returns
 	// ErrNotFound.
 	ReservationStayForUpdate(ctx context.Context, lotID, reservationID int64) (Stay, error)
+	// ReservationUserID is the user who owns the reservation, read without a
+	// lock. The gate attributes a reservation stay's payments to it (M3B-27).
+	ReservationUserID(ctx context.Context, reservationID int64) (int64, error)
 	// ReopenReservationStay moves the locked voided reservation stay back to
 	// entry_pending accepted at now, keeping voided_at (M3B-24).
 	ReopenReservationStay(ctx context.Context, lotID, stayID int64, now time.Time) error
@@ -171,7 +174,9 @@ type Stay struct {
 // NewPayment is a succeeded payment of a stay (design §5.4). DeviceID is the
 // pay station.
 type NewPayment struct {
-	StayID         int64
+	StayID int64
+	// UserID is the reservation's user for a reservation stay, else 0 (M3B-27).
+	UserID         int64
 	Method         string
 	AmountCents    int64
 	IdempotencyKey string

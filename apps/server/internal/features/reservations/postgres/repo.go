@@ -441,6 +441,18 @@ func (r *Repo) CheckIn(ctx context.Context, id int64, now time.Time) error {
 	return nil
 }
 
+// Complete implements reservations.Repo.
+func (r *Repo) Complete(ctx context.Context, id int64, now time.Time) error {
+	n, err := r.q(ctx).CompleteReservation(ctx, dbgen.CompleteReservationParams{ID: id, Now: ts(now)})
+	if err != nil {
+		return fmt.Errorf("reservations: complete %d: %w", id, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("reservations: complete %d: not checked_in", id)
+	}
+	return nil
+}
+
 // UndoCheckIn implements reservations.Repo.
 func (r *Repo) UndoCheckIn(ctx context.Context, id int64, now time.Time) error {
 	n, err := r.q(ctx).UndoCheckIn(ctx, dbgen.UndoCheckInParams{ID: id, Now: ts(now)})

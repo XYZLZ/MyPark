@@ -192,5 +192,17 @@ func (g GateAccess) LateEntryPass(ctx context.Context, reservationID int64, now 
 	return true, g.s.repo.DecSlots(ctx, r.LotID, r.Window)
 }
 
-// Complete implements gate.Reservations (S6.3).
-func (GateAccess) Complete(context.Context, int64, time.Time) error { return errors.ErrUnsupported }
+// Complete implements gate.Reservations: the exit pass of the reservation's
+// stay completes a checked_in reservation. Called under the lot and stay
+// locks (design 8.1). Any other status (cancelled or expired while the car was
+// inside) is left alone.
+func (g GateAccess) Complete(ctx context.Context, reservationID int64, now time.Time) error {
+	r, err := g.s.repo.LockForApply(ctx, reservationID)
+	if err != nil {
+		return err
+	}
+	if _, err := Transition(r.Status, EvComplete); err != nil { // not checked_in
+		return nil
+	}
+	return g.s.repo.Complete(ctx, r.ID, now)
+}

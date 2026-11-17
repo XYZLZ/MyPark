@@ -214,6 +214,12 @@ update reservations
 set status = 'checked_in', checked_in_at = @now, updated_at = @now
 where id = @id and status = 'confirmed';
 
+-- name: CompleteReservation :execrows
+-- The exit pass of its stay (design 11.4): checked_in only.
+update reservations
+set status = 'completed', completed_at = @now, updated_at = @now
+where id = @id and status = 'checked_in';
+
 -- name: UndoCheckIn :execrows
 -- The void of its stay returns a checked-in reservation to confirmed (M3B-60).
 update reservations

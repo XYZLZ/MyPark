@@ -306,6 +306,19 @@ func (q *Queries) GetReservationStayForUpdate(ctx context.Context, arg GetReserv
 	return i, err
 }
 
+const getReservationUserID = `-- name: GetReservationUserID :one
+select user_id from reservations where id = $1
+`
+
+// The owner of a reservation stay's reservation, read without a lock: the
+// user never changes (M3B-27 attributes the stay's payments to it).
+func (q *Queries) GetReservationUserID(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, getReservationUserID, id)
+	var user_id int64
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const getStayByTicketHashForUpdate = `-- name: GetStayByTicketHashForUpdate :one
 select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at, reservation_id from stays where lot_id = $1 and ticket_code_hash = $2 for update
 `
@@ -444,9 +457,9 @@ func (q *Queries) InsertEmployeeCard(ctx context.Context, arg InsertEmployeeCard
 }
 
 const insertPayment = `-- name: InsertPayment :one
-insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at)
-values ($1, $2, $3, $4, $5, $6, $7,
-        $8::timestamptz, $9)
+insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, user_id, created_at, succeeded_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9::timestamptz, $10)
 returning id
 `
 
@@ -458,6 +471,7 @@ type InsertPaymentParams struct {
 	Status         string
 	IdempotencyKey string
 	DeviceID       pgtype.Int8
+	UserID         pgtype.Int8
 	Now            pgtype.Timestamptz
 	SucceededAt    pgtype.Timestamptz
 }
@@ -474,6 +488,7 @@ func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) (i
 		arg.Status,
 		arg.IdempotencyKey,
 		arg.DeviceID,
+		arg.UserID,
 		arg.Now,
 		arg.SucceededAt,
 	)
