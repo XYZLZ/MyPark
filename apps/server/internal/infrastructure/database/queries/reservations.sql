@@ -184,3 +184,11 @@ select r.public_id, r.status, r.qr_nonce,
        lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
 from reservations r
 where r.public_id = @public_id and r.user_id = @user_id;
+
+-- name: CancelReservation :execrows
+-- The driver cancel (design 7.8). A pending_payment reservation has no refund
+-- reason; a confirmed one records why the fee is or is not returned.
+update reservations
+set status = 'cancelled', cancelled_at = @now, cancelled_by = @cancelled_by,
+    refund_reason = sqlc.narg('refund_reason'), updated_at = @now
+where id = @id and status in ('pending_payment', 'confirmed');

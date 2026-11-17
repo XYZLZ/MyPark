@@ -99,6 +99,9 @@ type Repo interface {
 	// ExpireUnpaidLate moves a pending_payment reservation to expired_unpaid
 	// with the given refund reason (late success, design 9.4).
 	ExpireUnpaidLate(ctx context.Context, id int64, refundReason string, now time.Time) error
+	// Cancel moves a pending_payment or confirmed reservation to cancelled by
+	// the given actor; refundReason "" stores null. Fenced on those statuses.
+	Cancel(ctx context.Context, id int64, cancelledBy, refundReason string, now time.Time) error
 	// QRData reads what the QR token is built from; ErrNotFound when it is not the user's.
 	QRData(ctx context.Context, userID int64, id uuid.UUID) (QRData, error)
 	// LockLot takes the lot_occupancy row FOR UPDATE (first in the lock order).

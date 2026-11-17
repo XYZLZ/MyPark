@@ -1161,7 +1161,6 @@ paths:
         (`refund.status` is `pending`); at or after `arrival_at` it is
         cancelled with no refund. Cancelling an already cancelled reservation
         is a `200`. No body.
-      x-mypark-pending: S5.1
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       responses:

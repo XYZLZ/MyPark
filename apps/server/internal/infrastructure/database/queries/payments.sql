@@ -83,3 +83,12 @@ where id = @id and kind = 'reservation_fee' and status = 'pending' and created_a
 update payments
 set status = 'succeeded', succeeded_at = @now, provider_ref = @provider_ref, failed_at = null, failure_code = null
 where id = @id and kind = 'reservation_fee' and status = 'failed' and failure_code = 'not_submitted';
+
+-- name: GetLatestRefund :one
+-- The newest refund of a payment (the unique live index allows one pending or
+-- succeeded; a failed one may precede it).
+select id, public_id, payment_id, amount_cents, reason, status, succeeded_at
+from refunds
+where payment_id = @payment_id
+order by created_at desc, id desc
+limit 1;

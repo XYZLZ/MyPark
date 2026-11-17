@@ -2,11 +2,13 @@ package reservations
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"time"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/alerts"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
 )
@@ -30,12 +32,18 @@ func (s *Service) Apply(ctx context.Context, paymentID int64, res payments.Charg
 			return err
 		})
 	case payments.ChargeSucceeded:
-		return s.tx.InTx(ctx, func(ctx context.Context) error {
+		err := s.tx.InTx(ctx, func(ctx context.Context) error {
 			if err := s.repo.SetTxLimits(ctx); err != nil {
 				return err
 			}
 			return s.applySuccess(ctx, paymentID, res)
 		})
+		if errors.Is(err, payments.ErrSuccessAfterFinal) {
+			// The refused apply rolled back, so the alert goes in its own
+			// transaction. The error still reaches the caller.
+			s.alertDuplicateCharge(ctx, paymentID)
+		}
+		return err
 	}
 	return fmt.Errorf("reservations: apply payment %d: unknown outcome %d", paymentID, res.Outcome)
 }
@@ -153,7 +161,7 @@ func (s *Service) lateSuccess(ctx context.Context, rsv ApplyRow, fee payments.Fe
 	if err := s.finalizeAndRefund(ctx, fee, res, now); err != nil {
 		return err
 	}
-	return s.enqueueCancelled(ctx, rsv)
+	return s.enqueueCancelled(ctx, rsv, refundPending, payments.RefundFacilityUnavailable)
 }
 
 // expireUnpaid moves a pending_payment reservation to expired_unpaid and
@@ -168,9 +176,15 @@ func (s *Service) expireUnpaid(ctx context.Context, rsv ApplyRow, now time.Time)
 	return s.repo.DecSlots(ctx, rsv.LotID, rsv.Window)
 }
 
-func (s *Service) enqueueCancelled(ctx context.Context, rsv ApplyRow) error {
+// enqueueCancelled queues the reservation_cancelled email (design 12.6).
+// refundStatus is "pending" or "none"; reason is the refund reason that applies
+// (cancelled_before_arrival, none_after_arrival or facility_unavailable).
+func (s *Service) enqueueCancelled(ctx context.Context, rsv ApplyRow, refundStatus, reason string) error {
 	return s.enqueue(ctx, rsv, notifications.TplReservationCancelled, map[string]string{
-		"reason": payments.RefundFacilityUnavailable,
+		"reservation_id": rsv.PublicID.String(),
+		"refund_status":  refundStatus,
+		"refund_reason":  reason,
+		"fee_cents":      strconv.FormatInt(rsv.FeeCents, 10),
 	})
 }
 
@@ -248,5 +262,44 @@ func (s *Service) lateCharge(ctx context.Context, rsv ApplyRow, fee payments.Fee
 	if _, err = s.fees.QueueRefund(ctx, fee.ID, fee.AmountCents, payments.RefundFacilityUnavailable, now); err != nil || !expire {
 		return err
 	}
-	return s.enqueueCancelled(ctx, rsv)
+	return s.enqueueCancelled(ctx, rsv, refundPending, payments.RefundFacilityUnavailable)
+}
+
+// refundPending and refundNone are the refund_status values of the
+// reservation_cancelled email.
+const (
+	refundPending = "pending"
+	refundNone    = "none"
+)
+
+// alertDuplicateCharge opens an admin alert for a charge the gateway took that
+// no refund covers: a success meeting a payment that cannot become succeeded
+// (payments.ErrSuccessAfterFinal). The row holds public ids and a short reason
+// only. A failure here is logged, never returned: the caller already has the
+// loud error, and the alert must not hide it.
+func (s *Service) alertDuplicateCharge(ctx context.Context, paymentID int64) {
+	if s.alerts == nil {
+		return
+	}
+	err := s.tx.InTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SetTxLimits(ctx); err != nil {
+			return err
+		}
+		fee, err := s.fees.FeeByID(ctx, paymentID)
+		if err != nil {
+			return err
+		}
+		rsv, err := s.repo.ForApply(ctx, fee.ReservationID)
+		if err != nil {
+			return err
+		}
+		return s.alerts.Open(ctx, rsv.LotID, alerts.KindRefundFailed, map[string]string{
+			"reason":         "duplicate_charge",
+			"reservation_id": rsv.PublicID.String(),
+			"payment_id":     fee.PublicID.String(),
+		}, s.clock.Now())
+	})
+	if err != nil {
+		s.log.ErrorContext(ctx, "reservations: could not record the duplicate charge alert", "payment_id", paymentID, "err", err)
+	}
 }

@@ -237,3 +237,23 @@ func (r *Repo) MarkLateSuccess(ctx context.Context, paymentID int64, res payment
 	}
 	return n == 1, nil
 }
+
+// LatestRefund implements payments.Fees.
+func (r *Repo) LatestRefund(ctx context.Context, paymentID int64) (payments.Refund, bool, error) {
+	row, err := r.q(ctx).GetLatestRefund(ctx, paymentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return payments.Refund{}, false, nil
+	}
+	if err != nil {
+		return payments.Refund{}, false, fmt.Errorf("payments: latest refund: %w", err)
+	}
+	out := payments.Refund{
+		ID: row.ID, PublicID: row.PublicID, PaymentID: row.PaymentID, AmountCents: row.AmountCents,
+		Reason: row.Reason, Status: row.Status,
+	}
+	if row.SucceededAt.Valid {
+		t := row.SucceededAt.Time.UTC()
+		out.SucceededAt = &t
+	}
+	return out, true, nil
+}

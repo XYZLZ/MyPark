@@ -43,6 +43,8 @@ type Refund struct {
 	AmountCents int64
 	Reason      string
 	Status      string
+	// SucceededAt is set once the gateway returned the money.
+	SucceededAt *time.Time
 }
 
 // Fees is the storage port of reservation-fee payments. Every method runs on
@@ -80,6 +82,8 @@ type Fees interface {
 	LatestFee(ctx context.Context, reservationID int64) (FeePayment, bool, error)
 	// QueueRefund inserts a pending full refund of the payment.
 	QueueRefund(ctx context.Context, paymentID, amountCents int64, reason string, now time.Time) (Refund, error)
+	// LatestRefund is the newest refund of the payment, if any.
+	LatestRefund(ctx context.Context, paymentID int64) (Refund, bool, error)
 }
 
 // OutcomeApplier applies a gateway result to a payment and its reservation. The

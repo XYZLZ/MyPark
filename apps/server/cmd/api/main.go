@@ -26,6 +26,7 @@ import (
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/availability"
 	availabilitypg "github.com/XYZLZ/MyPark/apps/server/internal/features/availability/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
@@ -332,7 +333,7 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	}
 	reservations.NewHandler(reservations.NewService(reservations.Deps{
 		Tx: tx, Repo: reservationspg.NewRepo(d.pool), Tariffs: tariffSvc, Avail: availSvc, Clock: d.clock, Log: d.log,
-		Fees: paymentspg.NewRepo(d.pool), Gateway: gateway, Notify: notifier,
+		Fees: paymentspg.NewRepo(d.pool), Gateway: gateway, Notify: notifier, Alerts: alertspg.NewRecorder(),
 		QRKey: d.cfg.QRHMACKey(), ChargeTimeout: d.cfg.PaymentChargeTimeout(), Rand: rand.Reader,
 	}), validation.New(), d.log).Register(r)
 

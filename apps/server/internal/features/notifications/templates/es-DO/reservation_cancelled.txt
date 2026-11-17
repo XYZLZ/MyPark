@@ -1,0 +1,10 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+Tu reserva fue cancelada.
+{{if eq .refund_status "pending"}}
+{{if eq .refund_reason "facility_unavailable"}}No pudimos mantener tu espacio. {{end}}Estamos reembolsando el costo completo de la reserva a la tarjeta con la que pagaste. El banco puede tardar unos días en mostrarlo.
+{{else}}
+El costo de la reserva no es reembolsable una vez pasada la hora de llegada.
+{{end}}
+-- 
+{{template "brand"}}

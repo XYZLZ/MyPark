@@ -13,6 +13,7 @@ import (
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/alerts"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
@@ -33,6 +34,7 @@ type Deps struct {
 	Fees          payments.Fees
 	Gateway       payments.Gateway
 	Notify        notifications.Notifier
+	Alerts        alerts.Recorder // nil in tests that never meet a duplicate charge
 	QRKey         []byte        // signs QR tokens (QR_HMAC_KEY)
 	ChargeTimeout time.Duration // PAYMENT_CHARGE_TIMEOUT
 	Rand          io.Reader     // QR nonces; nil means crypto/rand
@@ -50,6 +52,7 @@ type Service struct {
 	fees          payments.Fees
 	gateway       payments.Gateway
 	notify        notifications.Notifier
+	alerts        alerts.Recorder
 	qrKey         []byte
 	chargeTimeout time.Duration
 	rand          io.Reader
@@ -62,7 +65,7 @@ func NewService(d Deps) *Service {
 	}
 	return &Service{
 		tx: d.Tx, repo: d.Repo, tariffs: d.Tariffs, avail: d.Avail, clock: d.Clock, log: d.Log,
-		fees: d.Fees, gateway: d.Gateway, notify: d.Notify, qrKey: d.QRKey, chargeTimeout: d.ChargeTimeout, rand: d.Rand,
+		fees: d.Fees, gateway: d.Gateway, notify: d.Notify, alerts: d.Alerts, qrKey: d.QRKey, chargeTimeout: d.ChargeTimeout, rand: d.Rand,
 	}
 }
 
@@ -115,6 +118,8 @@ type View struct {
 	// LatestPayment is the newest fee attempt, nil before the first one. It is
 	// filled by the read paths (Get, List, the pay answer), not by the repo.
 	LatestPayment *PaymentRef
+	// Refund is the newest refund of that payment, nil when none was queued.
+	Refund *RefundRef
 }
 
 // checked is the outcome of the checks the quote and the create share.
@@ -255,6 +260,15 @@ type PaymentRef struct {
 	FailureCode string // set when failed
 }
 
+// RefundRef is a refund as clients see it.
+type RefundRef struct {
+	ID          uuid.UUID
+	Status      string
+	AmountCents int64
+	Reason      string
+	SucceededAt *time.Time
+}
+
 // withLatestPayment fills v.LatestPayment inside the transaction of ctx. A
 // service built without a payments port leaves it nil.
 func (s *Service) withLatestPayment(ctx context.Context, reservationRowID int64, v *View) error {
@@ -266,5 +280,14 @@ func (s *Service) withLatestPayment(ctx context.Context, reservationRowID int64,
 		return err
 	}
 	v.LatestPayment = &PaymentRef{ID: fee.PublicID, Status: fee.Status, FailureCode: fee.FailureCode}
+	// Only a charge that went through can have been refunded.
+	if fee.Status != payments.StatusSucceeded && fee.Status != payments.StatusRefunded {
+		return nil
+	}
+	rf, found, err := s.fees.LatestRefund(ctx, fee.ID)
+	if err != nil || !found {
+		return err
+	}
+	v.Refund = &RefundRef{ID: rf.PublicID, Status: rf.Status, AmountCents: rf.AmountCents, Reason: rf.Reason, SucceededAt: rf.SucceededAt}
 	return nil
 }

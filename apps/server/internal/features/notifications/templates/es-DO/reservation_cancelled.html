@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="es-DO">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#ffffff;font:16px/1.5 Arial,Helvetica,sans-serif;color:#111827">
+{{template "brand_header"}}
+<div style="padding:24px">
+<p>Hola{{with .first_name}} {{.}}{{end}},</p>
+<p>Tu reserva fue cancelada.</p>
+{{if eq .refund_status "pending"}}<p>{{if eq .refund_reason "facility_unavailable"}}No pudimos mantener tu espacio. {{end}}Estamos reembolsando el costo completo de la reserva a la tarjeta con la que pagaste. El banco puede tardar unos días en mostrarlo.</p>
+{{else}}<p>El costo de la reserva no es reembolsable una vez pasada la hora de llegada.</p>
+{{end}}{{template "brand_footer"}}
+</div>
+</body>
+</html>

@@ -385,3 +385,18 @@ func (r *Repo) UserContact(ctx context.Context, userID int64) (reservations.Cont
 	}
 	return reservations.Contact{Email: u.Email, Locale: u.Locale}, nil
 }
+
+// Cancel implements reservations.Repo.
+func (r *Repo) Cancel(ctx context.Context, id int64, cancelledBy, refundReason string, now time.Time) error {
+	n, err := r.q(ctx).CancelReservation(ctx, dbgen.CancelReservationParams{
+		ID: id, CancelledBy: pgtype.Text{String: cancelledBy, Valid: true}, Now: ts(now),
+		RefundReason: pgtype.Text{String: refundReason, Valid: refundReason != ""},
+	})
+	if err != nil {
+		return fmt.Errorf("reservations: cancel %d: %w", id, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("reservations: cancel %d: not pending_payment or confirmed", id)
+	}
+	return nil
+}

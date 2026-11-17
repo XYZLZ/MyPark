@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
@@ -203,7 +204,7 @@ func newReconciler(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock,
 		Gateway: paymentsim.New(pool, paymentsim.Config{Clock: clk}),
 		Outcomes: reservations.NewService(reservations.Deps{
 			Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
-			Fees: fees, Notify: notificationspg.NewNotifier(clk),
+			Fees: fees, Notify: notificationspg.NewNotifier(clk), Alerts: alertspg.NewRecorder(),
 			QRKey: cfg.QRHMACKey(), ChargeTimeout: cfg.PaymentChargeTimeout(), Rand: rand.Reader,
 		}),
 		ChargeTimeout: cfg.PaymentChargeTimeout(),

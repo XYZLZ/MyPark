@@ -15,6 +15,11 @@ const (
 // Refund reasons stored on refunds and reservations.
 const (
 	RefundFacilityUnavailable = "facility_unavailable"
+	RefundCancelledBeforeArrival = "cancelled_before_arrival"
+
+	// ReasonNoneAfterArrival is the reservation refund_reason of a cancel at or
+	// after arrival: no refund row exists for it.
+	ReasonNoneAfterArrival = "none_after_arrival"
 )
 
 // GatewayKey is the gateway idempotency key of a fee payment (M3B-9).

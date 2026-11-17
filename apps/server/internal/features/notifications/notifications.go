@@ -15,8 +15,7 @@ const (
 	TplAccountExists   Template = "account_exists"
 	TplAdminInvite     Template = "admin_invite"
 
-	// Reservation templates. TplReservationConfirmed is rendered; TplReservationCancelled
-	// gets its files and its allNames entry with S5.1.
+	// Reservation templates.
 	TplReservationConfirmed Template = "reservation_confirmed"
 	TplReservationCancelled Template = "reservation_cancelled"
 )

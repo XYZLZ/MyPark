@@ -199,6 +199,41 @@ func (q *Queries) GetLatestFee(ctx context.Context, reservationID pgtype.Int8) (
 	return i, err
 }
 
+const getLatestRefund = `-- name: GetLatestRefund :one
+select id, public_id, payment_id, amount_cents, reason, status, succeeded_at
+from refunds
+where payment_id = $1
+order by created_at desc, id desc
+limit 1
+`
+
+type GetLatestRefundRow struct {
+	ID          int64
+	PublicID    uuid.UUID
+	PaymentID   int64
+	AmountCents int64
+	Reason      string
+	Status      string
+	SucceededAt pgtype.Timestamptz
+}
+
+// The newest refund of a payment (the unique live index allows one pending or
+// succeeded; a failed one may precede it).
+func (q *Queries) GetLatestRefund(ctx context.Context, paymentID int64) (GetLatestRefundRow, error) {
+	row := q.db.QueryRow(ctx, getLatestRefund, paymentID)
+	var i GetLatestRefundRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.PaymentID,
+		&i.AmountCents,
+		&i.Reason,
+		&i.Status,
+		&i.SucceededAt,
+	)
+	return i, err
+}
+
 const getLiveFee = `-- name: GetLiveFee :one
 select id, public_id, status, coalesce(failure_code, '')::text as failure_code, idempotency_key, reservation_id, amount_cents
 from payments

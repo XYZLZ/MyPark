@@ -12,6 +12,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelReservation = `-- name: CancelReservation :execrows
+update reservations
+set status = 'cancelled', cancelled_at = $1, cancelled_by = $2,
+    refund_reason = $3, updated_at = $1
+where id = $4 and status in ('pending_payment', 'confirmed')
+`
+
+type CancelReservationParams struct {
+	Now          pgtype.Timestamptz
+	CancelledBy  pgtype.Text
+	RefundReason pgtype.Text
+	ID           int64
+}
+
+// The driver cancel (design 7.8). A pending_payment reservation has no refund
+// reason; a confirmed one records why the fee is or is not returned.
+func (q *Queries) CancelReservation(ctx context.Context, arg CancelReservationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelReservation,
+		arg.Now,
+		arg.CancelledBy,
+		arg.RefundReason,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const confirmReservation = `-- name: ConfirmReservation :execrows
 update reservations
 set status = 'confirmed', confirmed_at = $1, qr_nonce = $2, updated_at = $1

@@ -42,6 +42,8 @@ func (h *Handler) Register(r *router.Router) {
 		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.changeVehicle)
 	r.Handle("POST /v1/reservations/{id}/pay",
 		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationPayUser}, h.pay)
+	r.Handle("POST /v1/reservations/{id}/cancel",
+		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.cancel)
 	r.Handle("GET /v1/reservations/{id}/qr", router.Policy{Roles: router.DriverOnly}, h.qr)
 }
 
@@ -112,7 +114,7 @@ type reservationDTO struct {
 	CompletedAt   *time.Time            `json:"completed_at"`
 	ExpiredAt     *time.Time            `json:"expired_at"`
 	LatestPayment *latestPaymentDTO     `json:"latest_payment"`
-	Refund        any                   `json:"refund"`
+	Refund        *refundDTO            `json:"refund"`
 	Stay          any                   `json:"stay"`
 }
 
@@ -136,6 +138,7 @@ func toReservationDTO(v View) reservationDTO {
 		ConfirmedAt: utcPtr(v.ConfirmedAt), CancelledAt: utcPtr(v.CancelledAt), CancelledBy: v.CancelledBy,
 		RefundReason: v.RefundReason, CheckedInAt: utcPtr(v.CheckedInAt), CompletedAt: utcPtr(v.CompletedAt),
 		ExpiredAt: utcPtr(v.ExpiredAt), LatestPayment: toLatestPaymentDTO(v.LatestPayment),
+		Refund: toRefundDTO(v.Refund),
 	}
 }
 
@@ -280,4 +283,34 @@ func toLatestPaymentDTO(p *PaymentRef) *latestPaymentDTO {
 		out.FailureCode = &p.FailureCode
 	}
 	return out
+}
+
+type refundDTO struct {
+	ID          string     `json:"id"`
+	Status      string     `json:"status"`
+	AmountCents int64      `json:"amount_cents"`
+	Reason      string     `json:"reason"`
+	SucceededAt *time.Time `json:"succeeded_at"`
+}
+
+func toRefundDTO(r *RefundRef) *refundDTO {
+	if r == nil {
+		return nil
+	}
+	return &refundDTO{
+		ID: r.ID.String(), Status: r.Status, AmountCents: r.AmountCents, Reason: r.Reason, SucceededAt: utcPtr(r.SucceededAt),
+	}
+}
+
+func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.userID(w, r)
+	if !ok {
+		return
+	}
+	v, err := h.svc.Cancel(r.Context(), uid, idOrNil(r.PathValue("id")))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.OK(w, r, http.StatusOK, toReservationDTO(v))
 }
