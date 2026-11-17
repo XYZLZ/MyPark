@@ -867,6 +867,383 @@ paths:
         "404": { $ref: "#/components/responses/LotNotFound" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /v1/reservations/quote:
+    post:
+      operationId: quoteReservation
+      summary: Quote a reservation without creating it
+      description: >-
+        Runs the create checks read-only. `arrival_at` is accepted in any UTC
+        offset or fraction and echoed normalized to the next 5-minute UTC
+        boundary. The capacity answer comes from an unlocked read, so a quote
+        can succeed and the create can still answer `reservation.capacity_reached`.
+      x-mypark-pending: S3.2
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuoteRequest" }
+      responses:
+        "200":
+          description: The quote.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Quote" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/LotOrVehicleNotFound" }
+        "409": { $ref: "#/components/responses/ReservationRefused" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ReservationArrivalInvalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/reservations:
+    post:
+      operationId: createReservation
+      summary: Reserve a space
+      description: >-
+        Creates a `pending_payment` reservation and holds a space for the
+        window around the arrival. The driver has one active (`pending_payment`
+        or `confirmed`) reservation at a time. Pay it with `payReservation`
+        before `payment_due_at`.
+      x-mypark-pending: S3.2
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateReservationRequest" }
+      responses:
+        "201":
+          description: The created reservation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Reservation" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/LotOrVehicleNotFound" }
+        "409": { $ref: "#/components/responses/ReservationRefused" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ReservationArrivalInvalid" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      operationId: listReservations
+      summary: List the current driver's reservations
+      description: Newest arrival first, keyset-paginated. `scope=active` is `pending_payment`, `confirmed` and `checked_in`; `scope=past` is the rest.
+      x-mypark-pending: S3.3
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: scope, in: query, required: false, schema: { type: string, enum: [active, past], default: active } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, required: false, description: Opaque cursor from `meta.page.next_cursor`., schema: { type: string } }
+      responses:
+        "200":
+          description: A page of reservations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReservationList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/reservations/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ReservationId"
+    get:
+      operationId: getReservation
+      summary: Get one of the current driver's reservations
+      x-mypark-pending: S3.3
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/ReservationOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/ReservationNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      operationId: changeReservationVehicle
+      summary: Change the vehicle of a confirmed reservation
+      description: >-
+        Only a `confirmed` reservation, and only before `arrival_at`. Fee,
+        window and QR are unchanged. The same vehicle is a no-op `200`.
+      x-mypark-pending: S3.3
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangeVehicleRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/ReservationOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404":
+          description: The reservation or the new vehicle does not exist, or is not the driver's.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                reservationNotFound:
+                  value: { error: { code: reservation.not_found, message: reservation not found, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+                vehicleNotFound:
+                  value: { error: { code: vehicle.not_found, message: vehicle not found, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+        "409":
+          description: The reservation is not `confirmed`, or the arrival time has passed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                invalidState:
+                  value: { error: { code: reservation.invalid_state, message: invalid reservation state, details: { status: pending_payment } }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+                vehicleChangeClosed:
+                  value: { error: { code: reservation.vehicle_change_closed, message: vehicle change closed, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/reservations/{id}/pay:
+    parameters:
+      - $ref: "#/components/parameters/ReservationId"
+    post:
+      operationId: payReservation
+      summary: Pay the reservation fee with a card
+      description: >-
+        Charges the reservation fee on the simulated gateway. The call is
+        idempotent per reservation and `Idempotency-Key`: a replay returns the
+        stored answer with `Idempotent-Replayed: true`, the same key with
+        another card is `409 idempotency.key_reused`, and one key may be used
+        on two different reservations. Spaces and hyphens in `card_number` are
+        ignored. Test cards: `4242 4242 4242 4242` succeeds, `4000 0000 0000 0002`
+        is declined (`card_declined`), `4000 0000 0000 9995` succeeds but answers
+        after the gateway deadline, so the call returns `202` and the
+        reservation is confirmed shortly after (poll `getReservation`); any
+        other Luhn-valid number is declined (`card_not_supported`). Card data
+        is never echoed, logged or stored beyond brand and last four.
+      x-mypark-pending: S4.2
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Client-generated key, one per pay attempt.
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayRequest" }
+      responses:
+        "200":
+          description: The charge succeeded (or replays a succeeded attempt). The reservation is `confirmed`.
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Reservation" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "202":
+          description: The gateway did not answer in time. The charge is `pending`; poll `getReservation`.
+          headers:
+            Retry-After:
+              description: Seconds to wait before polling again.
+              schema: { type: integer, examples: [2] }
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/PayPending" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: The charge was declined (or replays a failed attempt).
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: payment.declined
+                  message: payment declined
+                  details: { payment_id: 0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b, failure_code: card_declined }
+                meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/ReservationNotFound" }
+        "409":
+          description: Another attempt is pending, the reservation cannot be paid, its payment time ran out, or the key was used with another card.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                inProgress:
+                  value: { error: { code: payment.in_progress, message: payment in progress, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+                invalidState:
+                  value: { error: { code: reservation.invalid_state, message: invalid reservation state, details: { status: confirmed } }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+                paymentExpired:
+                  value: { error: { code: reservation.payment_expired, message: payment expired, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+                keyReused:
+                  value: { error: { code: idempotency.key_reused, message: idempotency key reused, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/reservations/{id}/qr:
+    parameters:
+      - $ref: "#/components/parameters/ReservationId"
+    get:
+      operationId: getReservationQr
+      summary: Get the entry QR token of a reservation
+      description: Available for `confirmed` and `checked_in` reservations. The token is secret and is never logged.
+      x-mypark-pending: S4.2
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The QR token.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/ReservationQr" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/ReservationNotFound" }
+        "409":
+          description: The reservation is not `confirmed` or `checked_in`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example: { error: { code: reservation.invalid_state, message: invalid reservation state, details: { status: pending_payment } }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/reservations/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ReservationId"
+    post:
+      operationId: cancelReservation
+      summary: Cancel a reservation
+      description: >-
+        A `pending_payment` reservation is cancelled with no refund. A
+        `confirmed` one before `arrival_at` is cancelled with a full refund
+        (`refund.status` is `pending`); at or after `arrival_at` it is
+        cancelled with no refund. Cancelling an already cancelled reservation
+        is a `200`. No body.
+      x-mypark-pending: S5.1
+      tags: [reservations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/ReservationOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404": { $ref: "#/components/responses/ReservationNotFound" }
+        "409":
+          description: A payment attempt is pending, or the reservation cannot be cancelled in its state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                inProgress:
+                  value: { error: { code: payment.in_progress, message: payment in progress, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+                invalidState:
+                  value: { error: { code: reservation.invalid_state, message: invalid reservation state, details: { status: checked_in } }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/payments:
+    get:
+      operationId: listPayments
+      summary: List the current driver's payments and receipts
+      description: Newest first, keyset-paginated.
+      x-mypark-pending: S5.3
+      tags: [payments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, required: false, description: Opaque cursor from `meta.page.next_cursor`., schema: { type: string } }
+      responses:
+        "200":
+          description: A page of payments.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReceiptList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /v1/payments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Payment id. A malformed, unknown or another driver's id is answered 404 payment.not_found.
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPayment
+      summary: Get one of the current driver's payments
+      x-mypark-pending: S5.3
+      tags: [payments]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The payment.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Receipt" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenLegal" }
+        "404":
+          description: The payment does not exist, is not the driver's, or the id is malformed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example: { error: { code: payment.not_found, message: payment not found, details: {} }, meta: { request_id: 01HZX3V8Q2W9K7M4N5P6R7S8T9 } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /v1/admin/admins:
     get:
       operationId: listAdmins

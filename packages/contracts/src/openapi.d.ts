@@ -457,6 +457,183 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/reservations/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quote a reservation without creating it
+         * @description Runs the create checks read-only. `arrival_at` is accepted in any UTC offset or fraction and echoed normalized to the next 5-minute UTC boundary. The capacity answer comes from an unlocked read, so a quote can succeed and the create can still answer `reservation.capacity_reached`.
+         */
+        post: operations["quoteReservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/reservations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current driver's reservations
+         * @description Newest arrival first, keyset-paginated. `scope=active` is `pending_payment`, `confirmed` and `checked_in`; `scope=past` is the rest.
+         */
+        get: operations["listReservations"];
+        put?: never;
+        /**
+         * Reserve a space
+         * @description Creates a `pending_payment` reservation and holds a space for the window around the arrival. The driver has one active (`pending_payment` or `confirmed`) reservation at a time. Pay it with `payReservation` before `payment_due_at`.
+         */
+        post: operations["createReservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/reservations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        /** Get one of the current driver's reservations */
+        get: operations["getReservation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change the vehicle of a confirmed reservation
+         * @description Only a `confirmed` reservation, and only before `arrival_at`. Fee, window and QR are unchanged. The same vehicle is a no-op `200`.
+         */
+        patch: operations["changeReservationVehicle"];
+        trace?: never;
+    };
+    "/v1/reservations/{id}/pay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pay the reservation fee with a card
+         * @description Charges the reservation fee on the simulated gateway. The call is idempotent per reservation and `Idempotency-Key`: a replay returns the stored answer with `Idempotent-Replayed: true`, the same key with another card is `409 idempotency.key_reused`, and one key may be used on two different reservations. Spaces and hyphens in `card_number` are ignored. Test cards: `4242 4242 4242 4242` succeeds, `4000 0000 0000 0002` is declined (`card_declined`), `4000 0000 0000 9995` succeeds but answers after the gateway deadline, so the call returns `202` and the reservation is confirmed shortly after (poll `getReservation`); any other Luhn-valid number is declined (`card_not_supported`). Card data is never echoed, logged or stored beyond brand and last four.
+         */
+        post: operations["payReservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/reservations/{id}/qr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get the entry QR token of a reservation
+         * @description Available for `confirmed` and `checked_in` reservations. The token is secret and is never logged.
+         */
+        get: operations["getReservationQr"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/reservations/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a reservation
+         * @description A `pending_payment` reservation is cancelled with no refund. A `confirmed` one before `arrival_at` is cancelled with a full refund (`refund.status` is `pending`); at or after `arrival_at` it is cancelled with no refund. Cancelling an already cancelled reservation is a `200`. No body.
+         */
+        post: operations["cancelReservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/payments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current driver's payments and receipts
+         * @description Newest first, keyset-paginated.
+         */
+        get: operations["listPayments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/payments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Payment id. A malformed, unknown or another driver's id is answered 404 payment.not_found. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get one of the current driver's payments */
+        get: operations["getPayment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/admins": {
         parameters: {
             query?: never;
@@ -2715,6 +2892,431 @@ export interface operations {
                 };
             };
             404: components["responses"]["LotNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    quoteReservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description The quote. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Quote"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            404: components["responses"]["LotOrVehicleNotFound"];
+            409: components["responses"]["ReservationRefused"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ReservationArrivalInvalid"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listReservations: {
+        parameters: {
+            query?: {
+                scope?: "active" | "past";
+                limit?: number;
+                /** @description Opaque cursor from `meta.page.next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of reservations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReservationList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createReservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReservationRequest"];
+            };
+        };
+        responses: {
+            /** @description The created reservation. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Reservation"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            404: components["responses"]["LotOrVehicleNotFound"];
+            409: components["responses"]["ReservationRefused"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ReservationArrivalInvalid"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getReservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ReservationOk"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            404: components["responses"]["ReservationNotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    changeReservationVehicle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeVehicleRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["ReservationOk"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            /** @description The reservation or the new vehicle does not exist, or is not the driver's. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The reservation is not `confirmed`, or the arrival time has passed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    payReservation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-generated key, one per pay attempt. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayRequest"];
+            };
+        };
+        responses: {
+            /** @description The charge succeeded (or replays a succeeded attempt). The reservation is `confirmed`. */
+            200: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Reservation"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            /** @description The gateway did not answer in time. The charge is `pending`; poll `getReservation`. */
+            202: {
+                headers: {
+                    /** @description Seconds to wait before polling again. */
+                    "Retry-After"?: number;
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PayPending"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description The charge was declined (or replays a failed attempt). */
+            402: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "payment.declined",
+                     *         "message": "payment declined",
+                     *         "details": {
+                     *           "payment_id": "0191a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b",
+                     *           "failure_code": "card_declined"
+                     *         }
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: components["responses"]["ForbiddenLegal"];
+            404: components["responses"]["ReservationNotFound"];
+            /** @description Another attempt is pending, the reservation cannot be paid, its payment time ran out, or the key was used with another card. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getReservationQr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The QR token. */
+            200: {
+                headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ReservationQr"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            404: components["responses"]["ReservationNotFound"];
+            /** @description The reservation is not `confirmed` or `checked_in`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "reservation.invalid_state",
+                     *         "message": "invalid reservation state",
+                     *         "details": {
+                     *           "status": "pending_payment"
+                     *         }
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    cancelReservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reservation id. A malformed, unknown or another driver's id is answered 404 reservation.not_found. */
+                id: components["parameters"]["ReservationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ReservationOk"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            404: components["responses"]["ReservationNotFound"];
+            /** @description A payment attempt is pending, or the reservation cannot be cancelled in its state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPayments: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Opaque cursor from `meta.page.next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of payments. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceiptList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getPayment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Payment id. A malformed, unknown or another driver's id is answered 404 payment.not_found. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The payment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Receipt"];
+                        meta: components["schemas"]["Meta"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ForbiddenLegal"];
+            /** @description The payment does not exist, is not the driver's, or the id is malformed. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "payment.not_found",
+                     *         "message": "payment not found",
+                     *         "details": {}
+                     *       },
+                     *       "meta": {
+                     *         "request_id": "01HZX3V8Q2W9K7M4N5P6R7S8T9"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

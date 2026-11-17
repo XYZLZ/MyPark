@@ -189,11 +189,20 @@ func TestOpenAPI_PostDeviceEventSecurity(t *testing.T) {
 	}
 }
 
+// m3PendingAllowlist holds the M3 slices that still owe a served operation.
+// TestOpenAPI_NoPendingOperations skips them, so the M3 contract can ship in S1
+// ahead of its handlers; each serving task removes its marker from openapi.yaml
+// and S9.1 deletes this list, which makes the test strict again.
+var m3PendingAllowlist = map[string]bool{"S3.2": true, "S3.3": true, "S4.2": true, "S5.1": true, "S5.3": true}
+
 // Every operation of the contract is served: contract-first markers
 // (x-mypark-pending) are removed by the slice that serves the operation, and
 // none may remain at the end of M2. A failure names the slice left behind.
 func TestOpenAPI_NoPendingOperations(t *testing.T) {
 	for key, op := range loadOperations(t) {
+		if m3PendingAllowlist[op.pending] {
+			continue
+		}
 		if op.pending != "" {
 			t.Errorf("%s still carries x-mypark-pending %q: slice %s did not remove it", key, op.pending, op.pending)
 		}
