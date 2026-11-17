@@ -402,3 +402,74 @@ func TestGateQR_VoidLockTimeout(t *testing.T) {
 	}
 	e.invariants()
 }
+
+// hookRepo runs hook, once, just before the voider's first lot lock.
+type hookRepo struct {
+	gate.Repo
+	once sync.Once
+	hook func()
+}
+
+func (r *hookRepo) LockLotOccupancy(ctx context.Context, lotID int64) (gate.LotOccupancy, error) {
+	r.once.Do(r.hook)
+	return r.Repo.LockLotOccupancy(ctx, lotID)
+}
+
+// The voider restores the hold before it can lock the stay (design 8.1), so
+// a stay passed or re-opened in between must roll that restore back: never a
+// confirmed reservation holding slots next to an open stay. Deterministic:
+// the change commits on another connection right before the lot lock.
+func TestGateQR_VoidSkipRollsBack(t *testing.T) {
+	for _, tc := range []struct{ name, change string }{
+		{"pass first", `with s as (update stays set status = 'active', entered_at = $2, updated_at = $2 where public_id = $1 returning lot_id)
+		                update lot_occupancy o set occupied = occupied + 1 from s where o.lot_id = s.lot_id`},
+		{"re-present first", `update stays set accepted_at = $2, updated_at = $2 where public_id = $1`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newQREnv(t)
+			id, _, stay := e.stranded()
+			var checkedIn time.Time
+			if err := e.db.App.QueryRow(t.Context(), `select checked_in_at from reservations where public_id = $1`, id).Scan(&checkedIn); err != nil {
+				t.Fatal(err)
+			}
+			held := e.count(`select coalesce(sum(held), 0) from reservation_slot_loads where lot_id = $1`, e.lotID)
+			before := e.version()
+			conn, err := e.db.Super.Acquire(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Release()
+			if _, err := conn.Exec(t.Context(), `listen lot_changed`); err != nil {
+				t.Fatal(err)
+			}
+			v := newReservationVoider(e.db.App, e.clk, slogOf(e.logs))
+			v.Repo = &hookRepo{Repo: v.Repo, hook: func() {
+				if _, err := e.db.Super.Exec(t.Context(), tc.change, stay, e.clk.Now()); err != nil {
+					t.Errorf("concurrent change: %v", err)
+				}
+			}}
+
+			if n, err := v.Run(t.Context(), e.db.App, e.clk.Now()); err != nil || n != 0 {
+				t.Errorf("Run = %d, %v; want 0 voided", n, err)
+			}
+			if n := e.count(`select count(*) from reservations where public_id = $1 and status = 'checked_in' and checked_in_at = $2`, id, checkedIn); n != 1 {
+				t.Error("want the reservation still checked_in, checked_in_at unchanged")
+			}
+			if h := e.count(`select coalesce(sum(held), 0) from reservation_slot_loads where lot_id = $1`, e.lotID); h != held {
+				t.Errorf("held = %d, want %d unchanged", h, held)
+			}
+			if v := e.version(); v != before {
+				t.Errorf("version = %d, want %d unchanged", v, before)
+			}
+			if _, err := e.db.Super.Exec(t.Context(), `select pg_notify('lot_changed', 'sentinel')`); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			if got, err := conn.Conn().WaitForNotification(ctx); err != nil || got.Payload != "sentinel" {
+				t.Errorf("first notification = %v, %v; want the sentinel (no lot_changed)", got, err)
+			}
+			e.invariants()
+		})
+	}
+}
