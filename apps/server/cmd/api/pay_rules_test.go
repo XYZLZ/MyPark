@@ -130,3 +130,30 @@ func with(m map[string]any, k string, v any) map[string]any {
 	out[k] = v
 	return out
 }
+
+// Review Focus 2: hyphens are stripped like spaces, and a wrong JSON type is
+// the project-wide 400 http.invalid_json without echoing the value.
+func TestPay_HyphenPANAndWrongJSONType(t *testing.T) {
+	e := newFeeEnv(t)
+	ds := testsupport.SeedDrivers(t, e.db, 2)
+	id := e.reserve(ds[0], arrival1502)
+	if code, body, _ := e.pay(e.token(ds[0]), id, "key-hyphen-01", cardWith("4242-4242-4242-4242")); code != http.StatusOK {
+		t.Fatalf("hyphenated PAN = %d %v, want 200", code, body)
+	}
+
+	id2 := e.reserve(ds[1], arrival1502)
+	rec := e.payReq(e.token(ds[1]), id2, "key-string-01", with(goodCard(), "exp_year", "2028"))
+	body := decodeBody(t, rec)
+	if rec.Code != http.StatusBadRequest || errCode(body) != "http.invalid_json" {
+		t.Fatalf("string exp_year = %d %v, want 400 http.invalid_json", rec.Code, body)
+	}
+	if d, _ := field(body, "error.details").(map[string]any); len(d) != 0 {
+		t.Errorf("details = %v, want none", d)
+	}
+	if strings.Contains(rec.Body.String(), "2028") || strings.Contains(rec.Body.String(), "4242") {
+		t.Error("the 400 body echoes request values")
+	}
+	if e.gw.charges.Load() != 1 {
+		t.Errorf("gateway charges = %d, want 1", e.gw.charges.Load())
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -169,3 +170,49 @@ func TestApply_DeclineFailsThePaymentOnly(t *testing.T) {
 }
 
 func slogOf(w *testsupport.SyncBuffer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
+
+// F2: a success that meets an already succeeded payment is a quiet no-op; one
+// that meets a failed payment is loud (error log, public ids only) and returns
+// payments.ErrSuccessAfterFinal.
+func TestApply_SuccessMeetingAFinalPayment(t *testing.T) {
+	t.Run("already succeeded is quiet", func(t *testing.T) {
+		e := newFeeEnv(t)
+		f := e.pendingAttempt(arrival1502)
+		for range 2 {
+			if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+				t.Fatalf("apply = %v, want nil", err)
+			}
+		}
+		if strings.Contains(e.logs.String(), "level=ERROR") {
+			t.Errorf("a repeated success logged an error: %s", e.logs.String())
+		}
+		if n := e.count(`select count(*) from refunds`); n != 0 {
+			t.Errorf("refunds = %d, want 0", n)
+		}
+		if got := e.status(f.rsvID); got != "confirmed" {
+			t.Errorf("status = %s, want confirmed", got)
+		}
+	})
+	t.Run("already failed is loud", func(t *testing.T) {
+		e := newFeeEnv(t)
+		f := e.pendingAttempt(arrival1502)
+		declined := payments.ChargeResult{Outcome: payments.ChargeDeclined, DeclineCode: "card_declined"}
+		if err := f.svc.Apply(t.Context(), f.paymentID, declined); err != nil {
+			t.Fatal(err)
+		}
+		err := f.svc.Apply(t.Context(), f.paymentID, succeeded)
+		if !errors.Is(err, payments.ErrSuccessAfterFinal) {
+			t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+		}
+		logs := e.logs.String()
+		if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, f.rsvID) {
+			t.Errorf("want an error log naming the reservation, got %q", logs)
+		}
+		if strings.Contains(logs, "sim_ch_TESTREF") {
+			t.Error("the log must not carry the provider ref")
+		}
+		if got := e.status(f.rsvID); got != "pending_payment" {
+			t.Errorf("status = %s, want pending_payment (unchanged)", got)
+		}
+	})
+}

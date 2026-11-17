@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -135,4 +136,74 @@ func bodyOf(rec *httptest.ResponseRecorder) map[string]any {
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return out
+}
+
+// F1: a charge that succeeds after the hold window closed, on the leader's own
+// request, is 409 invalid_state with the status (design 7.6), and so is its replay.
+func TestPay_LateSuccessOnTheLeaderRequest(t *testing.T) {
+	e := newFeeEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	id := e.reserve(d, arrival1502)
+	tok := e.token(d)
+	e.gw.gate = make(chan struct{})
+	e.gw.entered = make(chan struct{}, 1)
+
+	ch := e.parallelPay(tok, id, []string{"key-late-0001"})
+	select {
+	case <-e.gw.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the charge never started")
+	}
+	e.clk.Set(time.Date(2026, 12, 1, 15, 25, 0, 0, time.UTC)) // upper(window)
+	close(e.gw.gate)
+	r := e.next(ch)
+	if r.code != http.StatusConflict || errCode(r.body) != "reservation.invalid_state" ||
+		field(r.body, "error.details.status") != "expired_unpaid" {
+		t.Fatalf("leader = %d %v, want 409 invalid_state expired_unpaid", r.code, r.body)
+	}
+	code, body, hdr := e.pay(e.token(d), id, "key-late-0001", goodCard())
+	if code != http.StatusConflict || errCode(body) != "reservation.invalid_state" ||
+		field(body, "error.details.status") != "expired_unpaid" || hdr.Get("Idempotent-Replayed") != "true" {
+		t.Errorf("replay = %d %v, want the same 409 + header", code, body)
+	}
+	if n := e.count(`select count(*) from refunds where status = 'pending' and amount_cents = 15000`); n != 1 {
+		t.Errorf("refunds = %d, want 1", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// F3: a client disconnect while the charge is in flight must not cancel the
+// charge: the result is still recorded.
+func TestPay_ClientDisconnectDoesNotCancelTheCharge(t *testing.T) {
+	e := newFeeEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	id := e.reserve(d, arrival1502)
+	tok := e.token(d)
+	e.gw.gate = make(chan struct{})
+	e.gw.entered = make(chan struct{}, 1)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req := jsonReq(http.MethodPost, "/v1/reservations/"+id+"/pay", goodCard()).WithContext(ctx)
+	req.Header.Set("Idempotency-Key", "key-gone-0001")
+	done := make(chan struct{})
+	go func() { defer close(done); e.serve(req, tok) }()
+	select {
+	case <-e.gw.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the charge never started")
+	}
+	cancel()
+	close(e.gw.gate)
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the request never finished")
+	}
+	if n := e.count(`select count(*) from payments where status = 'succeeded'`); n != 1 {
+		t.Errorf("succeeded payments = %d, want 1 (not left pending)", n)
+	}
+	if got := e.status(id); got != "confirmed" {
+		t.Errorf("status = %s, want confirmed", got)
+	}
 }
