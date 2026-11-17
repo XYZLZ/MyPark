@@ -108,6 +108,19 @@ func TestGateQR_StrandedCheckIn(t *testing.T) {
 		if st := e.status(id); st != "confirmed" {
 			t.Errorf("status = %s, want confirmed", st)
 		}
+		// Held 85 over a cap of 84: every reader refuses or clamps, never a
+		// negative count or a 500.
+		d := testsupport.SeedDrivers(t, e.db, 1)[0]
+		r := &rsvEnv{lotEnv: e.lotEnv}
+		body := map[string]any{"lot_id": e.publicID, "vehicle_id": d.VehicleID.String(), "arrival_at": arrivalInWindow}
+		for _, path := range []string{"/v1/reservations/quote", "/v1/reservations"} {
+			if code, got := r.post(e.token(d), path, body); code != http.StatusConflict || errCode(got) != "reservation.capacity_reached" {
+				t.Errorf("%s = %d %v, want 409 reservation.capacity_reached", path, code, got)
+			}
+		}
+		if a, _ := e.data("/v1/lots/" + e.publicID + "/availability")["available"].(float64); a < 0 {
+			t.Errorf("available = %v, want never negative", a)
+		}
 		e.invariants()
 	})
 
