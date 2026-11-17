@@ -197,3 +197,50 @@ func (r *Repo) SlotLoads(ctx context.Context, lotID int64, w reservations.Window
 	}
 	return ints(held), nil
 }
+
+// record maps the joined row every read query returns. The three generated
+// row types have identical fields, so callers convert to one of them.
+func record(r dbgen.GetReservationForUserRow) reservations.Record {
+	opt := func(t pgtype.Timestamptz) *time.Time {
+		if !t.Valid {
+			return nil
+		}
+		u := t.Time.UTC()
+		return &u
+	}
+	optText := func(t pgtype.Text) *string {
+		if !t.Valid {
+			return nil
+		}
+		return &t.String
+	}
+	return reservations.Record{
+		RowID: r.ID, VehicleID: r.VehicleID,
+		View: reservations.View{
+			ID: r.PublicID, LotID: r.LotPublicID,
+			Vehicle: reservations.VehicleRef{
+				ID: r.VehicleID, PublicID: r.VehiclePublicID, PlateDisplay: r.PlateDisplay,
+				Make: r.Make, Model: r.Model, Color: r.Color,
+			},
+			ArrivalAt: r.ArrivalAt.Time.UTC(),
+			Window:    reservations.Window{Start: r.WindowStart.Time.UTC(), End: r.WindowEnd.Time.UTC()},
+			Status:    reservations.Status(r.Status), FeeCents: r.FeeCents,
+			PaymentDueAt: r.PaymentDueAt.Time.UTC(), CreatedAt: r.CreatedAt.Time.UTC(),
+			ConfirmedAt: opt(r.ConfirmedAt), CancelledAt: opt(r.CancelledAt), CancelledBy: optText(r.CancelledBy),
+			RefundReason: optText(r.RefundReason), CheckedInAt: opt(r.CheckedInAt),
+			CompletedAt: opt(r.CompletedAt), ExpiredAt: opt(r.ExpiredAt),
+		},
+	}
+}
+
+// Get implements reservations.Repo.
+func (r *Repo) Get(ctx context.Context, userID int64, id uuid.UUID) (reservations.Record, error) {
+	row, err := r.q(ctx).GetReservationForUser(ctx, dbgen.GetReservationForUserParams{PublicID: id, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.Record{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.Record{}, fmt.Errorf("reservations: read reservation: %w", err)
+	}
+	return record(row), nil
+}

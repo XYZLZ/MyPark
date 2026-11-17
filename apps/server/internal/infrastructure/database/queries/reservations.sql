@@ -89,3 +89,17 @@ select exists (
     select 1 from reservations
     where vehicle_id = @vehicle_id and status in ('pending_payment', 'confirmed', 'checked_in')
 ) as active;
+
+-- name: GetReservationForUser :one
+-- One reservation of the user with its vehicle (live or deleted) and lot.
+-- Another user's id is simply not found (M3B-33).
+select r.id, r.public_id, r.vehicle_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.status, r.fee_cents, r.payment_due_at, r.created_at, r.confirmed_at, r.cancelled_at,
+       r.cancelled_by, r.refund_reason, r.checked_in_at, r.completed_at, r.expired_at,
+       l.public_id as lot_public_id,
+       v.public_id as vehicle_public_id, v.plate_display, v.make, v.model, v.color
+from reservations r
+join lots l on l.id = r.lot_id
+join vehicles v on v.id = r.vehicle_id
+where r.public_id = @public_id and r.user_id = @user_id;

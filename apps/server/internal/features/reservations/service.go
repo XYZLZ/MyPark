@@ -63,9 +63,9 @@ type CreateInput struct {
 	ArrivalAt        time.Time
 }
 
-// View is the reservation representation of design 7.1. The vehicle comes
-// from the creation; the payment, refund and stay parts arrive with the read
-// endpoints and are absent from the API view until then.
+// View is the reservation representation of design 7.1 without the payment,
+// refund and stay parts, which arrive with the payment slices (the API shows
+// them as null until then).
 type View struct {
 	ID           uuid.UUID
 	LotID        uuid.UUID
@@ -76,6 +76,14 @@ type View struct {
 	FeeCents     int64
 	PaymentDueAt time.Time
 	CreatedAt    time.Time
+
+	ConfirmedAt  *time.Time
+	CancelledAt  *time.Time
+	CancelledBy  *string
+	RefundReason *string
+	CheckedInAt  *time.Time
+	CompletedAt  *time.Time
+	ExpiredAt    *time.Time
 }
 
 // checked is the outcome of the checks the quote and the create share.

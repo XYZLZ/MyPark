@@ -164,6 +164,83 @@ func (q *Queries) GetReservationBlockedUntil(ctx context.Context, userID int64) 
 	return reservation_blocked_until, err
 }
 
+const getReservationForUser = `-- name: GetReservationForUser :one
+select r.id, r.public_id, r.vehicle_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.status, r.fee_cents, r.payment_due_at, r.created_at, r.confirmed_at, r.cancelled_at,
+       r.cancelled_by, r.refund_reason, r.checked_in_at, r.completed_at, r.expired_at,
+       l.public_id as lot_public_id,
+       v.public_id as vehicle_public_id, v.plate_display, v.make, v.model, v.color
+from reservations r
+join lots l on l.id = r.lot_id
+join vehicles v on v.id = r.vehicle_id
+where r.public_id = $1 and r.user_id = $2
+`
+
+type GetReservationForUserParams struct {
+	PublicID uuid.UUID
+	UserID   int64
+}
+
+type GetReservationForUserRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	VehicleID       int64
+	ArrivalAt       pgtype.Timestamptz
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+	Status          string
+	FeeCents        int64
+	PaymentDueAt    pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	ConfirmedAt     pgtype.Timestamptz
+	CancelledAt     pgtype.Timestamptz
+	CancelledBy     pgtype.Text
+	RefundReason    pgtype.Text
+	CheckedInAt     pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	ExpiredAt       pgtype.Timestamptz
+	LotPublicID     uuid.UUID
+	VehiclePublicID uuid.UUID
+	PlateDisplay    string
+	Make            string
+	Model           string
+	Color           string
+}
+
+// One reservation of the user with its vehicle (live or deleted) and lot.
+// Another user's id is simply not found (M3B-33).
+func (q *Queries) GetReservationForUser(ctx context.Context, arg GetReservationForUserParams) (GetReservationForUserRow, error) {
+	row := q.db.QueryRow(ctx, getReservationForUser, arg.PublicID, arg.UserID)
+	var i GetReservationForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.VehicleID,
+		&i.ArrivalAt,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.Status,
+		&i.FeeCents,
+		&i.PaymentDueAt,
+		&i.CreatedAt,
+		&i.ConfirmedAt,
+		&i.CancelledAt,
+		&i.CancelledBy,
+		&i.RefundReason,
+		&i.CheckedInAt,
+		&i.CompletedAt,
+		&i.ExpiredAt,
+		&i.LotPublicID,
+		&i.VehiclePublicID,
+		&i.PlateDisplay,
+		&i.Make,
+		&i.Model,
+		&i.Color,
+	)
+	return i, err
+}
+
 const getVehicleForShare = `-- name: GetVehicleForShare :one
 select id, public_id, plate_display, make, model, color
 from vehicles

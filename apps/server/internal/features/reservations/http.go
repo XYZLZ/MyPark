@@ -29,11 +29,13 @@ func NewHandler(svc *Service, v *validation.Validator, log *slog.Logger) *Handle
 	return &Handler{svc: svc, v: v, log: log}
 }
 
-// Register adds the reservation routes to r. All of them are driver-only.
+// Register adds the reservation routes to r. All of them are driver-only and
+// sit behind the legal gate.
 func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/reservations/quote", router.Policy{Roles: router.DriverOnly}, h.quote)
 	r.Handle("POST /v1/reservations",
 		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.create)
+	r.Handle("GET /v1/reservations/{id}", router.Policy{Roles: router.DriverOnly}, h.get)
 }
 
 // Ids arrive as strings: a malformed one is the same 404 as an unknown one
@@ -107,6 +109,14 @@ type reservationDTO struct {
 	Stay          any                   `json:"stay"`
 }
 
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
 func toReservationDTO(v View) reservationDTO {
 	return reservationDTO{
 		ID: v.ID.String(), LotID: v.LotID.String(),
@@ -116,6 +126,9 @@ func toReservationDTO(v View) reservationDTO {
 		},
 		ArrivalAt: v.ArrivalAt.UTC(), HoldWindow: toWindowDTO(v.Window), Status: string(v.Status),
 		FeeCents: v.FeeCents, PaymentDueAt: v.PaymentDueAt.UTC(), CreatedAt: v.CreatedAt.UTC(),
+		ConfirmedAt: utcPtr(v.ConfirmedAt), CancelledAt: utcPtr(v.CancelledAt), CancelledBy: v.CancelledBy,
+		RefundReason: v.RefundReason, CheckedInAt: utcPtr(v.CheckedInAt), CompletedAt: utcPtr(v.CompletedAt),
+		ExpiredAt: utcPtr(v.ExpiredAt),
 	}
 }
 
@@ -172,4 +185,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, r, http.StatusCreated, toReservationDTO(v))
+}
+
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.userID(w, r)
+	if !ok {
+		return
+	}
+	v, err := h.svc.Get(r.Context(), uid, idOrNil(r.PathValue("id")))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.OK(w, r, http.StatusOK, toReservationDTO(v))
 }

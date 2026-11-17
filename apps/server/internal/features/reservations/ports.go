@@ -63,6 +63,7 @@ type Row struct {
 // Repo is the storage port. Every method runs on the transaction carried by
 // the context, or on the pool when there is none.
 type Repo interface {
+	ReadRepo
 	// SetTxLimits applies the driver-API lock and statement timeouts (M3B-55)
 	// to the current transaction.
 	SetTxLimits(ctx context.Context) error
@@ -94,4 +95,19 @@ type Repo interface {
 // (M3B-20).
 type Availability interface {
 	Snapshot(ctx context.Context, lotID int64) (availability.Snapshot, error)
+}
+
+// Record is a stored reservation with its vehicle and lot, as the read and
+// change paths load it.
+type Record struct {
+	RowID     int64
+	VehicleID int64
+	View
+}
+
+// ReadRepo is the part of the storage port behind the read and change use
+// cases. Like Repo, every method runs on the context transaction.
+type ReadRepo interface {
+	// Get reads one reservation of the user, or ErrNotFound.
+	Get(ctx context.Context, userID int64, id uuid.UUID) (Record, error)
 }

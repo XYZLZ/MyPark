@@ -969,7 +969,6 @@ paths:
     get:
       operationId: getReservation
       summary: Get one of the current driver's reservations
-      x-mypark-pending: S3.3
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       responses:

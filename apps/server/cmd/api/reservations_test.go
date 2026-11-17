@@ -374,3 +374,51 @@ func TestQuote_BlockedVehicleLockFailsFast(t *testing.T) {
 		t.Fatal("quote hung behind a locked vehicle row")
 	}
 }
+
+// do sends a JSON request as the driver and decodes the answer.
+func (e *rsvEnv) do(token, method, path string, body any) (int, map[string]any) {
+	e.t.Helper()
+	rec := e.serve(jsonReq(method, path, body), token)
+	return rec.Code, decodeBody(e.t, rec)
+}
+
+func TestGetReservation_Representation(t *testing.T) {
+	e := newRsvEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	tok := e.token(d)
+	code, created := e.post(tok, "/v1/reservations", e.createBody(d, arrival1502))
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d %v", code, created)
+	}
+	id := field(created, "data.id").(string)
+	code, body := e.do(tok, http.MethodGet, "/v1/reservations/"+id, nil)
+	if code != http.StatusOK {
+		t.Fatalf("get = %d %v, want 200", code, body)
+	}
+	data, _ := body["data"].(map[string]any)
+	for _, k := range []string{
+		"id", "lot_id", "vehicle", "arrival_at", "hold_window", "status", "fee_cents", "payment_due_at", "created_at",
+		"confirmed_at", "cancelled_at", "cancelled_by", "refund_reason", "checked_in_at", "completed_at", "expired_at",
+		"latest_payment", "refund", "stay",
+	} {
+		if _, ok := data[k]; !ok {
+			t.Errorf("data has no key %q", k)
+		}
+	}
+	for path, want := range map[string]any{
+		"data.id": id, "data.lot_id": e.publicID, "data.status": "pending_payment",
+		"data.vehicle.id": d.VehicleID.String(), "data.vehicle.make": "Toyota", "data.vehicle.model": "Corolla",
+		"data.vehicle.color": "Gris", "data.hold_window.starts_at": "2026-12-01T14:50:00Z",
+		"data.hold_window.ends_at": "2026-12-01T15:25:00Z", "data.arrival_at": "2026-12-01T15:05:00Z",
+		"data.latest_payment": nil, "data.refund": nil, "data.stay": nil, "data.confirmed_at": nil,
+		"data.cancelled_at": nil, "data.cancelled_by": nil, "data.refund_reason": nil,
+	} {
+		if got := field(body, path); got != want {
+			t.Errorf("%s = %v, want %v", path, got, want)
+		}
+	}
+	if s, _ := field(body, "data.vehicle.plate_display").(string); s == "" {
+		t.Error("vehicle.plate_display is empty")
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}

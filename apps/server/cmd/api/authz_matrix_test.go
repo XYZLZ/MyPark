@@ -34,9 +34,38 @@ import (
 type matrixEntry struct {
 	build func(f *fixture) *http.Request
 	owned bool
+	// reservation seeds a confirmed reservation of the owner (f.reservationID)
+	// before the run; notFound is the code of the owned 404 (default: a vehicle).
+	reservation bool
+	notFound    errcodes.Code
 }
 
 func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.String() }
+
+func reservationPath(f *fixture) string { return "/v1/reservations/" + f.reservationID.String() }
+
+// seedReservation gives the owner a confirmed reservation of its vehicle, with
+// the arrival an hour ahead, straight into the database.
+func (f *fixture) seedReservation() {
+	f.env.t.Helper()
+	lotID := testsupport.SeedPilotLot(f.env.t, f.env.db)
+	now := f.env.clk.Now()
+	err := f.env.db.Super.QueryRow(f.env.t.Context(),
+		`insert into reservations (user_id, vehicle_id, lot_id, arrival_at, hold_window, status, fee_cents,
+		                           tariff_version_id, policy_version_id, payment_due_at, created_at, updated_at,
+		                           confirmed_at, qr_nonce)
+		 select $1, v.id, $2, $3::timestamptz, tstzrange($3::timestamptz - interval '15 minutes', $3::timestamptz + interval '20 minutes', '[)'),
+		        'confirmed', 15000,
+		        (select id from tariff_versions where lot_id = $2 order by effective_from desc limit 1),
+		        (select id from policy_versions where lot_id = $2 order by effective_from desc limit 1),
+		        $4::timestamptz, $4::timestamptz, $4::timestamptz, $4::timestamptz, decode(md5(random()::text), 'hex')
+		 from vehicles v where v.public_id = $5
+		 returning public_id`,
+		f.owner.userID, lotID, now.Add(time.Hour), now, f.vehicleID).Scan(&f.reservationID)
+	if err != nil {
+		f.env.t.Fatalf("seed fixture reservation: %v", err)
+	}
+}
 
 // pilotLotPublicID seeds the pilot lot (idempotent) and returns its public id.
 func pilotLotPublicID(f *fixture) string {
@@ -154,6 +183,9 @@ var matrix = map[string]matrixEntry{
 		})
 	}},
 
+	"GET /v1/reservations/{id}": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f), nil) }},
+
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
 
 	// Unsigned: the user rows carry at most a bearer, which a device route
@@ -259,11 +291,14 @@ func TestAuthzMatrix(t *testing.T) {
 		entry := matrix[rt.Pattern]
 		t.Run(rt.Pattern, func(t *testing.T) {
 			f := e.newFixture()
+			if entry.reservation {
+				f.seedReservation()
+			}
 			for _, r := range rows {
 				want := expected(rt.Policy, r)
 				if entry.owned && r.name == "other-driver" {
 					// Not yours and not there look the same (spec section 8).
-					want = outcome{http.StatusNotFound, string(errcodes.VehicleNotFound)}
+					want = outcome{http.StatusNotFound, string(entry.notFoundCode())}
 				}
 				rec := e.serve(entry.build(f), r.token(f))
 				body := decodeBody(t, rec)
@@ -320,6 +355,7 @@ func assertSameAsMissing(t *testing.T, e *apiEnv, f *fixture, entry matrixEntry,
 	t.Helper()
 	missing := *f
 	missing.vehicleID = uuid.New()
+	missing.reservationID = uuid.New()
 	rec := e.serve(entry.build(&missing), f.owner.token)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing resource: got %d %s, want 404", rec.Code, rec.Body)
@@ -452,6 +488,7 @@ var specPolicy = map[string]struct {
 	"DELETE /v1/vehicles/{id}":         {access: "driver", limit: &ratelimit.VehicleWriteUser},
 	"POST /v1/reservations/quote":      {access: "driver"},
 	"POST /v1/reservations":            {access: "driver", limit: &ratelimit.ReservationWriteUser},
+	"GET /v1/reservations/{id}":        {access: "driver"},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},
 	// A device route declares no Policy.Limit: the router applies DeviceIP
@@ -546,4 +583,12 @@ func ruleName(r *ratelimit.Rule) string {
 		return "none"
 	}
 	return r.Name
+}
+
+// notFoundCode is the code another driver's resource answers with.
+func (m matrixEntry) notFoundCode() errcodes.Code {
+	if m.notFound != "" {
+		return m.notFound
+	}
+	return errcodes.VehicleNotFound
 }
