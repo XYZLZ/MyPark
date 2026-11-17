@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -210,11 +211,13 @@ func TestGateQR_InvalidTokens(t *testing.T) {
 	otherBarrier := testsupport.NewTestDevice(t, e.db, e.d.sealer, other, authz.DeviceEntryBarrier)
 
 	_, _, good := e.confirmed(arrivalInWindow)
-	forged := []byte(good)
-	forged[40] ^= 'A' ^ 'B'
-	if forged[40] == good[40] {
-		forged[40] = 'C'
+	// A well-formed token whose MAC is wrong: only the HMAC check refuses it.
+	raw, err := base64.RawURLEncoding.DecodeString(good)
+	if err != nil {
+		t.Fatal(err)
 	}
+	raw[63] ^= 1
+	forged := base64.RawURLEncoding.EncodeToString(raw)
 	rotatedID, _, rotated := e.confirmed(arrivalInWindow)
 	if _, err := e.db.App.Exec(t.Context(),
 		`update reservations set qr_nonce = substring(sha256(qr_nonce) from 1 for 16) where public_id = $1`, rotatedID); err != nil {
@@ -236,7 +239,7 @@ func TestGateQR_InvalidTokens(t *testing.T) {
 		device testsupport.TestDevice
 		token  string
 	}{
-		{"forged mac", e.barrier, string(forged)},
+		{"forged mac", e.barrier, forged},
 		{"other lot", otherBarrier, good},
 		{"nonce mismatch", e.barrier, rotated},
 		{"pending_payment", e.barrier, unpaid},
@@ -371,5 +374,76 @@ func TestGateQR_CancelRacesCheckIn(t *testing.T) {
 		}
 	}
 	t.Logf("winners: %v", wins)
+	e.invariants()
+}
+
+// voidCheckIn stands in for the S6.2 void (M3B-60): the stay is voided and
+// the reservation is confirmed again with its hold restored.
+func (e *qrEnv) voidCheckIn(id string) {
+	e.t.Helper()
+	if _, err := e.db.App.Exec(e.t.Context(),
+		`with r as (update reservations set status = 'confirmed', checked_in_at = null, updated_at = $2
+		            where public_id = $1 returning id, lot_id, hold_window),
+		      s as (update stays set status = 'voided', voided_at = $2, updated_at = $2
+		            where reservation_id = (select id from r))
+		 update reservation_slot_loads l set held = held + 1 from r
+		 where l.lot_id = r.lot_id and r.hold_window @> l.slot_start`, id, e.clk.Now()); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// M3B-24/M3B-60: a confirmed reservation whose stay was voided reuses it.
+func TestGateQR_ReopenVoidedStay(t *testing.T) {
+	e := newQREnv(t)
+	id, _, qr := e.confirmed(arrivalInWindow)
+	first := wantQROpen(t, e.present(qr))
+	e.clk.Advance(61 * time.Second)
+	voidedAt := e.clk.Now()
+	e.voidCheckIn(id)
+	e.clk.Advance(time.Minute)
+	before := e.version()
+
+	if again := wantQROpen(t, e.present(qr)); again != first {
+		t.Errorf("stay_id = %s, want the voided %s", again, first)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'entry_pending'
+	                 and accepted_at = $2 and voided_at = $3`, first, e.clk.Now(), voidedAt); n != 1 {
+		t.Error("want the stay entry_pending at now with voided_at kept")
+	}
+	if st := e.status(id); st != "checked_in" {
+		t.Errorf("status = %s, want checked_in", st)
+	}
+	if h := e.held(); h != 0 {
+		t.Errorf("slots holding = %d, want 0", h)
+	}
+	if v := e.version(); v != before+1 {
+		t.Errorf("version = %d, want %d", v, before+1)
+	}
+	if n := e.count(`select count(*) from stays`); n != 1 {
+		t.Errorf("stays = %d, want 1", n)
+	}
+	e.invariants()
+}
+
+// Re-presented after the void into a physically full lot: the reservation
+// is cancelled with a refund and its voided stay is left alone.
+func TestGateQR_ReopenVoidedStayPhysicallyFull(t *testing.T) {
+	e := newQREnv(t)
+	id, _, qr := e.confirmed(arrivalInWindow)
+	stayID := wantQROpen(t, e.present(qr))
+	e.clk.Advance(61 * time.Second)
+	e.voidCheckIn(id)
+	testsupport.FillLot(t, e.db, e.lotID, 280, e.clk.Now())
+
+	wantQRDeny(t, e.present(qr), "gate.lot_physically_full")
+	if st := e.status(id); st != "cancelled" {
+		t.Errorf("status = %s, want cancelled", st)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'voided'`, stayID); n != 1 {
+		t.Error("want the stay still voided")
+	}
+	if n := e.count(`select count(*) from refunds where status = 'pending' and reason = 'facility_unavailable'`); n != 1 {
+		t.Error("want one pending refund")
+	}
 	e.invariants()
 }
