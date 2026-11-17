@@ -87,15 +87,21 @@ func (s *Service) Pay(ctx context.Context, userID int64, id uuid.UUID, key strin
 		return PayResult{}, err
 	}
 	if replayed {
-		return outcome(att, view, true)
+		res, err := outcome(att, view, true)
+		if err != nil {
+			err = &ReplayedError{Err: err}
+		}
+		return res, err
 	}
 
 	// No transaction and no pooled connection is held across the charge.
+	// A client disconnect must not cancel a charge in flight: that would leave
+	// the outcome unknown for a card that may already be charged.
 	timeout := s.chargeTimeout
 	if timeout <= 0 {
 		timeout = defaultChargeTimeout
 	}
-	cctx, cancel := context.WithTimeout(ctx, timeout)
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	res, chargeErr := s.gateway.Charge(cctx, payments.ChargeRequest{
 		IdempotencyKey: att.GatewayKey, AmountCents: amount, Card: &card,
 	})
@@ -142,7 +148,8 @@ func (s *Service) current(ctx context.Context, userID int64, id uuid.UUID, att p
 
 // outcome maps an attempt and its reservation to the pay answer (design 7.6).
 // A succeeded payment whose reservation is not paid any more (late success,
-// cancelled since) is an error: the money is being refunded.
+// cancelled since) is 409 invalid_state with the status (design 7.6): the
+// money is being refunded.
 func outcome(att payments.Attempt, view View, replayed bool) (PayResult, error) {
 	res := PayResult{Reservation: view, PaymentID: att.PublicID, Replayed: replayed}
 	switch att.Status {
@@ -154,8 +161,6 @@ func outcome(att payments.Attempt, view View, replayed bool) (PayResult, error) 
 		switch view.Status {
 		case StatusConfirmed, StatusCheckedIn, StatusCompleted:
 			res.Code = http.StatusOK
-		case StatusExpiredUnpaid:
-			return PayResult{}, apperr.Conflict(errcodes.ReservationPaymentExpired)
 		default:
 			return PayResult{}, apperr.Conflict(errcodes.ReservationInvalidState).
 				WithDetails(map[string]any{"status": string(view.Status)})
@@ -163,3 +168,10 @@ func outcome(att payments.Attempt, view View, replayed bool) (PayResult, error) 
 	}
 	return res, nil
 }
+
+// ReplayedError marks an error answer that replays a stored attempt, so the
+// handler still sends Idempotent-Replayed: true with it.
+type ReplayedError struct{ Err error }
+
+func (e *ReplayedError) Error() string { return e.Err.Error() }
+func (e *ReplayedError) Unwrap() error { return e.Err }

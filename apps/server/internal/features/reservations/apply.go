@@ -44,8 +44,8 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 	if err != nil {
 		return err
 	}
-	if fee.Status != payments.StatusPending {
-		return nil
+	if fee.Status == payments.StatusSucceeded {
+		return nil // idempotent re-apply
 	}
 	// The window never changes, so this unlocked read decides whether the
 	// lot is locked before the reservation (design 8.1, M3B-13).
@@ -68,8 +68,8 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 	if fee, err = s.fees.FeeByID(ctx, paymentID); err != nil {
 		return err
 	}
-	if fee.Status != payments.StatusPending {
-		return nil
+	if done, err := s.settled(ctx, fee, &rsv); done {
+		return err
 	}
 
 	switch {
@@ -166,4 +166,23 @@ func (s *Service) enqueue(ctx context.Context, rsv ApplyRow, tpl notifications.T
 		Template: tpl, Locale: c.Locale, To: c.Email, UserID: &uid, Data: data,
 		DedupeKey: string(tpl) + ":" + rsv.PublicID.String(),
 	})
+}
+
+// settled reports whether a success has nothing left to apply. A payment that
+// already succeeded is an idempotent re-apply (quiet nil). One that failed or
+// was refunded meets a success it can no longer honour: that is logged at error
+// (public ids only) and returned as payments.ErrSuccessAfterFinal.
+func (s *Service) settled(ctx context.Context, fee payments.FeePayment, rsv *ApplyRow) (bool, error) {
+	switch fee.Status {
+	case payments.StatusPending:
+		return false, nil
+	case payments.StatusSucceeded:
+		return true, nil
+	}
+	args := []any{"payment_id", fee.PublicID, "payment_status", fee.Status}
+	if rsv != nil {
+		args = append(args, "reservation_id", rsv.PublicID)
+	}
+	s.log.ErrorContext(ctx, "reservations: charge succeeded on a payment that is already final", args...)
+	return true, payments.ErrSuccessAfterFinal
 }

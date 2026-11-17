@@ -1,6 +1,7 @@
 package reservations
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"time"
@@ -62,6 +63,9 @@ func (h *Handler) pay(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.svc.Pay(r.Context(), uid, idOrNil(r.PathValue("id")), key, req)
 	if err != nil {
+		if _, ok := errors.AsType[*ReplayedError](err); ok {
+			w.Header().Set(headerReplayed, "true")
+		}
 		httpx.WriteError(w, r, h.log, err)
 		return
 	}

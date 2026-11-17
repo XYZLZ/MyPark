@@ -48,3 +48,7 @@ type RefundResult struct{ ProviderRef string }
 
 // ErrChargeUnknown means a re-query named a charge key the gateway never saw.
 var ErrChargeUnknown = errors.New("payments: charge key never seen")
+
+// ErrSuccessAfterFinal means a charge success arrived for a payment that had
+// already failed or been refunded: money may have been taken that no row owns.
+var ErrSuccessAfterFinal = errors.New("payments: charge succeeded after the payment was final")
