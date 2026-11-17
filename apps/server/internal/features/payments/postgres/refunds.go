@@ -91,3 +91,27 @@ func wrap(err error, what string, id int64) error {
 	}
 	return fmt.Errorf("payments: %s %d: %w", what, id, err)
 }
+
+// SweepStranded implements payments.Refunds.
+func (r *RefundRepo) SweepStranded(ctx context.Context, now time.Time, limit int) ([]payments.RefundClaim, error) {
+	tx, err := database.MustTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("payments: sweep refunds: %w", err)
+	}
+	rows, err := dbgen.New(tx).SweepStrandedRefunds(ctx, dbgen.SweepStrandedRefundsParams{
+		Now: ts(now), Batch: int32(limit), MaxAttempts: payments.RefundMaxAttempts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("payments: sweep refunds: %w", err)
+	}
+	out := make([]payments.RefundClaim, len(rows))
+	for i, row := range rows {
+		out[i] = payments.RefundClaim{
+			ID: row.ID, PublicID: row.PublicID, PaymentID: row.PaymentID, AmountCents: row.AmountCents,
+			Attempts: int(row.Attempts), GatewayKey: row.IdempotencyKey, ChargeKey: row.ChargeKey,
+			PaymentPublicID: row.PaymentPublicID, ReservationPublicID: row.ReservationPublicID,
+			ReservationID: row.ReservationID, LotID: row.LotID,
+		}
+	}
+	return out, nil
+}

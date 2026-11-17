@@ -48,6 +48,9 @@ type RefundProcessor struct {
 // next run; it never stops the batch.
 func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 	lease, callTimeout := p.limits()
+	if err := p.sweep(ctx, now); err != nil {
+		return 0, err
+	}
 	var claims []RefundClaim
 	err := p.Tx.InTx(ctx, func(ctx context.Context) error {
 		var err error
@@ -82,6 +85,23 @@ func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 		}
 	}
 	return settled, nil
+}
+
+// sweep ends the refunds a dead runner left at the attempt limit: failed plus
+// one alert each, in one transaction, with no gateway call and no email.
+func (p *RefundProcessor) sweep(ctx context.Context, now time.Time) error {
+	return p.Tx.InTx(ctx, func(ctx context.Context) error {
+		stuck, err := p.Refunds.SweepStranded(ctx, now, RefundBatch)
+		if err != nil {
+			return err
+		}
+		for _, c := range stuck {
+			if err := p.alert(ctx, c, "max_attempts", now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // process makes the gateway call and finalizes one claim. It reports whether
@@ -132,13 +152,18 @@ func (p *RefundProcessor) failed(ctx context.Context, c RefundClaim, class strin
 		if err != nil || !applied {
 			return err
 		}
-		return p.Alerts.Open(ctx, c.LotID, alerts.KindRefundFailed, map[string]string{
-			"reservation_id": c.ReservationPublicID.String(),
-			"refund_id":      c.PublicID.String(),
-			"payment_id":     c.PaymentPublicID.String(),
-			"reason":         reason,
-		}, now)
+		return p.alert(ctx, c, reason, now)
 	})
+}
+
+// alert opens the refund_failed alert of a refund that ended failed.
+func (p *RefundProcessor) alert(ctx context.Context, c RefundClaim, reason string, now time.Time) error {
+	return p.Alerts.Open(ctx, c.LotID, alerts.KindRefundFailed, map[string]string{
+		"reservation_id": c.ReservationPublicID.String(),
+		"refund_id":      c.PublicID.String(),
+		"payment_id":     c.PaymentPublicID.String(),
+		"reason":         reason,
+	}, now)
 }
 
 // limits returns the lease and the call timeout in force.

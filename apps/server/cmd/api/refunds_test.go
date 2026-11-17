@@ -333,3 +333,42 @@ func TestRefunds_FinalizeErrorsExhaustAndAlert(t *testing.T) {
 		t.Error("a refund at the attempt limit was claimed")
 	}
 }
+
+// A runner that died on its last attempt leaves a pending refund at the limit:
+// the sweep fails it and opens one alert, with no gateway call and no email.
+func TestRefunds_SweepStrandedAtTheLimit(t *testing.T) {
+	e := newFeeEnv(t)
+	stranded, _ := e.cancelled()
+	e.cancelled() // second refund: its lease has not passed
+	now := e.clk.Now()
+	if _, err := e.db.Super.Exec(t.Context(),
+		`update refunds r set attempts = 10, next_attempt_at = case when p.reservation_id = (select id from reservations where public_id = $1)
+		                                                      then $2::timestamptz - interval '1 second' else $2::timestamptz + interval '30 seconds' end
+		 from payments p where p.id = r.payment_id`, stranded, now); err != nil {
+		t.Fatal(err)
+	}
+	gw := e.simGateway(&refundGateway{})
+	p := e.processor(gw)
+	for range 2 {
+		if n, err := p.Run(t.Context(), now); err != nil || n != 0 {
+			t.Fatalf("Run = %d, %v", n, err)
+		}
+	}
+	if c := e.count(`select count(*) from refunds r join payments p on p.id = r.payment_id join reservations v on v.id = p.reservation_id
+	                 where v.public_id = $1 and r.status = 'failed' and r.failed_at = $2 and r.attempts = 10`, stranded, now); c != 1 {
+		t.Error("want the stranded refund failed at now")
+	}
+	if c := e.count(`select count(*) from refunds where status = 'pending' and attempts = 10`); c != 1 {
+		t.Error("the refund whose lease has not passed must be untouched")
+	}
+	if c := e.count(`select count(*) from reconciliation_alerts where kind = 'refund_failed' and details->>'reason' = 'max_attempts'
+	                 and details->>'reservation_id' = $1 and (select count(*) from jsonb_object_keys(details)) = 4`, stranded); c != 1 {
+		t.Error("want exactly one max_attempts alert, even after a second run")
+	}
+	if c := e.count(`select count(*) from reconciliation_alerts`); c != 1 {
+		t.Errorf("alerts = %d, want 1", c)
+	}
+	if gw.calls != 0 || e.count(`select count(*) from outbox_messages where template = 'refund_succeeded'`) != 0 {
+		t.Error("the sweep must not call the gateway or send an email")
+	}
+}

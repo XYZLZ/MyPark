@@ -625,3 +625,77 @@ func (q *Queries) MarkPaymentRefunded(ctx context.Context, arg MarkPaymentRefund
 	}
 	return result.RowsAffected(), nil
 }
+
+const sweepStrandedRefunds = `-- name: SweepStrandedRefunds :many
+with stuck as (
+    select refunds.id, refunds.attempts from refunds
+    where refunds.status = 'pending' and refunds.attempts >= $2::smallint
+      and refunds.next_attempt_at <= $1
+    order by refunds.id
+    limit $3
+    for update skip locked
+)
+update refunds r
+set status = 'failed', failed_at = $1, last_error = coalesce(r.last_error, 'lease_expired')
+from stuck, payments p, reservations rv
+where r.id = stuck.id and r.status = 'pending' and r.attempts = stuck.attempts
+  and p.id = r.payment_id and rv.id = p.reservation_id
+returning r.id, r.public_id, r.payment_id, r.amount_cents, r.attempts::int as attempts,
+          r.idempotency_key, p.idempotency_key as charge_key, p.public_id as payment_public_id,
+          rv.id as reservation_id, rv.public_id as reservation_public_id, rv.lot_id
+`
+
+type SweepStrandedRefundsParams struct {
+	Now         pgtype.Timestamptz
+	MaxAttempts int16
+	Batch       int32
+}
+
+type SweepStrandedRefundsRow struct {
+	ID                  int64
+	PublicID            uuid.UUID
+	PaymentID           int64
+	AmountCents         int64
+	Attempts            int32
+	IdempotencyKey      string
+	ChargeKey           string
+	PaymentPublicID     uuid.UUID
+	ReservationID       int64
+	ReservationPublicID uuid.UUID
+	LotID               int64
+}
+
+// A refund left pending at the attempt limit whose lease has passed: its last
+// runner died before finalizing (ClaimDueRefunds never takes it again). Fail it,
+// fenced on pending and on that attempts value, and return it for the alert.
+func (q *Queries) SweepStrandedRefunds(ctx context.Context, arg SweepStrandedRefundsParams) ([]SweepStrandedRefundsRow, error) {
+	rows, err := q.db.Query(ctx, sweepStrandedRefunds, arg.Now, arg.MaxAttempts, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SweepStrandedRefundsRow{}
+	for rows.Next() {
+		var i SweepStrandedRefundsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.PaymentID,
+			&i.AmountCents,
+			&i.Attempts,
+			&i.IdempotencyKey,
+			&i.ChargeKey,
+			&i.PaymentPublicID,
+			&i.ReservationID,
+			&i.ReservationPublicID,
+			&i.LotID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

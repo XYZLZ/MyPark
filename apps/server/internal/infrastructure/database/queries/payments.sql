@@ -136,3 +136,24 @@ where id = @id and status = 'pending' and attempts = @attempts;
 update refunds
 set status = 'failed', failed_at = @now, last_error = @last_error
 where id = @id and status = 'pending' and attempts = @attempts;
+
+-- name: SweepStrandedRefunds :many
+-- A refund left pending at the attempt limit whose lease has passed: its last
+-- runner died before finalizing (ClaimDueRefunds never takes it again). Fail it,
+-- fenced on pending and on that attempts value, and return it for the alert.
+with stuck as (
+    select refunds.id, refunds.attempts from refunds
+    where refunds.status = 'pending' and refunds.attempts >= sqlc.arg('max_attempts')::smallint
+      and refunds.next_attempt_at <= @now
+    order by refunds.id
+    limit sqlc.arg('batch')
+    for update skip locked
+)
+update refunds r
+set status = 'failed', failed_at = @now, last_error = coalesce(r.last_error, 'lease_expired')
+from stuck, payments p, reservations rv
+where r.id = stuck.id and r.status = 'pending' and r.attempts = stuck.attempts
+  and p.id = r.payment_id and rv.id = p.reservation_id
+returning r.id, r.public_id, r.payment_id, r.amount_cents, r.attempts::int as attempts,
+          r.idempotency_key, p.idempotency_key as charge_key, p.public_id as payment_public_id,
+          rv.id as reservation_id, rv.public_id as reservation_public_id, rv.lot_id;

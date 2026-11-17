@@ -171,7 +171,11 @@ func TestRefunds_LateClaimsAreLeftToExpire(t *testing.T) {
 	if len(f.retried)+len(f.failed) != 0 {
 		t.Error("an unprocessed claim must not be finalized as a failure")
 	}
-	if !f.leased.Equal(nowT.Add(1200*time.Millisecond)) {
+	if !f.leased.Equal(nowT.Add(1200 * time.Millisecond)) {
 		t.Errorf("lease = %v, want now + Lease", f.leased)
 	}
+}
+
+func (f *fakeRefunds) SweepStranded(context.Context, time.Time, int) ([]payments.RefundClaim, error) {
+	return nil, nil
 }

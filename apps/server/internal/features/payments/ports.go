@@ -118,6 +118,10 @@ type Refunds interface {
 	// succeeded -> refunded. It is fenced on (pending, attempts) and reports
 	// whether it applied; false changes nothing.
 	Succeed(ctx context.Context, c RefundClaim, providerRef string, now time.Time) (bool, error)
+	// SweepStranded fails the pending refunds at the attempt limit whose lease has
+	// passed (their last runner died before finalizing) and returns them, so the
+	// caller can alert. It skips rows another runner holds.
+	SweepStranded(ctx context.Context, now time.Time, limit int) ([]RefundClaim, error)
 	// Retry records a failed attempt and schedules the next one, fenced as Succeed.
 	Retry(ctx context.Context, c RefundClaim, lastError string, nextAttempt time.Time) (bool, error)
 	// Fail ends a refund for good (attempt limit reached), fenced as Succeed.
