@@ -4,12 +4,14 @@
 package validation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 
@@ -71,6 +73,28 @@ var shared = sync.OnceValue(func() *validator.Validate {
 	_ = v.RegisterValidation("phone", func(fl validator.FieldLevel) bool {
 		return phonePattern.MatchString(fl.Field().String())
 	})
+	// luhn passes a digits-only string whose Luhn checksum is valid.
+	_ = v.RegisterValidation("luhn", func(fl validator.FieldLevel) bool {
+		return Luhn(fl.Field().String())
+	})
+	// card_expiry goes on the expiry-year field and names the month field as
+	// its parameter: `card_expiry=ExpMonth`. It reads "now" from the context
+	// (WithNow) and fails closed without one. An out-of-range month passes:
+	// the month's own rules report it.
+	_ = v.RegisterValidationCtx("card_expiry", func(ctx context.Context, fl validator.FieldLevel) bool {
+		now, ok := ctx.Value(nowKey{}).(time.Time)
+		if !ok {
+			return false
+		}
+		m := fl.Parent().FieldByName(fl.Param())
+		if !m.IsValid() || !m.CanInt() {
+			return false
+		}
+		if m.Int() < 1 || m.Int() > 12 {
+			return true
+		}
+		return CardExpiryValid(int(m.Int()), int(fl.Field().Int()), now)
+	})
 	return v
 })
 
@@ -83,7 +107,13 @@ func New() *Validator {
 // fields fail their rules, and another error when s cannot be validated at
 // all (for example, s is not a struct).
 func (v *Validator) Struct(s any) error {
-	err := v.v.Struct(s)
+	return v.StructCtx(context.Background(), s)
+}
+
+// StructCtx is Struct for structs with time-dependent rules: ctx should carry
+// the business time (WithNow).
+func (v *Validator) StructCtx(ctx context.Context, s any) error {
+	err := v.v.StructCtx(ctx, s)
 	if err == nil {
 		return nil
 	}
@@ -120,4 +150,51 @@ func jsonName(f reflect.StructField) string {
 		return f.Name
 	}
 	return name
+}
+
+type nowKey struct{}
+
+// WithNow returns a context carrying the business "now" for time-dependent
+// rules such as card_expiry. Callers pass their injected clock's reading.
+func WithNow(ctx context.Context, now time.Time) context.Context {
+	return context.WithValue(ctx, nowKey{}, now)
+}
+
+// lotZone is the lot's civil time (America/Santo_Domingo, no DST).
+var lotZone = time.FixedZone("America/Santo_Domingo", -4*60*60)
+
+// CardExpiryValid reports whether a card expiring at the end of month/year is
+// still valid at now, judged in the lot's time zone: the card works through
+// the last day of its expiry month.
+func CardExpiryValid(month, year int, now time.Time) bool {
+	if month < 1 || month > 12 {
+		return false
+	}
+	n := now.In(lotZone)
+	cy, cm := n.Year(), int(n.Month())
+	return year > cy || (year == cy && month >= cm)
+}
+
+// Luhn reports whether s is a non-empty string of ASCII digits whose Luhn
+// checksum is valid. It is the only Luhn implementation (payments delegates).
+func Luhn(s string) bool {
+	if s == "" {
+		return false
+	}
+	sum, double := 0, false
+	for i := len(s) - 1; i >= 0; i-- {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return false
+		}
+		d := int(c - '0')
+		if double {
+			if d *= 2; d > 9 {
+				d -= 9
+			}
+		}
+		sum += d
+		double = !double
+	}
+	return sum%10 == 0
 }
