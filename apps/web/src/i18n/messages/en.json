@@ -363,6 +363,9 @@
       "payload_too_large": "The request is too large.",
       "unsupported_media_type": "We could not process the request."
     },
+    "idempotency": {
+      "key_reused": "That request key was already used with different details."
+    },
     "internal": {
       "unexpected": "Something went wrong on our side. Please try again."
     },
@@ -374,8 +377,28 @@
       "not_found": "We could not find that lot.",
       "space_unknown": "Unknown space code for this lot."
     },
+    "payment": {
+      "declined": "The payment was declined. Check the card or try another one.",
+      "in_progress": "Another payment attempt is still being processed.",
+      "not_found": "We could not find that payment."
+    },
     "rate_limit": {
       "exceeded": "Too many attempts. Try again in {seconds} s."
+    },
+    "reservation": {
+      "not_found": "We could not find that reservation.",
+      "capacity_reached": "The lot is fully reserved for that time. Try another arrival time.",
+      "active_exists": "You already have an active reservation.",
+      "blocked_no_shows": "You cannot reserve right now because of missed arrivals. Try again later.",
+      "lot_closed": "The lot is closed.",
+      "no_space_now": "There are no free spaces for an arrival this soon.",
+      "arrival_in_past": "The arrival time has already passed.",
+      "beyond_horizon": "That arrival time is too far ahead to reserve.",
+      "invalid_state": "This reservation cannot be changed in its current state.",
+      "payment_expired": "The time to pay for this reservation has run out.",
+      "vehicle_change_closed": "The vehicle can no longer be changed after the arrival time.",
+      "too_early": "The reservation is not valid yet. Arrive within your hold window.",
+      "window_closed": "The reservation window has ended."
     },
     "session": {
       "logout_unconfirmed": "We could not confirm that your session was closed. If you are worried, change your password."

@@ -62,6 +62,9 @@
       "payload_too_large": "La solicitud es demasiado grande.",
       "unsupported_media_type": "No pudimos procesar la solicitud."
     },
+    "idempotency": {
+      "key_reused": "Esa clave de solicitud ya se usó con otros datos."
+    },
     "internal": {
       "unexpected": "Algo salió mal de nuestro lado. Inténtalo de nuevo."
     },
@@ -73,8 +76,28 @@
       "not_found": "No pudimos encontrar ese estacionamiento.",
       "space_unknown": "Código de espacio desconocido para este estacionamiento."
     },
+    "payment": {
+      "declined": "El pago fue rechazado. Revise la tarjeta o pruebe con otra.",
+      "in_progress": "Otro intento de pago todavía se está procesando.",
+      "not_found": "No encontramos ese pago."
+    },
     "rate_limit": {
       "exceeded": "Demasiados intentos. Inténtalo de nuevo en {{seconds}} s."
+    },
+    "reservation": {
+      "not_found": "No encontramos esa reserva.",
+      "capacity_reached": "El parqueo está completamente reservado a esa hora. Pruebe con otra hora de llegada.",
+      "active_exists": "Ya tiene una reserva activa.",
+      "blocked_no_shows": "No puede reservar por ahora debido a llegadas no realizadas. Intente más tarde.",
+      "lot_closed": "El parqueo está cerrado.",
+      "no_space_now": "No hay espacios libres para una llegada tan próxima.",
+      "arrival_in_past": "La hora de llegada ya pasó.",
+      "beyond_horizon": "Esa hora de llegada es demasiado lejana para reservar.",
+      "invalid_state": "Esta reserva no se puede modificar en su estado actual.",
+      "payment_expired": "Se agotó el tiempo para pagar esta reserva.",
+      "vehicle_change_closed": "El vehículo ya no se puede cambiar después de la hora de llegada.",
+      "too_early": "La reserva todavía no es válida. Llegue dentro de su ventana de reserva.",
+      "window_closed": "La ventana de la reserva ya terminó."
     },
     "session": {
       "logout_unconfirmed": "No pudimos confirmar que tu sesión se cerró. Si te preocupa, cambia tu contraseña."

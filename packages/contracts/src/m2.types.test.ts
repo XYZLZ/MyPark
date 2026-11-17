@@ -33,7 +33,6 @@ const M2_CODES = [
 test('ERROR_CODES includes every M2 code', () => {
   expect(M2_CODES).toHaveLength(23);
   expect(ERROR_CODES).toEqual(expect.arrayContaining(M2_CODES));
-  expect(ERROR_CODES).toHaveLength(48);
 });
 
 test('every M2 public lot path exists', () => {

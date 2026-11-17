@@ -40,12 +40,29 @@ func TestAll_SortedAndComplete(t *testing.T) {
 		"http.not_found",
 		"http.payload_too_large",
 		"http.unsupported_media_type",
+		"idempotency.key_reused",
 		"internal.unexpected",
 		"legal.acceptance_required",
 		"legal.version_outdated",
 		"lot.not_found",
 		"lot.space_unknown",
+		"payment.declined",
+		"payment.in_progress",
+		"payment.not_found",
 		"rate_limit.exceeded",
+		"reservation.active_exists",
+		"reservation.arrival_in_past",
+		"reservation.beyond_horizon",
+		"reservation.blocked_no_shows",
+		"reservation.capacity_reached",
+		"reservation.invalid_state",
+		"reservation.lot_closed",
+		"reservation.no_space_now",
+		"reservation.not_found",
+		"reservation.payment_expired",
+		"reservation.too_early",
+		"reservation.vehicle_change_closed",
+		"reservation.window_closed",
 		"session.logout_unconfirmed",
 		"simulator.already_running",
 		"simulator.car_not_found",
@@ -154,6 +171,44 @@ func TestCatalog_M2Codes(t *testing.T) {
 	}
 	all := errcodes.All()
 	for _, tc := range m2Codes {
+		if string(tc.c) != tc.want {
+			t.Errorf("constant = %q, want %q", tc.c, tc.want)
+		}
+		if !slices.Contains(all, tc.c) {
+			t.Errorf("%q missing from All()", tc.c)
+		}
+	}
+}
+
+var m3Codes = []struct {
+	c    errcodes.Code
+	want string
+}{
+	{errcodes.ReservationNotFound, "reservation.not_found"},
+	{errcodes.ReservationCapacityReached, "reservation.capacity_reached"},
+	{errcodes.ReservationActiveExists, "reservation.active_exists"},
+	{errcodes.ReservationBlockedNoShows, "reservation.blocked_no_shows"},
+	{errcodes.ReservationLotClosed, "reservation.lot_closed"},
+	{errcodes.ReservationNoSpaceNow, "reservation.no_space_now"},
+	{errcodes.ReservationArrivalInPast, "reservation.arrival_in_past"},
+	{errcodes.ReservationBeyondHorizon, "reservation.beyond_horizon"},
+	{errcodes.ReservationInvalidState, "reservation.invalid_state"},
+	{errcodes.ReservationPaymentExpired, "reservation.payment_expired"},
+	{errcodes.ReservationVehicleChangeClosed, "reservation.vehicle_change_closed"},
+	{errcodes.ReservationTooEarly, "reservation.too_early"},
+	{errcodes.ReservationWindowClosed, "reservation.window_closed"},
+	{errcodes.PaymentDeclined, "payment.declined"},
+	{errcodes.PaymentInProgress, "payment.in_progress"},
+	{errcodes.PaymentNotFound, "payment.not_found"},
+	{errcodes.IdempotencyKeyReused, "idempotency.key_reused"},
+}
+
+func TestCatalog_M3Codes(t *testing.T) {
+	if len(m3Codes) != 17 {
+		t.Fatalf("expected 17 M3 codes, table has %d", len(m3Codes))
+	}
+	all := errcodes.All()
+	for _, tc := range m3Codes {
 		if string(tc.c) != tc.want {
 			t.Errorf("constant = %q, want %q", tc.c, tc.want)
 		}
