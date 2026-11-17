@@ -41,6 +41,26 @@ func (q *Queries) CancelReservation(ctx context.Context, arg CancelReservationPa
 	return result.RowsAffected(), nil
 }
 
+const checkInReservation = `-- name: CheckInReservation :execrows
+update reservations
+set status = 'checked_in', checked_in_at = $1, updated_at = $1
+where id = $2 and status = 'confirmed'
+`
+
+type CheckInReservationParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+// A valid QR inside the window with room (design 11.1).
+func (q *Queries) CheckInReservation(ctx context.Context, arg CheckInReservationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, checkInReservation, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const confirmReservation = `-- name: ConfirmReservation :execrows
 update reservations
 set status = 'confirmed', confirmed_at = $1, qr_nonce = $2, updated_at = $1
@@ -266,6 +286,32 @@ func (q *Queries) GetReservationForApply(ctx context.Context, id int64) (GetRese
 		&i.WindowStart,
 		&i.WindowEnd,
 	)
+	return i, err
+}
+
+const getReservationForQR = `-- name: GetReservationForQR :one
+select r.id, r.public_id, r.qr_nonce
+from reservations r
+where r.lot_id = $1 and r.public_id = $2
+`
+
+type GetReservationForQRParams struct {
+	LotID    int64
+	PublicID uuid.UUID
+}
+
+type GetReservationForQRRow struct {
+	ID       int64
+	PublicID uuid.UUID
+	QrNonce  []byte
+}
+
+// The QR entry's lookup before any lock (design 11.1 step 1): lot-scoped, so
+// another lot's reservation is simply not found.
+func (q *Queries) GetReservationForQR(ctx context.Context, arg GetReservationForQRParams) (GetReservationForQRRow, error) {
+	row := q.db.QueryRow(ctx, getReservationForQR, arg.LotID, arg.PublicID)
+	var i GetReservationForQRRow
+	err := row.Scan(&i.ID, &i.PublicID, &i.QrNonce)
 	return i, err
 }
 
@@ -657,6 +703,47 @@ func (q *Queries) LockReservationForApply(ctx context.Context, id int64) (LockRe
 		&i.ArrivalAt,
 		&i.FeeCents,
 		&i.PlateDisplay,
+	)
+	return i, err
+}
+
+const lockReservationForEntry = `-- name: LockReservationForEntry :one
+select r.id, r.public_id, r.user_id, r.tariff_version_id, r.status, r.qr_nonce,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.lot_id = $1 and r.id = $2
+for update
+`
+
+type LockReservationForEntryParams struct {
+	LotID int64
+	ID    int64
+}
+
+type LockReservationForEntryRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	UserID          int64
+	TariffVersionID int64
+	Status          string
+	QrNonce         []byte
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+}
+
+// Taken after the lot lock (design 8.1, QR entry); the caller re-checks the nonce.
+func (q *Queries) LockReservationForEntry(ctx context.Context, arg LockReservationForEntryParams) (LockReservationForEntryRow, error) {
+	row := q.db.QueryRow(ctx, lockReservationForEntry, arg.LotID, arg.ID)
+	var i LockReservationForEntryRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.UserID,
+		&i.TariffVersionID,
+		&i.Status,
+		&i.QrNonce,
+		&i.WindowStart,
+		&i.WindowEnd,
 	)
 	return i, err
 }

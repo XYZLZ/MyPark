@@ -31,10 +31,11 @@ values (@lot_id, @card_uid_hash, @holder_name, @employee_code, @status, sqlc.nar
 on conflict (card_uid_hash) do nothing;
 
 -- name: InsertStay :one
--- Every business timestamp is the server clock (§8.4).
-insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, status,
+-- Every business timestamp is the server clock (§8.4). reservation_id is set
+-- exactly for a reservation stay (stays_reservation_id_check).
+insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, reservation_id, status,
                    tariff_version_id, accepted_at, entered_at, updated_at)
-values (@lot_id, @credential_kind, sqlc.narg(ticket_code_hash), sqlc.narg(employee_card_id), @status,
+values (@lot_id, @credential_kind, sqlc.narg(ticket_code_hash), sqlc.narg(employee_card_id), sqlc.narg(reservation_id), @status,
         @tariff_version_id, sqlc.arg(now)::timestamptz, sqlc.narg(entered_at), sqlc.arg(now)::timestamptz)
 returning id, public_id;
 
@@ -172,3 +173,33 @@ where lot_id = @lot_id and id = @id and status in ('active', 'paid');
 update stays
 set exit_authorized_at = null, updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and status in ('active', 'paid');
+
+-- name: GetReservationStay :one
+-- The reservation's one stay (stays_reservation_key), unlocked: the QR entry
+-- decides from it under the lot and reservation locks, and locks it only
+-- after the slot loads (design 8.1). Lot-scoped (M2C-21).
+select sqlc.embed(s), r.user_id as reservation_user_id
+from stays s
+join reservations r on r.id = s.reservation_id
+where s.lot_id = @lot_id and s.reservation_id = @reservation_id;
+
+-- name: GetReservationStayForUpdate :one
+select sqlc.embed(s), r.user_id as reservation_user_id
+from stays s
+join reservations r on r.id = s.reservation_id
+where s.lot_id = @lot_id and s.reservation_id = @reservation_id
+for update of s;
+
+-- name: ReopenReservationStay :execrows
+-- A reservation QR re-presented after the void (M3B-24, M3B-60): the voided
+-- reservation stay is reused. voided_at is kept.
+update stays
+set status = 'entry_pending', accepted_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and credential_kind = 'reservation' and status = 'voided';
+
+-- name: RefreshStayAccepted :execrows
+-- A reservation QR re-presented while its stay waits for the barrier pass
+-- (M3B-24): the 60 s pending window starts again.
+update stays
+set accepted_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status = 'entry_pending';

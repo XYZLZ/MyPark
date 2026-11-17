@@ -42,6 +42,8 @@ const (
 	KindTicket        = "ticket"
 	KindEmployeeCard  = "employee_card"
 	KindReservationQR = "reservation_qr"
+	// KindReservation is the credential_kind of a reservation stay.
+	KindReservation = "reservation"
 
 	DirectionEntry = "entry"
 	DirectionExit  = "exit"

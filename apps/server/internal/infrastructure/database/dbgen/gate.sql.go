@@ -214,6 +214,98 @@ func (q *Queries) GetOpenStayByCardForUpdate(ctx context.Context, arg GetOpenSta
 	return i, err
 }
 
+const getReservationStay = `-- name: GetReservationStay :one
+select s.id, s.public_id, s.lot_id, s.credential_kind, s.ticket_code_hash, s.employee_card_id, s.status, s.tariff_version_id, s.accepted_at, s.entered_at, s.paid_at, s.exit_deadline_at, s.exit_authorized_at, s.exited_at, s.voided_at, s.lost_ticket, s.updated_at, s.reservation_id, r.user_id as reservation_user_id
+from stays s
+join reservations r on r.id = s.reservation_id
+where s.lot_id = $1 and s.reservation_id = $2
+`
+
+type GetReservationStayParams struct {
+	LotID         int64
+	ReservationID pgtype.Int8
+}
+
+type GetReservationStayRow struct {
+	Stay              Stay
+	ReservationUserID int64
+}
+
+// The reservation's one stay (stays_reservation_key), unlocked: the QR entry
+// decides from it under the lot and reservation locks, and locks it only
+// after the slot loads (design 8.1). Lot-scoped (M2C-21).
+func (q *Queries) GetReservationStay(ctx context.Context, arg GetReservationStayParams) (GetReservationStayRow, error) {
+	row := q.db.QueryRow(ctx, getReservationStay, arg.LotID, arg.ReservationID)
+	var i GetReservationStayRow
+	err := row.Scan(
+		&i.Stay.ID,
+		&i.Stay.PublicID,
+		&i.Stay.LotID,
+		&i.Stay.CredentialKind,
+		&i.Stay.TicketCodeHash,
+		&i.Stay.EmployeeCardID,
+		&i.Stay.Status,
+		&i.Stay.TariffVersionID,
+		&i.Stay.AcceptedAt,
+		&i.Stay.EnteredAt,
+		&i.Stay.PaidAt,
+		&i.Stay.ExitDeadlineAt,
+		&i.Stay.ExitAuthorizedAt,
+		&i.Stay.ExitedAt,
+		&i.Stay.VoidedAt,
+		&i.Stay.LostTicket,
+		&i.Stay.UpdatedAt,
+		&i.Stay.ReservationID,
+		&i.ReservationUserID,
+	)
+	return i, err
+}
+
+const getReservationStayForUpdate = `-- name: GetReservationStayForUpdate :one
+select s.id, s.public_id, s.lot_id, s.credential_kind, s.ticket_code_hash, s.employee_card_id, s.status, s.tariff_version_id, s.accepted_at, s.entered_at, s.paid_at, s.exit_deadline_at, s.exit_authorized_at, s.exited_at, s.voided_at, s.lost_ticket, s.updated_at, s.reservation_id, r.user_id as reservation_user_id
+from stays s
+join reservations r on r.id = s.reservation_id
+where s.lot_id = $1 and s.reservation_id = $2
+for update of s
+`
+
+type GetReservationStayForUpdateParams struct {
+	LotID         int64
+	ReservationID pgtype.Int8
+}
+
+type GetReservationStayForUpdateRow struct {
+	Stay              Stay
+	ReservationUserID int64
+}
+
+func (q *Queries) GetReservationStayForUpdate(ctx context.Context, arg GetReservationStayForUpdateParams) (GetReservationStayForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getReservationStayForUpdate, arg.LotID, arg.ReservationID)
+	var i GetReservationStayForUpdateRow
+	err := row.Scan(
+		&i.Stay.ID,
+		&i.Stay.PublicID,
+		&i.Stay.LotID,
+		&i.Stay.CredentialKind,
+		&i.Stay.TicketCodeHash,
+		&i.Stay.EmployeeCardID,
+		&i.Stay.Status,
+		&i.Stay.TariffVersionID,
+		&i.Stay.AcceptedAt,
+		&i.Stay.EnteredAt,
+		&i.Stay.PaidAt,
+		&i.Stay.ExitDeadlineAt,
+		&i.Stay.ExitAuthorizedAt,
+		&i.Stay.ExitedAt,
+		&i.Stay.VoidedAt,
+		&i.Stay.LostTicket,
+		&i.Stay.UpdatedAt,
+		&i.Stay.ReservationID,
+		&i.ReservationUserID,
+	)
+	return i, err
+}
+
 const getStayByTicketHashForUpdate = `-- name: GetStayByTicketHashForUpdate :one
 select id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at, reservation_id from stays where lot_id = $1 and ticket_code_hash = $2 for update
 `
@@ -356,10 +448,10 @@ func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) (i
 }
 
 const insertStay = `-- name: InsertStay :one
-insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, status,
+insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, reservation_id, status,
                    tariff_version_id, accepted_at, entered_at, updated_at)
-values ($1, $2, $3, $4, $5,
-        $6, $7::timestamptz, $8, $7::timestamptz)
+values ($1, $2, $3, $4, $5, $6,
+        $7, $8::timestamptz, $9, $8::timestamptz)
 returning id, public_id
 `
 
@@ -368,6 +460,7 @@ type InsertStayParams struct {
 	CredentialKind  string
 	TicketCodeHash  []byte
 	EmployeeCardID  pgtype.Int8
+	ReservationID   pgtype.Int8
 	Status          string
 	TariffVersionID int64
 	Now             pgtype.Timestamptz
@@ -379,13 +472,15 @@ type InsertStayRow struct {
 	PublicID uuid.UUID
 }
 
-// Every business timestamp is the server clock (§8.4).
+// Every business timestamp is the server clock (§8.4). reservation_id is set
+// exactly for a reservation stay (stays_reservation_id_check).
 func (q *Queries) InsertStay(ctx context.Context, arg InsertStayParams) (InsertStayRow, error) {
 	row := q.db.QueryRow(ctx, insertStay,
 		arg.LotID,
 		arg.CredentialKind,
 		arg.TicketCodeHash,
 		arg.EmployeeCardID,
+		arg.ReservationID,
 		arg.Status,
 		arg.TariffVersionID,
 		arg.Now,
@@ -522,6 +617,50 @@ type ReactivateStayParams struct {
 // owes money again, so an exit authorization is cancelled.
 func (q *Queries) ReactivateStay(ctx context.Context, arg ReactivateStayParams) (int64, error) {
 	result, err := q.db.Exec(ctx, reactivateStay, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const refreshStayAccepted = `-- name: RefreshStayAccepted :execrows
+update stays
+set accepted_at = $1::timestamptz, updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and status = 'entry_pending'
+`
+
+type RefreshStayAcceptedParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// A reservation QR re-presented while its stay waits for the barrier pass
+// (M3B-24): the 60 s pending window starts again.
+func (q *Queries) RefreshStayAccepted(ctx context.Context, arg RefreshStayAcceptedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, refreshStayAccepted, arg.Now, arg.LotID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reopenReservationStay = `-- name: ReopenReservationStay :execrows
+update stays
+set status = 'entry_pending', accepted_at = $1::timestamptz, updated_at = $1::timestamptz
+where lot_id = $2 and id = $3 and credential_kind = 'reservation' and status = 'voided'
+`
+
+type ReopenReservationStayParams struct {
+	Now   pgtype.Timestamptz
+	LotID int64
+	ID    int64
+}
+
+// A reservation QR re-presented after the void (M3B-24, M3B-60): the voided
+// reservation stay is reused. voided_at is kept.
+func (q *Queries) ReopenReservationStay(ctx context.Context, arg ReopenReservationStayParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reopenReservationStay, arg.Now, arg.LotID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -192,3 +192,24 @@ update reservations
 set status = 'cancelled', cancelled_at = @now, cancelled_by = @cancelled_by,
     refund_reason = sqlc.narg('refund_reason'), updated_at = @now
 where id = @id and status in ('pending_payment', 'confirmed');
+
+-- name: GetReservationForQR :one
+-- The QR entry's lookup before any lock (design 11.1 step 1): lot-scoped, so
+-- another lot's reservation is simply not found.
+select r.id, r.public_id, r.qr_nonce
+from reservations r
+where r.lot_id = @lot_id and r.public_id = @public_id;
+
+-- name: LockReservationForEntry :one
+-- Taken after the lot lock (design 8.1, QR entry); the caller re-checks the nonce.
+select r.id, r.public_id, r.user_id, r.tariff_version_id, r.status, r.qr_nonce,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.lot_id = @lot_id and r.id = @id
+for update;
+
+-- name: CheckInReservation :execrows
+-- A valid QR inside the window with room (design 11.1).
+update reservations
+set status = 'checked_in', checked_in_at = @now, updated_at = @now
+where id = @id and status = 'confirmed';

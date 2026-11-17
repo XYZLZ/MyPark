@@ -164,9 +164,13 @@ func (Repo) InsertStay(ctx context.Context, s gate.NewStay) (uuid.UUID, error) {
 		LotID: s.LotID, CredentialKind: gate.KindTicket, TicketCodeHash: s.TicketCodeHash,
 		Status: "entry_pending", TariffVersionID: s.TariffVersionID, Now: ts(s.AcceptedAt),
 	}
-	if s.EmployeeCardID != 0 {
+	switch {
+	case s.EmployeeCardID != 0:
 		p.CredentialKind, p.TicketCodeHash = gate.KindEmployeeCard, nil
 		p.EmployeeCardID = pgtype.Int8{Int64: s.EmployeeCardID, Valid: true}
+	case s.ReservationID != 0:
+		p.CredentialKind, p.TicketCodeHash = gate.KindReservation, nil
+		p.ReservationID = pgtype.Int8{Int64: s.ReservationID, Valid: true}
 	}
 	row, err := qs.InsertStay(ctx, p)
 	if err != nil {
@@ -201,7 +205,7 @@ func toStay(row dbgen.Stay, err error) (gate.Stay, error) {
 		ID: row.ID, PublicID: row.PublicID, LotID: row.LotID, CredentialKind: row.CredentialKind,
 		Status: gate.Status(row.Status), EmployeeCardID: row.EmployeeCardID.Int64, TariffVersionID: row.TariffVersionID,
 		EnteredAt: row.EnteredAt.Time, PaidAt: row.PaidAt.Time, ExitDeadlineAt: row.ExitDeadlineAt.Time, ExitAuthorizedAt: row.ExitAuthorizedAt.Time,
-		LostTicket: row.LostTicket,
+		LostTicket: row.LostTicket, ReservationID: row.ReservationID.Int64,
 	}, nil
 }
 
@@ -387,4 +391,57 @@ func (Repo) ClearExitAuthorization(ctx context.Context, lotID, stayID int64, now
 	}
 	n, err := qs.ClearExitAuthorization(ctx, dbgen.ClearExitAuthorizationParams{Now: ts(now), LotID: lotID, ID: stayID})
 	return oneRow("clear exit authorization", stayID, n, err)
+}
+
+// ReservationStay implements gate.Repo.
+func (Repo) ReservationStay(ctx context.Context, lotID, reservationID int64) (gate.Stay, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Stay{}, err
+	}
+	row, err := qs.GetReservationStay(ctx, dbgen.GetReservationStayParams{
+		LotID: lotID, ReservationID: pgtype.Int8{Int64: reservationID, Valid: true},
+	})
+	return reservationStay(row.Stay, row.ReservationUserID, err)
+}
+
+// ReservationStayForUpdate implements gate.Repo.
+func (Repo) ReservationStayForUpdate(ctx context.Context, lotID, reservationID int64) (gate.Stay, error) {
+	qs, err := q(ctx)
+	if err != nil {
+		return gate.Stay{}, err
+	}
+	row, err := qs.GetReservationStayForUpdate(ctx, dbgen.GetReservationStayForUpdateParams{
+		LotID: lotID, ReservationID: pgtype.Int8{Int64: reservationID, Valid: true},
+	})
+	return reservationStay(row.Stay, row.ReservationUserID, err)
+}
+
+// reservationStay maps a reservation stay row with its reservation's user.
+func reservationStay(row dbgen.Stay, userID int64, err error) (gate.Stay, error) {
+	s, err := toStay(row, err)
+	if err == nil {
+		s.ReservationUserID = userID
+	}
+	return s, err
+}
+
+// ReopenReservationStay implements gate.Repo.
+func (Repo) ReopenReservationStay(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.ReopenReservationStay(ctx, dbgen.ReopenReservationStayParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("reopen reservation stay", stayID, n, err)
+}
+
+// RefreshAccepted implements gate.Repo.
+func (Repo) RefreshAccepted(ctx context.Context, lotID, stayID int64, now time.Time) error {
+	qs, err := q(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := qs.RefreshStayAccepted(ctx, dbgen.RefreshStayAcceptedParams{Now: ts(now), LotID: lotID, ID: stayID})
+	return oneRow("refresh accepted", stayID, n, err)
 }
