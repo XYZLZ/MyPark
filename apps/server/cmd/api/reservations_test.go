@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -421,4 +424,71 @@ func TestGetReservation_Representation(t *testing.T) {
 		t.Error("vehicle.plate_display is empty")
 	}
 	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+func TestListReservations_ScopesAndPaging(t *testing.T) {
+	e := newRsvEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	tok := e.token(d)
+	var past []string // newest arrival first
+	for i, st := range []string{"cancelled", "expired_unpaid", "completed"} {
+		past = append([]string{e.seedRes(d, st, rsvAt(-time.Duration(3-i)*24*time.Hour)).String()}, past...)
+	}
+	active := e.seedRes(d, "confirmed", rsvAt(time.Hour)).String()
+
+	ids := func(body map[string]any) []string {
+		var out []string
+		for _, it := range body["data"].([]any) {
+			out = append(out, it.(map[string]any)["id"].(string))
+		}
+		return out
+	}
+	list := func(q string) (int, map[string]any) { return e.do(tok, http.MethodGet, "/v1/reservations"+q, nil) }
+
+	for _, c := range []struct {
+		q    string
+		want []string
+	}{{"?scope=active", []string{active}}, {"", []string{active}}, {"?scope=past", past}} {
+		code, body := list(c.q)
+		if got := ids(body); code != http.StatusOK || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("list %q = %d %v, want %v", c.q, code, got, c.want)
+		}
+	}
+	code, p1 := list("?scope=past&limit=2")
+	next, _ := field(p1, "meta.page.next_cursor").(string)
+	if got := ids(p1); code != http.StatusOK || !reflect.DeepEqual(got, past[:2]) || next == "" || field(p1, "meta.page.limit") != 2.0 {
+		t.Fatalf("page 1 = %d %v next %q, want %v and a cursor", code, got, next, past[:2])
+	}
+	code, p2 := list("?scope=past&limit=2&cursor=" + url.QueryEscape(next))
+	if got := ids(p2); code != http.StatusOK || !reflect.DeepEqual(got, past[2:]) || field(p2, "meta.page.next_cursor") != nil {
+		t.Errorf("page 2 = %d %v, want %v and no cursor", code, got, past[2:])
+	}
+	other := testsupport.SeedDrivers(t, e.db, 1)[0]
+	if code, body := e.do(e.token(other), http.MethodGet, "/v1/reservations?scope=past", nil); code != http.StatusOK || len(ids(body)) != 0 {
+		t.Errorf("other driver list = %d %v, want empty", code, body)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// Review Focus 5: a bad scope, limit or cursor is a 422 naming the field, never a 500.
+func TestListReservations_BadCursorOrScope(t *testing.T) {
+	e := newRsvEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	tok := e.token(d)
+	enc := base64.RawURLEncoding.EncodeToString
+	for q, fieldName := range map[string]string{
+		"?scope=foo": "scope", "?limit=0": "limit", "?limit=51": "limit", "?limit=abc": "limit",
+		"?cursor=!!": "cursor", "?cursor=" + enc([]byte("not a cursor")): "cursor",
+		"?cursor=" + enc([]byte("2026-12-01T15:00:00Z|not-a-uuid")): "cursor",
+	} {
+		code, body := e.do(tok, http.MethodGet, "/v1/reservations"+q, nil)
+		if code != http.StatusUnprocessableEntity || errCode(body) != "validation.failed" {
+			t.Errorf("list %q = %d %v, want 422 validation.failed", q, code, body)
+			continue
+		}
+		fields, _ := field(body, "error.details.fields").([]any)
+		if len(fields) != 1 || fields[0].(map[string]any)["field"] != fieldName {
+			t.Errorf("list %q names %v, want field %q", q, fields, fieldName)
+		}
+	}
 }

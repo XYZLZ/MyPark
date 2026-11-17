@@ -244,3 +244,20 @@ func (r *Repo) Get(ctx context.Context, userID int64, id uuid.UUID) (reservation
 	}
 	return record(row), nil
 }
+
+// List implements reservations.Repo.
+func (r *Repo) List(ctx context.Context, userID int64, f reservations.ListFilter) ([]reservations.Record, error) {
+	p := dbgen.ListReservationsForUserParams{UserID: userID, Scope: f.Scope, RowLimit: int32(f.Limit)}
+	if f.After != nil {
+		p.HasCursor, p.CursorArrival, p.CursorPublicID = true, ts(f.After.ArrivalAt), f.After.PublicID
+	}
+	rows, err := r.q(ctx).ListReservationsForUser(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("reservations: list reservations: %w", err)
+	}
+	out := make([]reservations.Record, len(rows))
+	for i, row := range rows {
+		out[i] = record(dbgen.GetReservationForUserRow(row))
+	}
+	return out, nil
+}

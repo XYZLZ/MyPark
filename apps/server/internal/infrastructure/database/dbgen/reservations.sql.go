@@ -371,6 +371,115 @@ func (q *Queries) InsertReservation(ctx context.Context, arg InsertReservationPa
 	return i, err
 }
 
+const listReservationsForUser = `-- name: ListReservationsForUser :many
+select r.id, r.public_id, r.vehicle_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.status, r.fee_cents, r.payment_due_at, r.created_at, r.confirmed_at, r.cancelled_at,
+       r.cancelled_by, r.refund_reason, r.checked_in_at, r.completed_at, r.expired_at,
+       l.public_id as lot_public_id,
+       v.public_id as vehicle_public_id, v.plate_display, v.make, v.model, v.color
+from reservations r
+join lots l on l.id = r.lot_id
+join vehicles v on v.id = r.vehicle_id
+where r.user_id = $1
+  and ($2::text = ''
+       or (r.status in ('pending_payment', 'confirmed', 'checked_in')) = ($2::text = 'active'))
+  and (not $3::boolean
+       or (r.arrival_at, r.id) < (
+           $4::timestamptz,
+           coalesce((select c.id from reservations c where c.public_id = $5::uuid and c.user_id = $1), 0)))
+order by r.arrival_at desc, r.id desc
+limit $6::int
+`
+
+type ListReservationsForUserParams struct {
+	UserID         int64
+	Scope          string
+	HasCursor      bool
+	CursorArrival  pgtype.Timestamptz
+	CursorPublicID uuid.UUID
+	RowLimit       int32
+}
+
+type ListReservationsForUserRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	VehicleID       int64
+	ArrivalAt       pgtype.Timestamptz
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+	Status          string
+	FeeCents        int64
+	PaymentDueAt    pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	ConfirmedAt     pgtype.Timestamptz
+	CancelledAt     pgtype.Timestamptz
+	CancelledBy     pgtype.Text
+	RefundReason    pgtype.Text
+	CheckedInAt     pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	ExpiredAt       pgtype.Timestamptz
+	LotPublicID     uuid.UUID
+	VehiclePublicID uuid.UUID
+	PlateDisplay    string
+	Make            string
+	Model           string
+	Color           string
+}
+
+// Keyset page, newest arrival first (M3B-36). @scope is ” (all), 'active' or
+// 'past'. The cursor row is resolved by public id inside the user's own rows.
+func (q *Queries) ListReservationsForUser(ctx context.Context, arg ListReservationsForUserParams) ([]ListReservationsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listReservationsForUser,
+		arg.UserID,
+		arg.Scope,
+		arg.HasCursor,
+		arg.CursorArrival,
+		arg.CursorPublicID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReservationsForUserRow{}
+	for rows.Next() {
+		var i ListReservationsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.VehicleID,
+			&i.ArrivalAt,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.Status,
+			&i.FeeCents,
+			&i.PaymentDueAt,
+			&i.CreatedAt,
+			&i.ConfirmedAt,
+			&i.CancelledAt,
+			&i.CancelledBy,
+			&i.RefundReason,
+			&i.CheckedInAt,
+			&i.CompletedAt,
+			&i.ExpiredAt,
+			&i.LotPublicID,
+			&i.VehiclePublicID,
+			&i.PlateDisplay,
+			&i.Make,
+			&i.Model,
+			&i.Color,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockSlotLoads = `-- name: LockSlotLoads :many
 select held from reservation_slot_loads
 where lot_id = $1 and slot_start >= $2 and slot_start < $3

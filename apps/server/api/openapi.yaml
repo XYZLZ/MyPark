@@ -945,7 +945,6 @@ paths:
       operationId: listReservations
       summary: List the current driver's reservations
       description: Newest arrival first, keyset-paginated. `scope=active` is `pending_payment`, `confirmed` and `checked_in`; `scope=past` is the rest.
-      x-mypark-pending: S3.3
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       parameters:

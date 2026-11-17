@@ -183,6 +183,7 @@ var matrix = map[string]matrixEntry{
 		})
 	}},
 
+	"GET /v1/reservations": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/reservations", nil) }},
 	"GET /v1/reservations/{id}": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
 		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f), nil) }},
 
@@ -488,6 +489,7 @@ var specPolicy = map[string]struct {
 	"DELETE /v1/vehicles/{id}":         {access: "driver", limit: &ratelimit.VehicleWriteUser},
 	"POST /v1/reservations/quote":      {access: "driver"},
 	"POST /v1/reservations":            {access: "driver", limit: &ratelimit.ReservationWriteUser},
+	"GET /v1/reservations":             {access: "driver"},
 	"GET /v1/reservations/{id}":        {access: "driver"},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},

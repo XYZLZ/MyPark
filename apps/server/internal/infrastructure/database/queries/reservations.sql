@@ -103,3 +103,26 @@ from reservations r
 join lots l on l.id = r.lot_id
 join vehicles v on v.id = r.vehicle_id
 where r.public_id = @public_id and r.user_id = @user_id;
+
+
+-- name: ListReservationsForUser :many
+-- Keyset page, newest arrival first (M3B-36). @scope is '' (all), 'active' or
+-- 'past'. The cursor row is resolved by public id inside the user's own rows.
+select r.id, r.public_id, r.vehicle_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.status, r.fee_cents, r.payment_due_at, r.created_at, r.confirmed_at, r.cancelled_at,
+       r.cancelled_by, r.refund_reason, r.checked_in_at, r.completed_at, r.expired_at,
+       l.public_id as lot_public_id,
+       v.public_id as vehicle_public_id, v.plate_display, v.make, v.model, v.color
+from reservations r
+join lots l on l.id = r.lot_id
+join vehicles v on v.id = r.vehicle_id
+where r.user_id = @user_id
+  and (@scope::text = ''
+       or (r.status in ('pending_payment', 'confirmed', 'checked_in')) = (@scope::text = 'active'))
+  and (not @has_cursor::boolean
+       or (r.arrival_at, r.id) < (
+           @cursor_arrival::timestamptz,
+           coalesce((select c.id from reservations c where c.public_id = @cursor_public_id::uuid and c.user_id = @user_id), 0)))
+order by r.arrival_at desc, r.id desc
+limit @row_limit::int;

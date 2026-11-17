@@ -3,6 +3,7 @@ package reservations
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,7 @@ func (h *Handler) Register(r *router.Router) {
 	r.Handle("POST /v1/reservations/quote", router.Policy{Roles: router.DriverOnly}, h.quote)
 	r.Handle("POST /v1/reservations",
 		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.create)
+	r.Handle("GET /v1/reservations", router.Policy{Roles: router.DriverOnly}, h.list)
 	r.Handle("GET /v1/reservations/{id}", router.Policy{Roles: router.DriverOnly}, h.get)
 }
 
@@ -198,4 +200,40 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, r, http.StatusOK, toReservationDTO(v))
+}
+
+// list parses the query by hand: a bad limit is a 422 naming the field, like
+// a bad scope or cursor. A missing scope is "active", as the contract says.
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.userID(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	in := ListQuery{Scope: ScopeActive, Limit: DefaultPageSize, Cursor: q.Get("cursor")}
+	if s := q.Get("scope"); s != "" {
+		in.Scope = s
+	}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			httpx.WriteError(w, r, h.log, fieldError("limit", "numeric", ""))
+			return
+		}
+		in.Limit = n
+	}
+	views, next, err := h.svc.List(r.Context(), uid, in)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	items := make([]reservationDTO, len(views))
+	for i, v := range views {
+		items[i] = toReservationDTO(v)
+	}
+	page := response.Page{Limit: in.Limit}
+	if next != "" {
+		page.NextCursor = &next
+	}
+	response.List(w, r, items, page)
 }

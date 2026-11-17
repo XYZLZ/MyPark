@@ -105,9 +105,25 @@ type Record struct {
 	View
 }
 
+// Cursor is the keyset position after the last reservation of a page.
+type Cursor struct {
+	ArrivalAt time.Time
+	PublicID  uuid.UUID
+}
+
+// ListFilter selects one page of a driver's reservations, newest arrival first.
+type ListFilter struct {
+	// Scope is "" (every status), "active" or "past".
+	Scope string
+	After *Cursor
+	Limit int
+}
+
 // ReadRepo is the part of the storage port behind the read and change use
 // cases. Like Repo, every method runs on the context transaction.
 type ReadRepo interface {
 	// Get reads one reservation of the user, or ErrNotFound.
 	Get(ctx context.Context, userID int64, id uuid.UUID) (Record, error)
+	// List returns at most f.Limit reservations of the user.
+	List(ctx context.Context, userID int64, f ListFilter) ([]Record, error)
 }
