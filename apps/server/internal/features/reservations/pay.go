@@ -138,6 +138,9 @@ func (s *Service) current(ctx context.Context, userID int64, id uuid.UUID, att p
 		}
 		rec, err := s.repo.Get(ctx, userID, id)
 		view = rec.View
+		if err == nil {
+			err = s.withLatestPayment(ctx, rec.RowID, &view)
+		}
 		return err
 	})
 	if err != nil {

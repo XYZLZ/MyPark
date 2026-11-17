@@ -111,6 +111,10 @@ type View struct {
 	CheckedInAt  *time.Time
 	CompletedAt  *time.Time
 	ExpiredAt    *time.Time
+
+	// LatestPayment is the newest fee attempt, nil before the first one. It is
+	// filled by the read paths (Get, List, the pay answer), not by the repo.
+	LatestPayment *PaymentRef
 }
 
 // checked is the outcome of the checks the quote and the create share.
@@ -242,4 +246,25 @@ func (s *Service) Quote(ctx context.Context, userID int64, in QuoteInput) (Quote
 		return nil
 	})
 	return out, err
+}
+
+// PaymentRef is the newest fee attempt of a reservation as clients see it.
+type PaymentRef struct {
+	ID          uuid.UUID
+	Status      string
+	FailureCode string // set when failed
+}
+
+// withLatestPayment fills v.LatestPayment inside the transaction of ctx. A
+// service built without a payments port leaves it nil.
+func (s *Service) withLatestPayment(ctx context.Context, reservationRowID int64, v *View) error {
+	if s.fees == nil {
+		return nil
+	}
+	fee, found, err := s.fees.LatestFee(ctx, reservationRowID)
+	if err != nil || !found {
+		return err
+	}
+	v.LatestPayment = &PaymentRef{ID: fee.PublicID, Status: fee.Status, FailureCode: fee.FailureCode}
+	return nil
 }

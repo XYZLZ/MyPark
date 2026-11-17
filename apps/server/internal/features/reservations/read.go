@@ -55,6 +55,9 @@ func (s *Service) Get(ctx context.Context, userID int64, id uuid.UUID) (View, er
 			return apperr.NotFound(errcodes.ReservationNotFound)
 		}
 		out = rec.View
+		if err == nil {
+			err = s.withLatestPayment(ctx, rec.RowID, &out)
+		}
 		return err
 	})
 	return out, err
@@ -90,6 +93,9 @@ func (s *Service) List(ctx context.Context, userID int64, q ListQuery) ([]View, 
 		}
 		var err error
 		recs, err = s.repo.List(ctx, userID, f)
+		for i := 0; err == nil && i < len(recs); i++ {
+			err = s.withLatestPayment(ctx, recs[i].RowID, &recs[i].View)
+		}
 		return err
 	})
 	if err != nil {

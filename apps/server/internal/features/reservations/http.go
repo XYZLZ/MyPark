@@ -111,7 +111,7 @@ type reservationDTO struct {
 	CheckedInAt   *time.Time            `json:"checked_in_at"`
 	CompletedAt   *time.Time            `json:"completed_at"`
 	ExpiredAt     *time.Time            `json:"expired_at"`
-	LatestPayment any                   `json:"latest_payment"`
+	LatestPayment *latestPaymentDTO     `json:"latest_payment"`
 	Refund        any                   `json:"refund"`
 	Stay          any                   `json:"stay"`
 }
@@ -135,7 +135,7 @@ func toReservationDTO(v View) reservationDTO {
 		FeeCents: v.FeeCents, PaymentDueAt: v.PaymentDueAt.UTC(), CreatedAt: v.CreatedAt.UTC(),
 		ConfirmedAt: utcPtr(v.ConfirmedAt), CancelledAt: utcPtr(v.CancelledAt), CancelledBy: v.CancelledBy,
 		RefundReason: v.RefundReason, CheckedInAt: utcPtr(v.CheckedInAt), CompletedAt: utcPtr(v.CompletedAt),
-		ExpiredAt: utcPtr(v.ExpiredAt),
+		ExpiredAt: utcPtr(v.ExpiredAt), LatestPayment: toLatestPaymentDTO(v.LatestPayment),
 	}
 }
 
@@ -263,4 +263,21 @@ func (h *Handler) changeVehicle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, r, http.StatusOK, toReservationDTO(v))
+}
+
+type latestPaymentDTO struct {
+	ID          string  `json:"id"`
+	Status      string  `json:"status"`
+	FailureCode *string `json:"failure_code"`
+}
+
+func toLatestPaymentDTO(p *PaymentRef) *latestPaymentDTO {
+	if p == nil {
+		return nil
+	}
+	out := &latestPaymentDTO{ID: p.ID.String(), Status: p.Status}
+	if p.FailureCode != "" {
+		out.FailureCode = &p.FailureCode
+	}
+	return out
 }
