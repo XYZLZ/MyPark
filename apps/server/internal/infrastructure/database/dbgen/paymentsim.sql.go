@@ -89,3 +89,39 @@ func (q *Queries) InsertSimCharge(ctx context.Context, arg InsertSimChargeParams
 	)
 	return i, err
 }
+
+const refundSimCharge = `-- name: RefundSimCharge :one
+update sim_gateway_charges
+set refund_idempotency_key = $1,
+    refund_provider_ref    = coalesce(refund_provider_ref, $2),
+    refunded_at            = coalesce(refunded_at, $3::timestamptz)
+where idempotency_key = $4
+  and outcome = 'succeeded'
+  and amount_cents = $5
+  and (refund_idempotency_key is null or refund_idempotency_key = $1)
+returning refund_provider_ref::text as refund_provider_ref
+`
+
+type RefundSimChargeParams struct {
+	RefundKey         pgtype.Text
+	RefundProviderRef pgtype.Text
+	Now               pgtype.Timestamptz
+	ChargeKey         string
+	AmountCents       int64
+}
+
+// Full refund, once per charge: only a succeeded charge of the same amount, and
+// only with no refund yet or the same refund key. A repeat keeps the first
+// provider ref and timestamp.
+func (q *Queries) RefundSimCharge(ctx context.Context, arg RefundSimChargeParams) (string, error) {
+	row := q.db.QueryRow(ctx, refundSimCharge,
+		arg.RefundKey,
+		arg.RefundProviderRef,
+		arg.Now,
+		arg.ChargeKey,
+		arg.AmountCents,
+	)
+	var refund_provider_ref string
+	err := row.Scan(&refund_provider_ref)
+	return refund_provider_ref, err
+}
