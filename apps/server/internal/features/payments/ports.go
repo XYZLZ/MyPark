@@ -71,6 +71,9 @@ type Fees interface {
 	// have a charge in flight) and must run in a transaction, where it takes the
 	// reservation lock before touching the payment (design 8.1).
 	MarkNotSubmitted(ctx context.Context, paymentID int64, cutoff, now time.Time) (bool, error)
+	// MarkLateSuccess turns a failed not_submitted payment into succeeded: its
+	// charge reached the gateway after all. Fenced on that exact state.
+	MarkLateSuccess(ctx context.Context, paymentID int64, res ChargeResult, now time.Time) (bool, error)
 	// LiveFee is the pending, succeeded or refunded fee of the reservation.
 	LiveFee(ctx context.Context, reservationID int64) (FeePayment, bool, error)
 	// LatestFee is the newest fee attempt of the reservation, whatever its status.

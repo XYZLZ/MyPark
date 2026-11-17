@@ -70,6 +70,9 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 	if fee, err = s.fees.FeeByID(ctx, paymentID); err != nil {
 		return err
 	}
+	if fee.Status == payments.StatusFailed && fee.FailureCode == payments.FailureNotSubmitted {
+		return s.lateCharge(ctx, rsv, fee, res, now)
+	}
 	if done, err := s.settled(ctx, fee, rsv); done {
 		return err
 	}
@@ -197,3 +200,32 @@ func (s *Service) settled(ctx context.Context, fee payments.FeePayment, rsv Appl
 var lotZone = time.FixedZone("America/Santo_Domingo", -4*60*60)
 
 func lotTime(t time.Time) string { return t.In(lotZone).Format("2006-01-02 15:04") }
+
+// lateCharge handles a success for a payment the reconcile job had marked
+// not_submitted: the pay request stalled past the cutoff and its charge landed
+// afterwards (design 9.4 step 5, money is never kept by accident). The payment
+// becomes succeeded and is refunded in full; the reservation is left alone,
+// because the driver may already have paid again with a new key. It runs under
+// the reservation lock, in the lock order of design 8.1.
+func (s *Service) lateCharge(ctx context.Context, rsv ApplyRow, fee payments.FeePayment, res payments.ChargeResult, now time.Time) error {
+	// The unique live-fee index forbids a second live attempt; a driver who
+	// paid again holds it, so this row cannot become succeeded. Stay loud.
+	if _, live, err := s.fees.LiveFee(ctx, fee.ReservationID); err != nil {
+		return err
+	} else if live {
+		s.log.ErrorContext(ctx, "reservations: late charge on a not_submitted payment, another fee is live",
+			"payment_id", fee.PublicID, "reservation_id", rsv.PublicID)
+		return payments.ErrSuccessAfterFinal
+	}
+	ok, err := s.fees.MarkLateSuccess(ctx, fee.ID, res, now)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("reservations: payment %d changed under the reservation lock", fee.ID)
+	}
+	s.log.WarnContext(ctx, "reservations: charge landed after the payment was marked not_submitted, refunding",
+		"payment_id", fee.PublicID, "reservation_id", rsv.PublicID)
+	_, err = s.fees.QueueRefund(ctx, fee.ID, fee.AmountCents, payments.RefundFacilityUnavailable, now)
+	return err
+}

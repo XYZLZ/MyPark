@@ -75,3 +75,11 @@ for update of r;
 update payments
 set status = 'failed', failed_at = @now, failure_code = 'not_submitted'
 where id = @id and kind = 'reservation_fee' and status = 'pending' and created_at < @cutoff;
+
+-- name: FinalizeFeeLateSuccess :execrows
+-- A charge that landed after the job marked the attempt not_submitted (design
+-- 9.4): failed -> succeeded, fenced on that exact state. The failed check
+-- requires failed_at and failure_code to go with the status.
+update payments
+set status = 'succeeded', succeeded_at = @now, provider_ref = @provider_ref, failed_at = null, failure_code = null
+where id = @id and kind = 'reservation_fee' and status = 'failed' and failure_code = 'not_submitted';

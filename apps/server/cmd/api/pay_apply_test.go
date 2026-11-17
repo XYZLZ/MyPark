@@ -274,3 +274,53 @@ func TestApply_ConfirmEmailPayload(t *testing.T) {
 		t.Errorf("payload = %v, want the five keys plus qr_token", got)
 	}
 }
+
+// Risk review: the pay request stalls past the reconcile cutoff, the job marks
+// the attempt not_submitted, then the charge lands at the gateway. The success
+// must not be kept without a refund, and the reservation must not be confirmed.
+func TestApply_LateChargeAfterNotSubmitted(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	rec, _ := e.reconciler()
+	e.clk.Advance(61 * time.Second)
+	if n, err := rec.Run(t.Context(), e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Run = %d, %v; want 1 (not_submitted)", n, err)
+	}
+	var key string
+	if err := e.db.App.QueryRow(t.Context(), `select idempotency_key from payments where id = $1`, f.paymentID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	// The stalled pay request finally charges.
+	res, err := e.gw.inner.Charge(t.Context(), payments.ChargeRequest{
+		IdempotencyKey: key, AmountCents: 15000,
+		Card: &payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "123"},
+	})
+	if err != nil || res.Outcome != payments.ChargeSucceeded {
+		t.Fatalf("late charge = %+v, %v", res, err)
+	}
+
+	if err := f.svc.Apply(t.Context(), f.paymentID, res); err != nil {
+		t.Fatalf("apply = %v, want nil (handled)", err)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded' and provider_ref = $2
+	                 and succeeded_at = $3 and failed_at is null and failure_code is null`, f.paymentID, res.ProviderRef, e.clk.Now()); n != 1 {
+		t.Error("payment must be succeeded with the provider ref and no failure fields")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and status = 'pending' and amount_cents = 15000
+	                 and reason = 'facility_unavailable'`, f.paymentID); n != 1 {
+		t.Error("want exactly one pending full refund, facility_unavailable")
+	}
+	if got := e.status(f.rsvID); got != "pending_payment" {
+		t.Errorf("reservation = %s, want pending_payment (never confirmed from this path)", got)
+	}
+	if !strings.Contains(e.logs.String(), "level=WARN") || strings.Contains(e.logs.String(), res.ProviderRef) {
+		t.Error("want a warn log without the provider ref")
+	}
+	if err := f.svc.Apply(t.Context(), f.paymentID, res); err != nil {
+		t.Fatalf("second apply = %v, want nil", err)
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1`, f.paymentID); n != 1 {
+		t.Errorf("refunds after a second Apply = %d, want 1", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}

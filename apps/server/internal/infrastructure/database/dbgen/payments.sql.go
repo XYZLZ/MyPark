@@ -32,6 +32,29 @@ func (q *Queries) FinalizeFeeFailed(ctx context.Context, arg FinalizeFeeFailedPa
 	return result.RowsAffected(), nil
 }
 
+const finalizeFeeLateSuccess = `-- name: FinalizeFeeLateSuccess :execrows
+update payments
+set status = 'succeeded', succeeded_at = $1, provider_ref = $2, failed_at = null, failure_code = null
+where id = $3 and kind = 'reservation_fee' and status = 'failed' and failure_code = 'not_submitted'
+`
+
+type FinalizeFeeLateSuccessParams struct {
+	Now         pgtype.Timestamptz
+	ProviderRef pgtype.Text
+	ID          int64
+}
+
+// A charge that landed after the job marked the attempt not_submitted (design
+// 9.4): failed -> succeeded, fenced on that exact state. The failed check
+// requires failed_at and failure_code to go with the status.
+func (q *Queries) FinalizeFeeLateSuccess(ctx context.Context, arg FinalizeFeeLateSuccessParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finalizeFeeLateSuccess, arg.Now, arg.ProviderRef, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finalizeFeeNotSubmitted = `-- name: FinalizeFeeNotSubmitted :execrows
 update payments
 set status = 'failed', failed_at = $1, failure_code = 'not_submitted'

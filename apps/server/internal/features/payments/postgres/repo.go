@@ -226,3 +226,14 @@ func (r *Repo) QueueRefund(ctx context.Context, paymentID, amountCents int64, re
 		Reason: row.Reason, Status: row.Status,
 	}, nil
 }
+
+// MarkLateSuccess implements payments.Fees.
+func (r *Repo) MarkLateSuccess(ctx context.Context, paymentID int64, res payments.ChargeResult, now time.Time) (bool, error) {
+	n, err := r.q(ctx).FinalizeFeeLateSuccess(ctx, dbgen.FinalizeFeeLateSuccessParams{
+		ID: paymentID, Now: ts(now), ProviderRef: text(res.ProviderRef),
+	})
+	if err != nil {
+		return false, fmt.Errorf("payments: late success %d: %w", paymentID, err)
+	}
+	return n == 1, nil
+}
