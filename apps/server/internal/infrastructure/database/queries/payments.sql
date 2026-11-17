@@ -157,3 +157,30 @@ where r.id = stuck.id and r.status = 'pending' and r.attempts = stuck.attempts
 returning r.id, r.public_id, r.payment_id, r.amount_cents, r.attempts::int as attempts,
           r.idempotency_key, p.idempotency_key as charge_key, p.public_id as payment_public_id,
           rv.id as reservation_id, rv.public_id as reservation_public_id, rv.lot_id;
+
+-- name: ListReceiptsForUser :many
+-- Receipts of one driver (design 7.10, M3B-37): every payment row with
+-- user_id = me, newest first on (created_at, id). @has_id narrows to one public
+-- id (the detail read); the cursor row is resolved by public id inside the
+-- user's own rows. The reservation is the fee's own or the one of the stay a
+-- parking fee paid; the latest refund is embedded. provider_ref and card data
+-- beyond brand and last four are never selected.
+select p.id, p.public_id, p.kind, p.method, p.amount_cents, p.status, p.card_brand, p.card_last4,
+       p.failure_code, p.created_at, p.succeeded_at, p.refunded_at,
+       rv.public_id as reservation_public_id,
+       rf.public_id as refund_public_id, rf.status as refund_status, rf.amount_cents as refund_amount_cents,
+       rf.reason as refund_reason, rf.succeeded_at as refund_succeeded_at
+from payments p
+left join stays s on s.id = p.stay_id
+left join reservations rv on rv.id = coalesce(p.reservation_id, s.reservation_id)
+left join refunds rf on rf.id = (
+    select f.id from refunds f where f.payment_id = p.id order by f.created_at desc, f.id desc limit 1
+)
+where p.user_id = @user_id
+  and (not @has_id::boolean or p.public_id = @public_id::uuid)
+  and (not @has_cursor::boolean
+       or (p.created_at, p.id) < (
+           @cursor_created::timestamptz,
+           coalesce((select c.id from payments c where c.public_id = @cursor_public_id::uuid and c.user_id = @user_id), 0)))
+order by p.created_at desc, p.id desc
+limit @row_limit::int;

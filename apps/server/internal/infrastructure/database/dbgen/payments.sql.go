@@ -579,6 +579,112 @@ func (q *Queries) ListPendingFeesBefore(ctx context.Context, arg ListPendingFees
 	return items, nil
 }
 
+const listReceiptsForUser = `-- name: ListReceiptsForUser :many
+select p.id, p.public_id, p.kind, p.method, p.amount_cents, p.status, p.card_brand, p.card_last4,
+       p.failure_code, p.created_at, p.succeeded_at, p.refunded_at,
+       rv.public_id as reservation_public_id,
+       rf.public_id as refund_public_id, rf.status as refund_status, rf.amount_cents as refund_amount_cents,
+       rf.reason as refund_reason, rf.succeeded_at as refund_succeeded_at
+from payments p
+left join stays s on s.id = p.stay_id
+left join reservations rv on rv.id = coalesce(p.reservation_id, s.reservation_id)
+left join refunds rf on rf.id = (
+    select f.id from refunds f where f.payment_id = p.id order by f.created_at desc, f.id desc limit 1
+)
+where p.user_id = $1
+  and (not $2::boolean or p.public_id = $3::uuid)
+  and (not $4::boolean
+       or (p.created_at, p.id) < (
+           $5::timestamptz,
+           coalesce((select c.id from payments c where c.public_id = $6::uuid and c.user_id = $1), 0)))
+order by p.created_at desc, p.id desc
+limit $7::int
+`
+
+type ListReceiptsForUserParams struct {
+	UserID         pgtype.Int8
+	HasID          bool
+	PublicID       uuid.UUID
+	HasCursor      bool
+	CursorCreated  pgtype.Timestamptz
+	CursorPublicID uuid.UUID
+	RowLimit       int32
+}
+
+type ListReceiptsForUserRow struct {
+	ID                  int64
+	PublicID            uuid.UUID
+	Kind                string
+	Method              string
+	AmountCents         int64
+	Status              string
+	CardBrand           pgtype.Text
+	CardLast4           pgtype.Text
+	FailureCode         pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	SucceededAt         pgtype.Timestamptz
+	RefundedAt          pgtype.Timestamptz
+	ReservationPublicID pgtype.UUID
+	RefundPublicID      pgtype.UUID
+	RefundStatus        pgtype.Text
+	RefundAmountCents   pgtype.Int8
+	RefundReason        pgtype.Text
+	RefundSucceededAt   pgtype.Timestamptz
+}
+
+// Receipts of one driver (design 7.10, M3B-37): every payment row with
+// user_id = me, newest first on (created_at, id). @has_id narrows to one public
+// id (the detail read); the cursor row is resolved by public id inside the
+// user's own rows. The reservation is the fee's own or the one of the stay a
+// parking fee paid; the latest refund is embedded. provider_ref and card data
+// beyond brand and last four are never selected.
+func (q *Queries) ListReceiptsForUser(ctx context.Context, arg ListReceiptsForUserParams) ([]ListReceiptsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listReceiptsForUser,
+		arg.UserID,
+		arg.HasID,
+		arg.PublicID,
+		arg.HasCursor,
+		arg.CursorCreated,
+		arg.CursorPublicID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReceiptsForUserRow{}
+	for rows.Next() {
+		var i ListReceiptsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.Kind,
+			&i.Method,
+			&i.AmountCents,
+			&i.Status,
+			&i.CardBrand,
+			&i.CardLast4,
+			&i.FailureCode,
+			&i.CreatedAt,
+			&i.SucceededAt,
+			&i.RefundedAt,
+			&i.ReservationPublicID,
+			&i.RefundPublicID,
+			&i.RefundStatus,
+			&i.RefundAmountCents,
+			&i.RefundReason,
+			&i.RefundSucceededAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPaymentForRefund = `-- name: LockPaymentForRefund :one
 select id from payments where id = $1 for update
 `
