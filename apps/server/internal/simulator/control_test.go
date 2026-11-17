@@ -340,3 +340,52 @@ func TestControl_DrainingRunRefusesCarsAndFaults(t *testing.T) {
 		t.Errorf("fault during a drain = %d %s, want 409 simulator.not_running", r.status, r.raw)
 	}
 }
+
+func TestControl_InjectReservationQR(t *testing.T) {
+	c := newControlRig(t)
+	qr := strings.Repeat("Ab0_-x", 14) + "Zz" // 86 characters
+	r := c.call(t, http.MethodPost, "/control/cars", `{"credential":"reservation_qr","qr":"`+qr+`","hold":true}`)
+	if r.status != http.StatusAccepted || !strings.Contains(string(r.body.Data), `"car_id":"car-000001"`) {
+		t.Fatalf("inject = %d %s", r.status, r.raw)
+	}
+
+	for _, tc := range []struct{ body, rule string }{
+		{`{"credential":"reservation_qr"}`, "required"},
+		{`{"credential":"ticket","qr":"` + qr + `"}`, "excluded_unless"},
+		{`{"credential":"employee_card","qr":"` + qr + `"}`, "excluded_unless"},
+		{`{"credential":"reservation_qr","qr":"` + qr + `\n"}`, "pattern"},    // Review Focus 5
+		{`{"credential":"reservation_qr","qr":" ` + qr + `"}`, "pattern"},     // leading space
+		{`{"credential":"reservation_qr","qr":"` + qr[:85] + `"}`, "pattern"}, // short
+		{`{"credential":"reservation_qr","qr":"` + qr[:85] + `+"}`, "pattern"},
+		{`{"credential":"reservation_qr","qr":"` + qr + `","card":"EMP-001"}`, "excluded_unless"},
+	} {
+		r := c.call(t, http.MethodPost, "/control/cars", tc.body)
+		if r.status != 422 || r.code() != "validation.failed" || !strings.Contains(r.raw, `"rule":"`+tc.rule+`"`) || !strings.Contains(r.raw, `"field":"`+firstField(tc.body)+`"`) {
+			t.Errorf("inject %s = %d %s, want 422 %s", tc.body, r.status, r.raw, tc.rule)
+		}
+		if strings.Contains(r.raw, qr) || strings.Contains(r.raw, qr[:85]) {
+			t.Errorf("inject %s echoed the token: %s", tc.body, r.raw)
+		}
+	}
+
+	// The token reaches neither the event log nor the control API's own logs.
+	eventually(t, "the QR car's entry", func() bool {
+		return len(c.call(t, http.MethodGet, "/control/events", "").raw) > 10 && strings.Contains(c.call(t, http.MethodGet, "/control/events", "").raw, "entry.credential_presented")
+	})
+	ev := c.call(t, http.MethodGet, "/control/events", "")
+	if strings.Contains(ev.raw, qr) || strings.Contains(c.logs.String(), qr) {
+		t.Error("the QR token leaked into the events or the logs")
+	}
+	if !strings.Contains(ev.raw, `"credential":"reservation_qr"`) || !strings.Contains(ev.raw, `"credential_ref":"sha256:`) {
+		t.Errorf("events lack the credential kind and ref: %s", ev.raw)
+	}
+}
+
+// firstField is the field a rejected inject body is expected to name: qr, or
+// card where the body carries one next to a valid qr.
+func firstField(body string) string {
+	if strings.Contains(body, `"card"`) {
+		return "card"
+	}
+	return "qr"
+}

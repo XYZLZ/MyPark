@@ -2,6 +2,8 @@ package simulator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -20,6 +22,8 @@ type CredentialKind string
 const (
 	CredTicket       CredentialKind = "ticket"
 	CredEmployeeCard CredentialKind = "employee_card"
+	// CredReservationQR is a reservation's QR token (M3B-46).
+	CredReservationQR CredentialKind = "reservation_qr"
 )
 
 // Fault is a sensor failure mode (design §13.3).
@@ -54,6 +58,7 @@ type Car struct {
 	ID         string
 	Cred       CredentialKind
 	Card       string
+	QR         secret.String // CredReservationQR only; revealed only into the device payload
 	Hold       bool
 	Dwell      time.Duration
 	LoseTicket bool
@@ -234,13 +239,36 @@ func (f *FleetSim) between(lo, hi time.Duration) time.Duration {
 	return lo + time.Duration(f.e.Rand().Int64N(int64((hi-lo)/time.Second)+1))*time.Second
 }
 
+// credential is the {kind, value} a car presents. It is the only place that
+// reveals a QR token.
+func (f *FleetSim) credential(car *Car) map[string]any {
+	value := car.TicketCode
+	switch car.Cred {
+	case CredEmployeeCard:
+		value = devicefleet.CardUID(f.fleet, car.Card)
+	case CredReservationQR:
+		value = car.QR.Reveal()
+	}
+	return map[string]any{"kind": string(car.Cred), "value": value}
+}
+
+// tokenRef is the log's stand-in for a token: sha256:<12 hex>.
+func tokenRef(token secret.String) string {
+	sum := sha256.Sum256([]byte(token.Reveal()))
+	return "sha256:" + hex.EncodeToString(sum[:])[:12]
+}
+
 // send posts one event, logs it and reports whether the server accepted it.
 // A transport failure or a non-2xx answer is logged as result "error".
 func (f *FleetSim) send(ctx context.Context, r *carRun, dev devicefleet.Device, typ string, payload any) (Reply, bool) {
 	rep, err := f.c.Send(ctx, dev, Outgoing{
 		EventID: uuid.New(), Type: typ, Payload: payload,
 	})
-	f.log.Append(outcome(LogEntry{At: f.e.Now(), Device: dev.Name, Type: typ, CarID: r.car.ID}, rep, err))
+	entry := LogEntry{At: f.e.Now(), Device: dev.Name, Type: typ, CarID: r.car.ID}
+	if r.car.Cred == CredReservationQR {
+		entry.Credential, entry.CredentialRef = string(CredReservationQR), tokenRef(r.car.QR)
+	}
+	f.log.Append(outcome(entry, rep, err))
 	return rep, err == nil
 }
 
@@ -288,8 +316,8 @@ func (f *FleetSim) detect(ctx context.Context, r *carRun) {
 
 func (f *FleetSim) present(ctx context.Context, r *carRun) {
 	dev, payload := f.dispenser, map[string]any{"kind": "ticket_request"}
-	if r.car.Cred == CredEmployeeCard {
-		dev, payload = f.entry, map[string]any{"kind": "employee_card", "value": devicefleet.CardUID(f.fleet, r.car.Card)}
+	if r.car.Cred != CredTicket {
+		dev, payload = f.entry, f.credential(r.car)
 	}
 	rep, ok := f.send(ctx, r, dev, "entry.credential_presented", payload)
 	if !ok || rep.Result != "open" || rep.StayID == "" {
@@ -356,7 +384,7 @@ func (f *FleetSim) depart(ctx context.Context, r *carRun) {
 	lost := r.car.LoseTicket
 	f.mu.Unlock()
 
-	if r.car.Cred == CredTicket && !f.settle(ctx, r, lost) {
+	if r.car.Cred != CredEmployeeCard && !f.settle(ctx, r, lost) {
 		f.halt(r)
 		return
 	}
@@ -375,8 +403,7 @@ func (f *FleetSim) settle(ctx context.Context, r *carRun, lost bool) bool {
 		r.car.TicketCode = rep.TicketCode // the replacement replaces the lost code
 		f.mu.Unlock()
 	}
-	rep, ok := f.send(ctx, r, f.pay, "paystation.scan",
-		map[string]any{"credential": map[string]any{"kind": "ticket", "value": r.car.TicketCode}})
+	rep, ok := f.send(ctx, r, f.pay, "paystation.scan", map[string]any{"credential": f.credential(r.car)})
 	if !ok || rep.Result != "ack" {
 		return false
 	}
@@ -420,12 +447,7 @@ func (f *FleetSim) scheduleExit(r *carRun) {
 }
 
 func (f *FleetSim) leaveLot(ctx context.Context, r *carRun) {
-	value := r.car.TicketCode
-	if r.car.Cred == CredEmployeeCard {
-		value = devicefleet.CardUID(f.fleet, r.car.Card)
-	}
-	rep, ok := f.send(ctx, r, f.exit, "exit.credential_presented",
-		map[string]any{"credential": map[string]any{"kind": string(r.car.Cred), "value": value}})
+	rep, ok := f.send(ctx, r, f.exit, "exit.credential_presented", map[string]any{"credential": f.credential(r.car)})
 	switch {
 	case !ok:
 		f.halt(r)

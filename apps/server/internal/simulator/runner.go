@@ -49,6 +49,10 @@ const (
 
 var cardPattern = regexp.MustCompile(`^EMP-[0-9]{3}$`)
 
+// qrPattern is a reservation QR token: 64 bytes of base64url without padding.
+// Go's $ matches only at the end of the text, so a trailing newline fails.
+var qrPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{86}$`)
+
 // StartParams starts a scenario. Speed is 1-120 and has no default here: the
 // caller applies DefaultSpeed when the request names none. A zero StartAt
 // means today 07:00 in the lot's zone (weekday, weekend_peak) or now.
@@ -72,11 +76,12 @@ type Status struct {
 }
 
 // InjectParams describes a car the control API adds. Cred employee_card
-// needs a card label (default EMP-001). A car that is not held stays
-// DwellMinutes (default 30).
+// needs a card label (default EMP-001), reservation_qr the token in QR. A car
+// that is not held stays DwellMinutes (default 30).
 type InjectParams struct {
 	Cred         CredentialKind
 	Card         string
+	QR           secret.String
 	Hold         bool
 	DwellMinutes int
 }
@@ -423,16 +428,24 @@ func (r *Runner) Inject(p InjectParams) (string, error) {
 	car := &Car{Cred: p.Cred, Hold: p.Hold, Dwell: defaultInjectDwell}
 	switch p.Cred {
 	case CredTicket:
-		if p.Card != "" {
-			return "", fmt.Errorf("%w: a ticket car has no card", ErrInvalidParams)
+		if p.Card != "" || p.QR != "" {
+			return "", fmt.Errorf("%w: a ticket car has no card or qr", ErrInvalidParams)
 		}
 	case CredEmployeeCard:
 		car.Card = cmp.Or(p.Card, defaultCard)
 		if !cardPattern.MatchString(car.Card) {
 			return "", fmt.Errorf("%w: card %q, want EMP-nnn", ErrInvalidParams, car.Card)
 		}
+	case CredReservationQR:
+		if p.Card != "" || !qrPattern.MatchString(p.QR.Reveal()) {
+			return "", fmt.Errorf("%w: a reservation_qr car needs a well-formed qr and no card", ErrInvalidParams)
+		}
+		car.QR = p.QR
 	default:
 		return "", fmt.Errorf("%w: credential %q", ErrInvalidParams, p.Cred)
+	}
+	if p.Cred == CredEmployeeCard && p.QR != "" {
+		return "", fmt.Errorf("%w: an employee car has no qr", ErrInvalidParams)
 	}
 	if p.DwellMinutes < 0 || p.DwellMinutes > int(maxInjectDwell/time.Minute) {
 		return "", fmt.Errorf("%w: dwell_minutes %d, want 1-600", ErrInvalidParams, p.DwellMinutes)

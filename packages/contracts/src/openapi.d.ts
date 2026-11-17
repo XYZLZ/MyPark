@@ -706,7 +706,7 @@ export interface paths {
         put?: never;
         /**
          * Start a scenario
-         * @description Starts one scenario. `reservation_arrivals` and `no_show` are not available in M2 (M2C-1) and are answered 422 `simulator.scenario_unavailable`. The body is strictly decoded: unknown fields are 422 `validation.failed` with rule `unknown_field`, a wrong JSON type is 400 `http.invalid_json` and a body that is not `application/json` is 415.
+         * @description Starts one scenario. `reservation_arrivals` and `no_show` book as the seeded simulated drivers and answer 422 `simulator.scenario_unavailable` when those drivers are missing. The body is strictly decoded: unknown fields are 422 `validation.failed` with rule `unknown_field`, a wrong JSON type is 400 `http.invalid_json` and a body that is not `application/json` is 415.
          */
         post: operations["startSimulatorScenario"];
         delete?: never;
@@ -893,6 +893,13 @@ export interface components {
             result: string;
             reason?: string;
             car_id?: string;
+            /**
+             * @description The kind a reservation QR car presented.
+             * @constant
+             */
+            credential?: "reservation_qr";
+            /** @description `sha256:` and the first 12 hex digits of the QR token's SHA-256. The token itself never appears. */
+            credential_ref?: string;
         };
         Health: {
             /** @constant */
@@ -3619,7 +3626,7 @@ export interface operations {
                 };
             };
             415: components["responses"]["UnsupportedMediaType"];
-            /** @description Input validation failed (`validation.failed`), or the scenario is not available in M2 (`simulator.scenario_unavailable`). */
+            /** @description Input validation failed (`validation.failed`), or the scenario needs the simulated drivers and they are missing (`simulator.scenario_unavailable`). */
             422: {
                 headers: {
                     [name: string]: unknown;

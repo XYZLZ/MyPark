@@ -2,6 +2,8 @@ package simulator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport/fakeclock"
 )
 
@@ -630,5 +633,47 @@ func TestCar_SensorDropAndActive(t *testing.T) {
 	}
 	if r.sim.Active() != 0 || r.sim.Inside() != 0 {
 		t.Errorf("Active = %d, Inside = %d after the car left", r.sim.Active(), r.sim.Inside())
+	}
+}
+
+func TestCarLifecycle_ReservationQR(t *testing.T) {
+	qr := strings.Repeat("Qr_-", 21) + "Zz" // 86 base64url characters
+	r := newRig(t, 6, nil)
+	r.sim.Arrive(&Car{Cred: CredReservationQR, QR: secret.String(qr), Dwell: 20 * time.Minute})
+	r.run(t)
+
+	wantTrace(t, r.api.trace(), []string{
+		"podium:podium.vehicle_detected",
+		"entry_barrier:entry.credential_presented",
+		"entry_barrier:barrier.passed(entry)",
+		"sensor_gateway:sensor.space_changed(true)",
+		"pay_station:paystation.scan",
+		"pay_station:paystation.cash_paid",
+		"exit_barrier:exit.credential_presented",
+		"exit_barrier:barrier.passed(exit)",
+		"sensor_gateway:sensor.space_changed(false)",
+	})
+	if p := r.api.payloads("entry.credential_presented")[0]; p["kind"] != "reservation_qr" || p["value"] != qr {
+		t.Errorf("entry payload = %v", p)
+	}
+	if p := r.api.payloads("paystation.scan")[0]["credential"].(map[string]any); p["kind"] != "reservation_qr" || p["value"] != qr {
+		t.Errorf("scan credential = %v", p)
+	}
+	if p := r.api.payloads("exit.credential_presented")[0]["credential"].(map[string]any); p["kind"] != "reservation_qr" || p["value"] != qr {
+		t.Errorf("exit credential = %v", p)
+	}
+	if r.sim.Inside() != 0 {
+		t.Errorf("Inside = %d, want 0", r.sim.Inside())
+	}
+
+	sum := sha256.Sum256([]byte(qr))
+	ref := "sha256:" + hex.EncodeToString(sum[:])[:12]
+	for _, e := range r.log.After(0) {
+		if e.Credential != "reservation_qr" || e.CredentialRef != ref {
+			t.Errorf("log entry %+v: want credential reservation_qr and ref %s", e, ref)
+		}
+	}
+	if raw, _ := json.Marshal(r.log.After(0)); strings.Contains(string(raw), qr) {
+		t.Error("the event log carries the QR token")
 	}
 }
