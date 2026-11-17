@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -125,39 +126,92 @@ func TestReceipts_RefundEmbedded(t *testing.T) {
 func TestReceipts_OwnershipOnly(t *testing.T) {
 	e := newRsvEnv(t)
 	ds := testsupport.SeedDrivers(t, e.db, 2)
-	mine, _ := e.seedPayment(ds[0], "succeeded", e.clk.Now().Add(-time.Hour), false)
-	e.seedPayment(ds[1], "succeeded", e.clk.Now().Add(-time.Hour), false)
-	// An M2 drive-up cash payment has no user (M3B-27); a cash payment with
-	// user_id set (a reservation stay) is the driver's receipt.
+	mine, _ := e.seedPayment(ds[0], "succeeded", e.clk.Now().Add(-2*time.Hour), false)
+	foreign, _ := e.seedPayment(ds[1], "succeeded", e.clk.Now().Add(-time.Hour), false)
+
+	// The cash parking fee of the driver's RESERVATION stay carries the user
+	// (M3B-27) and the reservation's public id.
+	rsv := e.seedRes(ds[0], "checked_in", rsvAt(-30*time.Minute))
 	var stay int64
 	if err := e.db.Super.QueryRow(t.Context(),
-		`insert into stays (lot_id, credential_kind, ticket_code_hash, status, tariff_version_id, accepted_at, updated_at)
-		 select $1, 'ticket', sha256('own'::bytea), 'entry_pending', id, $2, $2 from tariff_versions where lot_id = $1
-		 returning id`, e.lotID, e.clk.Now()).Scan(&stay); err != nil {
-		t.Fatal(err)
+		`insert into stays (lot_id, credential_kind, reservation_id, status, tariff_version_id, accepted_at, updated_at)
+		 select $1, 'reservation', r.id, 'entry_pending', (select id from tariff_versions where lot_id = $1), $2, $2
+		 from reservations r where r.public_id = $3 returning id`, e.lotID, e.clk.Now(), rsv).Scan(&stay); err != nil {
+		t.Fatalf("seed reservation stay: %v", err)
 	}
 	var cash uuid.UUID
-	for i, user := range []any{nil, ds[0].UserID} {
-		if i == 1 {
-			if err := e.db.Super.QueryRow(t.Context(), `insert into payments (kind, method, amount_cents, status, idempotency_key,
-				stay_id, user_id, succeeded_at, created_at) values ('parking_fee', 'cash', 5000, 'succeeded', 'cash:mine', $1, $2, $3, $3)
-				returning public_id`, stay, user, e.clk.Now()).Scan(&cash); err != nil {
-				t.Fatal(err)
-			}
-			continue
-		}
-		if _, err := e.db.Super.Exec(t.Context(), `insert into payments (kind, method, amount_cents, status, idempotency_key,
-			stay_id, user_id, succeeded_at, created_at) values ('parking_fee', 'cash', 5000, 'succeeded', 'cash:drive-up', $1, $2, $3, $3)`,
-			stay, user, e.clk.Now()); err != nil {
-			t.Fatal(err)
-		}
+	if err := e.db.Super.QueryRow(t.Context(), `insert into payments (kind, method, amount_cents, status, idempotency_key,
+		stay_id, user_id, succeeded_at, created_at) values ('parking_fee', 'cash', 5000, 'succeeded', 'cash:mine', $1, $2, $3, $3)
+		returning public_id`, stay, ds[0].UserID, e.clk.Now()).Scan(&cash); err != nil {
+		t.Fatal(err)
 	}
-	code, body := e.do(e.token(ds[0]), http.MethodGet, "/v1/payments", nil)
+	// Drive-up ticket stays have no user: their cash rows are nobody's receipt.
+	var ticket int64
+	if err := e.db.Super.QueryRow(t.Context(),
+		`insert into stays (lot_id, credential_kind, ticket_code_hash, status, tariff_version_id, accepted_at, updated_at)
+		 select $1, 'ticket', sha256('drive-up'::bytea), 'entry_pending', id, $2, $2 from tariff_versions where lot_id = $1
+		 returning id`, e.lotID, e.clk.Now()).Scan(&ticket); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Super.Exec(t.Context(), `insert into payments (kind, method, amount_cents, status, idempotency_key,
+		stay_id, succeeded_at, created_at) values ('parking_fee', 'cash', 5000, 'succeeded', 'cash:drive-up', $1, $2, $2)`,
+		ticket, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	tok := e.token(ds[0])
+	code, body := e.do(tok, http.MethodGet, "/v1/payments", nil)
 	if code != http.StatusOK || !reflect.DeepEqual(dataIDs(body), []string{cash.String(), mine.String()}) {
 		t.Fatalf("list = %d %v, want only %s then %s", code, dataIDs(body), cash, mine)
 	}
-	if first := body["data"].([]any)[0].(map[string]any); first["reservation_id"] != nil || first["method"] != "cash" || first["card_last4"] != nil {
-		t.Errorf("cash receipt = %v, want no reservation and no card", first)
+	first := body["data"].([]any)[0].(map[string]any)
+	if first["reservation_id"] != rsv.String() || first["method"] != "cash" || first["kind"] != "parking_fee" || first["card_last4"] != nil {
+		t.Errorf("cash receipt = %v, want reservation %s and no card", first, rsv)
+	}
+
+	// A well-formed cursor naming another driver's or an unknown payment leaks
+	// nothing: the position is resolved inside the caller's own rows.
+	for _, id := range []uuid.UUID{foreign, uuid.New()} {
+		cur := base64.RawURLEncoding.EncodeToString([]byte(e.clk.Now().Format(time.RFC3339Nano) + "|" + id.String()))
+		code, body := e.do(tok, http.MethodGet, "/v1/payments?cursor="+cur, nil)
+		if code != http.StatusOK {
+			t.Fatalf("cursor on %s = %d %v, want 200", id, code, body)
+		}
+		for _, got := range dataIDs(body) {
+			if got == foreign.String() {
+				t.Errorf("cursor on %s listed the foreign payment", id)
+			}
+		}
+	}
+}
+
+func TestReceipts_PagingTieBreak(t *testing.T) {
+	e := newRsvEnv(t)
+	d := testsupport.SeedDrivers(t, e.db, 1)[0]
+	tok := e.token(d)
+	same := e.clk.Now().Add(-time.Hour)
+	a, aRow := e.seedPayment(d, "succeeded", same, false)
+	b, bRow := e.seedPayment(d, "succeeded", same, false)
+	want := []string{a.String(), b.String()} // (created_at desc, id desc)
+	if bRow > aRow {
+		want = []string{b.String(), a.String()}
+	}
+	var got []string
+	cursor := ""
+	for range 3 {
+		code, body := e.do(tok, http.MethodGet, "/v1/payments?limit=1"+cursor, nil)
+		if code != http.StatusOK {
+			t.Fatalf("page = %d %v", code, body)
+		}
+		got = append(got, dataIDs(body)...)
+		next, _ := field(body, "meta.page.next_cursor").(string)
+		if next == "" {
+			break
+		}
+		cursor = "&cursor=" + next
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("pages = %v, want each row once in id-desc order %v", got, want)
 	}
 }
 
