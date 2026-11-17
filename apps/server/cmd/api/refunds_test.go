@@ -265,3 +265,71 @@ func TestRefunds_NeverTwoLiveRefunds(t *testing.T) {
 		t.Errorf("refund rows = %d, want 1", c)
 	}
 }
+
+// F2: a stale runner's failure must not overwrite the newer attempt's retry.
+func TestRefunds_StaleAttemptFinalizeIsFencedOut(t *testing.T) {
+	e := newFeeEnv(t)
+	e.cancelled()
+	// Call 1 (runner A) is held, then fails; call 2 (runner B) fails at once.
+	gw := e.simGateway(&refundGateway{failN: 2, holdFst: make(chan struct{}), entered: make(chan struct{})})
+	now := e.clk.Now()
+	aDone := make(chan struct{})
+	go func() {
+		defer close(aDone)
+		if _, err := e.processor(gw).Run(t.Context(), now); err != nil {
+			t.Error(err)
+		}
+	}()
+	<-gw.entered
+	bNow := now.Add(61 * time.Second)
+	if n, err := e.processor(gw).Run(t.Context(), bNow); err != nil || n != 0 {
+		t.Fatalf("runner B = %d, %v", n, err)
+	}
+	close(gw.holdFst)
+	<-aDone
+	wait, _ := payments.RefundBackoff(2)
+	if c := e.count(`select count(*) from refunds where status = 'pending' and attempts = 2 and next_attempt_at = $1`, bNow.Add(wait)); c != 1 {
+		t.Errorf("want attempts 2 and next_attempt_at = B's now + %v, untouched by runner A", wait)
+	}
+}
+
+// F3: a finalize error after a gateway success counts as a failed attempt.
+func TestRefunds_FinalizeErrorsExhaustAndAlert(t *testing.T) {
+	e := newFeeEnv(t)
+	id, _ := e.cancelled()
+	// Break the invariant: the parent payment is no longer 'succeeded'.
+	if _, err := e.db.Super.Exec(t.Context(), `update payments set status = 'refunded', refunded_at = $1`, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	gw := e.simGateway(&refundGateway{})
+	p := e.processor(gw)
+	now := e.clk.Now()
+	for range payments.RefundMaxAttempts + 2 {
+		if _, err := p.Run(t.Context(), now); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(31 * time.Minute)
+	}
+	if c := e.count(`select count(*) from refunds where status = 'failed' and attempts = 10 and last_error = 'finalize_failed'`); c != 1 {
+		t.Fatal("want the refund failed after 10 attempts with last_error finalize_failed")
+	}
+	if c := e.count(`select count(*) from reconciliation_alerts where kind = 'refund_failed' and details->>'reason' = 'finalize_failed'
+	                 and details->>'reservation_id' = $1 and (select count(*) from jsonb_object_keys(details)) = 4`, id); c != 1 {
+		t.Error("want exactly one finalize_failed alert with public ids only")
+	}
+	if c := e.count(`select count(*) from outbox_messages where template = 'refund_succeeded'`); c != 0 {
+		t.Errorf("emails = %d, want none", c)
+	}
+	if gw.calls != payments.RefundMaxAttempts {
+		t.Errorf("gateway calls = %d, want %d (no reclaim after the limit)", gw.calls, payments.RefundMaxAttempts)
+	}
+	// A pending refund already at the limit is never claimed.
+	e.cancelled()
+	if _, err := e.db.Super.Exec(t.Context(), `update refunds set attempts = 10 where status = 'pending'`); err != nil {
+		t.Fatal(err)
+	}
+	before := gw.calls
+	if n, _ := p.Run(t.Context(), now.Add(time.Hour)); n != 0 || gw.calls != before {
+		t.Error("a refund at the attempt limit was claimed")
+	}
+}

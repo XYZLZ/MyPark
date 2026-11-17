@@ -125,3 +125,53 @@ func TestRefunds_StaleSuccessSendsNoEmail(t *testing.T) {
 		t.Errorf("settled %d, emails %d, want 1 and 1", got, n.n)
 	}
 }
+
+// slowGW answers after a real delay and counts its calls.
+type slowGW struct {
+	payments.Gateway
+	delay time.Duration
+	calls int
+}
+
+func (g *slowGW) Refund(ctx context.Context, _ payments.RefundRequest) (payments.RefundResult, error) {
+	g.calls++
+	select {
+	case <-time.After(g.delay):
+	case <-ctx.Done():
+		return payments.RefundResult{}, ctx.Err()
+	}
+	return payments.RefundResult{ProviderRef: "ref"}, nil
+}
+
+// countingRefunds counts the successes finalized.
+type countingRefunds struct {
+	fakeRefunds
+	succeeded int
+}
+
+func (c *countingRefunds) Succeed(context.Context, payments.RefundClaim, string, time.Time) (bool, error) {
+	c.succeeded++
+	return true, nil
+}
+
+// F1: a claim whose lease may have run out is never called nor finalized.
+func TestRefunds_LateClaimsAreLeftToExpire(t *testing.T) {
+	f := &countingRefunds{fakeRefunds: fakeRefunds{claims: []payments.RefundClaim{claim(1), claim(1), claim(1), claim(1), claim(1)}}}
+	gw := &slowGW{delay: 250 * time.Millisecond}
+	p := processor(&f.fakeRefunds, gw, &countNotice{}, &countAlerts{})
+	p.Refunds = f
+	p.Lease, p.CallTimeout = 1200*time.Millisecond, 300*time.Millisecond // calls may start within the first 600 ms
+	n, err := p.Run(t.Context(), nowT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gw.calls != 3 || f.succeeded != 3 || n != 3 {
+		t.Errorf("gateway calls %d, finalized %d, settled %d; want 3 each (the last two claims expire unprocessed)", gw.calls, f.succeeded, n)
+	}
+	if len(f.retried)+len(f.failed) != 0 {
+		t.Error("an unprocessed claim must not be finalized as a failure")
+	}
+	if !f.leased.Equal(nowT.Add(1200*time.Millisecond)) {
+		t.Errorf("lease = %v, want now + Lease", f.leased)
+	}
+}

@@ -16,8 +16,9 @@ const claimDueRefunds = `-- name: ClaimDueRefunds :many
 with due as (
     select refunds.id from refunds
     where refunds.status = 'pending' and refunds.next_attempt_at <= $2
+      and refunds.attempts < $3::smallint
     order by refunds.next_attempt_at, refunds.id
-    limit $3
+    limit $4
     for update skip locked
 )
 update refunds r
@@ -30,9 +31,10 @@ returning r.id, r.public_id, r.payment_id, r.amount_cents, r.attempts::int as at
 `
 
 type ClaimDueRefundsParams struct {
-	LeaseUntil pgtype.Timestamptz
-	Now        pgtype.Timestamptz
-	Batch      int32
+	LeaseUntil  pgtype.Timestamptz
+	Now         pgtype.Timestamptz
+	MaxAttempts int16
+	Batch       int32
 }
 
 type ClaimDueRefundsRow struct {
@@ -53,7 +55,12 @@ type ClaimDueRefundsRow struct {
 // runners apart while the claim runs; the lease (next_attempt_at moved ahead)
 // keeps them apart after it commits, and attempts+1 is the finalize fence.
 func (q *Queries) ClaimDueRefunds(ctx context.Context, arg ClaimDueRefundsParams) ([]ClaimDueRefundsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueRefunds, arg.LeaseUntil, arg.Now, arg.Batch)
+	rows, err := q.db.Query(ctx, claimDueRefunds,
+		arg.LeaseUntil,
+		arg.Now,
+		arg.MaxAttempts,
+		arg.Batch,
+	)
 	if err != nil {
 		return nil, err
 	}

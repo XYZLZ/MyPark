@@ -27,7 +27,7 @@ func (r *RefundRepo) Claim(ctx context.Context, now, leaseUntil time.Time, limit
 	if err != nil {
 		return nil, fmt.Errorf("payments: claim refunds: %w", err)
 	}
-	rows, err := dbgen.New(tx).ClaimDueRefunds(ctx, dbgen.ClaimDueRefundsParams{Now: ts(now), LeaseUntil: ts(leaseUntil), Batch: int32(limit)})
+	rows, err := dbgen.New(tx).ClaimDueRefunds(ctx, dbgen.ClaimDueRefundsParams{Now: ts(now), LeaseUntil: ts(leaseUntil), Batch: int32(limit), MaxAttempts: payments.RefundMaxAttempts})
 	if err != nil {
 		return nil, fmt.Errorf("payments: claim refunds: %w", err)
 	}

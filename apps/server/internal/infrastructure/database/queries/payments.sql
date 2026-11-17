@@ -100,6 +100,7 @@ limit 1;
 with due as (
     select refunds.id from refunds
     where refunds.status = 'pending' and refunds.next_attempt_at <= @now
+      and refunds.attempts < sqlc.arg('max_attempts')::smallint
     order by refunds.next_attempt_at, refunds.id
     limit sqlc.arg('batch')
     for update skip locked
