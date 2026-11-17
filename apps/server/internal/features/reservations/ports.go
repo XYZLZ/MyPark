@@ -89,6 +89,25 @@ type Repo interface {
 	DecSlots(ctx context.Context, lotID int64, w Window) error
 	// SlotLoads is an unlocked read for the quote; missing slots are absent.
 	SlotLoads(ctx context.Context, lotID int64, w Window) ([]int, error)
+
+	// ForApply is an unlocked read by internal id; ErrNotFound when unknown.
+	ForApply(ctx context.Context, id int64) (ApplyRow, error)
+	// LockForApply reads the reservation with FOR UPDATE.
+	LockForApply(ctx context.Context, id int64) (ApplyRow, error)
+	// Confirm moves a pending_payment reservation to confirmed with a new QR nonce.
+	Confirm(ctx context.Context, id int64, nonce [16]byte, now time.Time) error
+	// ExpireUnpaidLate moves a pending_payment reservation to expired_unpaid
+	// with the given refund reason (late success, design 9.4).
+	ExpireUnpaidLate(ctx context.Context, id int64, refundReason string, now time.Time) error
+	// QRData reads what the QR token is built from; ErrNotFound when it is not the user's.
+	QRData(ctx context.Context, userID int64, id uuid.UUID) (QRData, error)
+	// LockLot takes the lot_occupancy row FOR UPDATE (first in the lock order).
+	LockLot(ctx context.Context, lotID int64) error
+	// BumpLot raises the lot version and notifies lot_changed (design 8.2). The
+	// caller holds the lot lock.
+	BumpLot(ctx context.Context, lotID int64, now time.Time) error
+	// UserContact is the recipient of the user's emails.
+	UserContact(ctx context.Context, userID int64) (Contact, error)
 }
 
 // Availability is the public availability the no-space-now check reads
@@ -131,3 +150,25 @@ type ReadRepo interface {
 	// SetVehicle points the reservation at another vehicle.
 	SetVehicle(ctx context.Context, id, vehicleID int64, now time.Time) error
 }
+
+// ApplyRow is the part of a reservation Apply decides from, keyed by its
+// internal id (the payment knows the reservation by id, not by owner).
+type ApplyRow struct {
+	ID       int64
+	PublicID uuid.UUID
+	UserID   int64
+	LotID    int64
+	Status   Status
+	Window   Window
+}
+
+// QRData is what a reservation's QR token is built from.
+type QRData struct {
+	PublicID uuid.UUID
+	Status   Status
+	Nonce    []byte
+	Window   Window
+}
+
+// Contact is the recipient of a user's emails.
+type Contact struct{ Email, Locale string }

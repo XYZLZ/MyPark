@@ -12,6 +12,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const confirmReservation = `-- name: ConfirmReservation :execrows
+update reservations
+set status = 'confirmed', confirmed_at = $1, qr_nonce = $2, updated_at = $1
+where id = $3 and status = 'pending_payment'
+`
+
+type ConfirmReservationParams struct {
+	Now     pgtype.Timestamptz
+	QrNonce []byte
+	ID      int64
+}
+
+// The pay confirm (design 9.4 step 3): a fresh qr_nonce invalidates any older token.
+func (q *Queries) ConfirmReservation(ctx context.Context, arg ConfirmReservationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmReservation, arg.Now, arg.QrNonce, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countEffectiveHolds = `-- name: CountEffectiveHolds :one
 select count(*)::int from reservations
 where lot_id = $1 and status = 'confirmed' and hold_window @> $2::timestamptz
@@ -84,6 +105,27 @@ type EnsureSlotLoadsParams struct {
 func (q *Queries) EnsureSlotLoads(ctx context.Context, arg EnsureSlotLoadsParams) error {
 	_, err := q.db.Exec(ctx, ensureSlotLoads, arg.LotID, arg.WindowStart, arg.WindowLast)
 	return err
+}
+
+const expireReservationLate = `-- name: ExpireReservationLate :execrows
+update reservations
+set status = 'expired_unpaid', expired_at = $1, refund_reason = $2, updated_at = $1
+where id = $3 and status = 'pending_payment'
+`
+
+type ExpireReservationLateParams struct {
+	Now          pgtype.Timestamptz
+	RefundReason pgtype.Text
+	ID           int64
+}
+
+// Late success (design 9.4 step 4): the reservation never became confirmed.
+func (q *Queries) ExpireReservationLate(ctx context.Context, arg ExpireReservationLateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expireReservationLate, arg.Now, arg.RefundReason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getLotForReservation = `-- name: GetLotForReservation :one
@@ -164,6 +206,40 @@ func (q *Queries) GetReservationBlockedUntil(ctx context.Context, userID int64) 
 	return reservation_blocked_until, err
 }
 
+const getReservationForApply = `-- name: GetReservationForApply :one
+select r.id, r.public_id, r.user_id, r.lot_id, r.status,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.id = $1
+`
+
+type GetReservationForApplyRow struct {
+	ID          int64
+	PublicID    uuid.UUID
+	UserID      int64
+	LotID       int64
+	Status      string
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+}
+
+// Unlocked, by internal id: Apply decides from the window whether it takes the
+// lot lock before it locks the reservation (design 8.1). The window never changes.
+func (q *Queries) GetReservationForApply(ctx context.Context, id int64) (GetReservationForApplyRow, error) {
+	row := q.db.QueryRow(ctx, getReservationForApply, id)
+	var i GetReservationForApplyRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.UserID,
+		&i.LotID,
+		&i.Status,
+		&i.WindowStart,
+		&i.WindowEnd,
+	)
+	return i, err
+}
+
 const getReservationForUser = `-- name: GetReservationForUser :one
 select r.id, r.public_id, r.vehicle_id, r.arrival_at,
        lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
@@ -237,6 +313,40 @@ func (q *Queries) GetReservationForUser(ctx context.Context, arg GetReservationF
 		&i.Make,
 		&i.Model,
 		&i.Color,
+	)
+	return i, err
+}
+
+const getReservationQR = `-- name: GetReservationQR :one
+select r.public_id, r.status, r.qr_nonce,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.public_id = $1 and r.user_id = $2
+`
+
+type GetReservationQRParams struct {
+	PublicID uuid.UUID
+	UserID   int64
+}
+
+type GetReservationQRRow struct {
+	PublicID    uuid.UUID
+	Status      string
+	QrNonce     []byte
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+}
+
+// What the QR token is built from; another driver's id is simply not found (M3B-33).
+func (q *Queries) GetReservationQR(ctx context.Context, arg GetReservationQRParams) (GetReservationQRRow, error) {
+	row := q.db.QueryRow(ctx, getReservationQR, arg.PublicID, arg.UserID)
+	var i GetReservationQRRow
+	err := row.Scan(
+		&i.PublicID,
+		&i.Status,
+		&i.QrNonce,
+		&i.WindowStart,
+		&i.WindowEnd,
 	)
 	return i, err
 }
@@ -478,6 +588,39 @@ func (q *Queries) ListReservationsForUser(ctx context.Context, arg ListReservati
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockReservationForApply = `-- name: LockReservationForApply :one
+select r.id, r.public_id, r.user_id, r.lot_id, r.status,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.id = $1
+for update of r
+`
+
+type LockReservationForApplyRow struct {
+	ID          int64
+	PublicID    uuid.UUID
+	UserID      int64
+	LotID       int64
+	Status      string
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+}
+
+func (q *Queries) LockReservationForApply(ctx context.Context, id int64) (LockReservationForApplyRow, error) {
+	row := q.db.QueryRow(ctx, lockReservationForApply, id)
+	var i LockReservationForApplyRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.UserID,
+		&i.LotID,
+		&i.Status,
+		&i.WindowStart,
+		&i.WindowEnd,
+	)
+	return i, err
 }
 
 const lockReservationForUser = `-- name: LockReservationForUser :one

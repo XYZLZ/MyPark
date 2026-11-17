@@ -281,3 +281,105 @@ func (r *Repo) SetVehicle(ctx context.Context, id, vehicleID int64, now time.Tim
 	}
 	return nil
 }
+
+func applyRow(id int64, pub uuid.UUID, userID, lotID int64, status string, start, end pgtype.Timestamptz) reservations.ApplyRow {
+	return reservations.ApplyRow{
+		ID: id, PublicID: pub, UserID: userID, LotID: lotID, Status: reservations.Status(status),
+		Window: reservations.Window{Start: start.Time.UTC(), End: end.Time.UTC()},
+	}
+}
+
+// ForApply implements reservations.Repo.
+func (r *Repo) ForApply(ctx context.Context, id int64) (reservations.ApplyRow, error) {
+	row, err := r.q(ctx).GetReservationForApply(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.ApplyRow{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.ApplyRow{}, fmt.Errorf("reservations: read reservation %d: %w", id, err)
+	}
+	return applyRow(row.ID, row.PublicID, row.UserID, row.LotID, row.Status, row.WindowStart, row.WindowEnd), nil
+}
+
+// LockForApply implements reservations.Repo.
+func (r *Repo) LockForApply(ctx context.Context, id int64) (reservations.ApplyRow, error) {
+	row, err := r.q(ctx).LockReservationForApply(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.ApplyRow{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.ApplyRow{}, fmt.Errorf("reservations: lock reservation %d: %w", id, err)
+	}
+	return applyRow(row.ID, row.PublicID, row.UserID, row.LotID, row.Status, row.WindowStart, row.WindowEnd), nil
+}
+
+// Confirm implements reservations.Repo.
+func (r *Repo) Confirm(ctx context.Context, id int64, nonce [16]byte, now time.Time) error {
+	n, err := r.q(ctx).ConfirmReservation(ctx, dbgen.ConfirmReservationParams{ID: id, QrNonce: nonce[:], Now: ts(now)})
+	if err != nil {
+		return fmt.Errorf("reservations: confirm %d: %w", id, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("reservations: confirm %d: not pending_payment", id)
+	}
+	return nil
+}
+
+// ExpireUnpaidLate implements reservations.Repo.
+func (r *Repo) ExpireUnpaidLate(ctx context.Context, id int64, refundReason string, now time.Time) error {
+	n, err := r.q(ctx).ExpireReservationLate(ctx, dbgen.ExpireReservationLateParams{
+		ID: id, RefundReason: pgtype.Text{String: refundReason, Valid: true}, Now: ts(now),
+	})
+	if err != nil {
+		return fmt.Errorf("reservations: expire %d: %w", id, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("reservations: expire %d: not pending_payment", id)
+	}
+	return nil
+}
+
+// QRData implements reservations.Repo.
+func (r *Repo) QRData(ctx context.Context, userID int64, id uuid.UUID) (reservations.QRData, error) {
+	row, err := r.q(ctx).GetReservationQR(ctx, dbgen.GetReservationQRParams{PublicID: id, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.QRData{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.QRData{}, fmt.Errorf("reservations: read qr data: %w", err)
+	}
+	return reservations.QRData{
+		PublicID: row.PublicID, Status: reservations.Status(row.Status), Nonce: row.QrNonce,
+		Window: reservations.Window{Start: row.WindowStart.Time.UTC(), End: row.WindowEnd.Time.UTC()},
+	}, nil
+}
+
+// LockLot implements reservations.Repo.
+func (r *Repo) LockLot(ctx context.Context, lotID int64) error {
+	if _, err := r.q(ctx).LockLotOccupancy(ctx, lotID); err != nil {
+		return fmt.Errorf("reservations: lock lot %d: %w", lotID, err)
+	}
+	return nil
+}
+
+// BumpLot implements reservations.Repo.
+func (r *Repo) BumpLot(ctx context.Context, lotID int64, now time.Time) error {
+	q := r.q(ctx)
+	version, err := q.BumpOccupancy(ctx, dbgen.BumpOccupancyParams{LotID: lotID, Delta: 0, Now: ts(now)})
+	if err != nil {
+		return fmt.Errorf("reservations: bump lot %d: %w", lotID, err)
+	}
+	if err := q.NotifyLotChanged(ctx, dbgen.NotifyLotChangedParams{LotID: lotID, Version: version}); err != nil {
+		return fmt.Errorf("reservations: notify lot %d: %w", lotID, err)
+	}
+	return nil
+}
+
+// UserContact implements reservations.Repo.
+func (r *Repo) UserContact(ctx context.Context, userID int64) (reservations.Contact, error) {
+	u, err := r.q(ctx).GetUserProfileByID(ctx, userID)
+	if err != nil {
+		return reservations.Contact{}, fmt.Errorf("reservations: read user %d: %w", userID, err)
+	}
+	return reservations.Contact{Email: u.Email, Locale: u.Locale}, nil
+}

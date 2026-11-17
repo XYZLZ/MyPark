@@ -146,3 +146,38 @@ for update of r;
 
 -- name: SetReservationVehicle :exec
 update reservations set vehicle_id = @vehicle_id, updated_at = @now where id = @id;
+
+
+-- name: GetReservationForApply :one
+-- Unlocked, by internal id: Apply decides from the window whether it takes the
+-- lot lock before it locks the reservation (design 8.1). The window never changes.
+select r.id, r.public_id, r.user_id, r.lot_id, r.status,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.id = @id;
+
+-- name: LockReservationForApply :one
+select r.id, r.public_id, r.user_id, r.lot_id, r.status,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.id = @id
+for update of r;
+
+-- name: ConfirmReservation :execrows
+-- The pay confirm (design 9.4 step 3): a fresh qr_nonce invalidates any older token.
+update reservations
+set status = 'confirmed', confirmed_at = @now, qr_nonce = @qr_nonce, updated_at = @now
+where id = @id and status = 'pending_payment';
+
+-- name: ExpireReservationLate :execrows
+-- Late success (design 9.4 step 4): the reservation never became confirmed.
+update reservations
+set status = 'expired_unpaid', expired_at = @now, refund_reason = @refund_reason, updated_at = @now
+where id = @id and status = 'pending_payment';
+
+-- name: GetReservationQR :one
+-- What the QR token is built from; another driver's id is simply not found (M3B-33).
+select r.public_id, r.status, r.qr_nonce,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
+from reservations r
+where r.public_id = @public_id and r.user_id = @user_id;

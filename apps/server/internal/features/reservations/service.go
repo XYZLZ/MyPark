@@ -2,8 +2,10 @@ package reservations
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -11,6 +13,8 @@ import (
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
@@ -24,6 +28,14 @@ type Deps struct {
 	Avail   Availability
 	Clock   clock.Clock
 	Log     *slog.Logger
+
+	// The payment side. They stay nil in tests that never pay or apply.
+	Fees          payments.Fees
+	Gateway       payments.Gateway
+	Notify        notifications.Notifier
+	QRKey         []byte        // signs QR tokens (QR_HMAC_KEY)
+	ChargeTimeout time.Duration // PAYMENT_CHARGE_TIMEOUT
+	Rand          io.Reader     // QR nonces; nil means crypto/rand
 }
 
 // Service holds the reservation use cases.
@@ -34,12 +46,27 @@ type Service struct {
 	avail   Availability
 	clock   clock.Clock
 	log     *slog.Logger
+
+	fees          payments.Fees
+	gateway       payments.Gateway
+	notify        notifications.Notifier
+	qrKey         []byte
+	chargeTimeout time.Duration
+	rand          io.Reader
 }
 
 // NewService returns a Service.
 func NewService(d Deps) *Service {
-	return &Service{tx: d.Tx, repo: d.Repo, tariffs: d.Tariffs, avail: d.Avail, clock: d.Clock, log: d.Log}
+	if d.Rand == nil {
+		d.Rand = rand.Reader
+	}
+	return &Service{
+		tx: d.Tx, repo: d.Repo, tariffs: d.Tariffs, avail: d.Avail, clock: d.Clock, log: d.Log,
+		fees: d.Fees, gateway: d.Gateway, notify: d.Notify, qrKey: d.QRKey, chargeTimeout: d.ChargeTimeout, rand: d.Rand,
+	}
 }
+
+var _ payments.OutcomeApplier = (*Service)(nil)
 
 // QuoteInput is a quote request.
 type QuoteInput struct {
