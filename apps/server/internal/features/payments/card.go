@@ -4,6 +4,7 @@ package payments
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -103,3 +104,25 @@ func Fingerprint(reservation uuid.UUID, brand, last4 string, expMonth, expYear i
 	fmt.Fprintf(h, "%s|%s|%02d%04d", brand, last4, expMonth, expYear)
 	return h.Sum(nil)
 }
+
+// MarshalJSON redacts the card: encoders (slog's JSON handler falls back to
+// json.Marshal for values that are not LogValuers) must never see the number
+// or the CVC. Decoding is unaffected: Card is never decoded from JSON.
+func (c Card) MarshalJSON() ([]byte, error) { return json.Marshal(c.String()) }
+
+// redacted is the safe printed form of a pay request: last four digits only.
+func (r PayRequest) redacted() string {
+	return "pay(card=****" + last4(r.CardNumber) + ")"
+}
+
+// String, GoString, LogValue and MarshalJSON redact the request so logging a
+// decoded body cannot leak the number or the CVC. Only the encode side is
+// redacted: decoding into PayRequest is untouched.
+func (r PayRequest) String() string   { return r.redacted() }
+func (r PayRequest) GoString() string { return r.redacted() }
+
+// LogValue implements slog.LogValuer.
+func (r PayRequest) LogValue() slog.Value { return slog.StringValue(r.redacted()) }
+
+// MarshalJSON encodes the redacted form as a JSON string.
+func (r PayRequest) MarshalJSON() ([]byte, error) { return json.Marshal(r.redacted()) }

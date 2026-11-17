@@ -2,6 +2,7 @@ package payments_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -227,5 +228,55 @@ func TestFingerprint(t *testing.T) {
 		if bytes.Equal(base, v) {
 			t.Errorf("fingerprint unchanged when %s changes", name)
 		}
+	}
+}
+
+func TestCardAndPayRequest_NeverEncodePANOrCVC(t *testing.T) {
+	c := payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "987"}
+	pay := payments.PayRequest{CardNumber: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "987"}
+	charge := payments.ChargeRequest{IdempotencyKey: "rsv-fee:x", AmountCents: 15000, Card: &c}
+
+	var slogOut bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&slogOut, nil))
+	log.Info("charge", "req", charge, "pay", pay, "payptr", &pay, "card", &c)
+
+	marshal := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	outputs := map[string]string{
+		"json ChargeRequest": marshal(charge),
+		"json PayRequest":    marshal(pay),
+		"json *PayRequest":   marshal(&pay),
+		"json Card":          marshal(c),
+		"%v":                 fmt.Sprintf("%v", pay),
+		"%+v":                fmt.Sprintf("%+v", pay),
+		"%#v":                fmt.Sprintf("%#v", pay),
+		"%+v*":               fmt.Sprintf("%+v", &pay),
+		"slog":               slogOut.String(),
+	}
+	for name, out := range outputs {
+		if !strings.Contains(out, "****4242") {
+			t.Errorf("%s = %q, want the masked last four", name, out)
+		}
+		for _, secret := range []string{"4242424242424242", "987"} {
+			if strings.Contains(out, secret) {
+				t.Errorf("%s = %q leaks %q", name, out, secret)
+			}
+		}
+	}
+}
+
+func TestPayRequest_DecodingIsUnchanged(t *testing.T) {
+	var got payments.PayRequest
+	body := `{"card_number":"4242424242424242","exp_month":12,"exp_year":2030,"cvc":"123"}`
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != validPay() {
+		t.Errorf("decoded = %#v, want the full request", got.CardNumber)
 	}
 }
