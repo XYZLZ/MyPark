@@ -38,6 +38,17 @@ type matrixEntry struct {
 
 func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.String() }
 
+// pilotLotPublicID seeds the pilot lot (idempotent) and returns its public id.
+func pilotLotPublicID(f *fixture) string {
+	f.env.t.Helper()
+	lotID := testsupport.SeedPilotLot(f.env.t, f.env.db)
+	var pub uuid.UUID
+	if err := f.env.db.App.QueryRow(f.env.t.Context(), "select public_id from lots where id = $1", lotID).Scan(&pub); err != nil {
+		f.env.t.Fatal(err)
+	}
+	return pub.String()
+}
+
 const streamPattern = "GET /v1/lots/{id}/availability/stream"
 
 // streamReq builds a stream request that ends after 200 ms, so a stream
@@ -129,6 +140,18 @@ var matrix = map[string]matrixEntry{
 	}},
 	"DELETE /v1/vehicles/{id}": {owned: true, build: func(f *fixture) *http.Request {
 		return jsonReq("DELETE", vehiclePath(f), nil)
+	}},
+
+	"POST /v1/reservations/quote": {build: func(f *fixture) *http.Request {
+		return jsonReq("POST", "/v1/reservations/quote", map[string]any{
+			"lot_id": pilotLotPublicID(f), "arrival_at": "2026-11-21T15:00:00Z",
+		})
+	}},
+	// The vehicle belongs to the owner: another driver's id is a 404 like a missing one.
+	"POST /v1/reservations": {owned: true, build: func(f *fixture) *http.Request {
+		return jsonReq("POST", "/v1/reservations", map[string]any{
+			"lot_id": pilotLotPublicID(f), "vehicle_id": f.vehicleID.String(), "arrival_at": "2026-11-21T15:00:00Z",
+		})
 	}},
 
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
@@ -427,6 +450,8 @@ var specPolicy = map[string]struct {
 	"GET /v1/vehicles/{id}":            {access: "driver"},
 	"PATCH /v1/vehicles/{id}":          {access: "driver", limit: &ratelimit.VehicleWriteUser},
 	"DELETE /v1/vehicles/{id}":         {access: "driver", limit: &ratelimit.VehicleWriteUser},
+	"POST /v1/reservations/quote":      {access: "driver"},
+	"POST /v1/reservations":            {access: "driver", limit: &ratelimit.ReservationWriteUser},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},
 	// A device route declares no Policy.Limit: the router applies DeviceIP

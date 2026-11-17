@@ -876,7 +876,6 @@ paths:
         offset or fraction and echoed normalized to the next 5-minute UTC
         boundary. The capacity answer comes from an unlocked read, so a quote
         can succeed and the create can still answer `reservation.capacity_reached`.
-      x-mypark-pending: S3.2
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -914,7 +913,6 @@ paths:
         window around the arrival. The driver has one active (`pending_payment`
         or `confirmed`) reservation at a time. Pay it with `payReservation`
         before `payment_due_at`.
-      x-mypark-pending: S3.2
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       requestBody:

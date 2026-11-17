@@ -38,6 +38,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	lotspg "github.com/XYZLZ/MyPark/apps/server/internal/features/lots/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
 	tariffspg "github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/users"
@@ -315,6 +317,10 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	vehicleSvc := vehicles.NewService(tx, vehiclespg.NewRepo(d.pool),
 		vehicles.NoReservations{}, d.cfg.MaxVehiclesPerUser(), d.clock)
 	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
+
+	reservations.NewHandler(reservations.NewService(reservations.Deps{
+		Tx: tx, Repo: reservationspg.NewRepo(d.pool), Tariffs: tariffSvc, Avail: availSvc, Clock: d.clock, Log: d.log,
+	}), validation.New(), d.log).Register(r)
 
 	// Account deletion reaches vehicles and auth only through their ports.
 	usersSvc := users.NewService(users.Deps{
