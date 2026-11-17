@@ -147,18 +147,28 @@ func (s *Service) confirm(ctx context.Context, rsv ApplyRow, fee payments.FeePay
 func (s *Service) lateSuccess(ctx context.Context, rsv ApplyRow, fee payments.FeePayment, res payments.ChargeResult, now time.Time) error {
 	s.log.WarnContext(ctx, "reservations: late payment success, expiring and refunding",
 		"reservation_id", rsv.PublicID, "payment_id", fee.PublicID)
+	if err := s.expireUnpaid(ctx, rsv, now); err != nil {
+		return err
+	}
+	if err := s.finalizeAndRefund(ctx, fee, res, now); err != nil {
+		return err
+	}
+	return s.enqueueCancelled(ctx, rsv)
+}
+
+// expireUnpaid moves a pending_payment reservation to expired_unpaid and
+// releases its slot loads (the reservation row is locked by the caller).
+func (s *Service) expireUnpaid(ctx context.Context, rsv ApplyRow, now time.Time) error {
 	if err := s.repo.ExpireUnpaidLate(ctx, rsv.ID, payments.RefundFacilityUnavailable, now); err != nil {
 		return err
 	}
 	if _, err := s.repo.EnsureAndLockSlots(ctx, rsv.LotID, rsv.Window); err != nil {
 		return err
 	}
-	if err := s.repo.DecSlots(ctx, rsv.LotID, rsv.Window); err != nil {
-		return err
-	}
-	if err := s.finalizeAndRefund(ctx, fee, res, now); err != nil {
-		return err
-	}
+	return s.repo.DecSlots(ctx, rsv.LotID, rsv.Window)
+}
+
+func (s *Service) enqueueCancelled(ctx context.Context, rsv ApplyRow) error {
 	return s.enqueue(ctx, rsv, notifications.TplReservationCancelled, map[string]string{
 		"reason": payments.RefundFacilityUnavailable,
 	})
@@ -204,8 +214,10 @@ func lotTime(t time.Time) string { return t.In(lotZone).Format("2006-01-02 15:04
 // lateCharge handles a success for a payment the reconcile job had marked
 // not_submitted: the pay request stalled past the cutoff and its charge landed
 // afterwards (design 9.4 step 5, money is never kept by accident). The payment
-// becomes succeeded and is refunded in full; the reservation is left alone,
-// because the driver may already have paid again with a new key. It runs under
+// becomes succeeded and is refunded in full. A reservation still pending_payment
+// is expired through the late-success branch (the succeeded fee would otherwise
+// block a new attempt on the live-fee index); any other status is left alone,
+// as the driver may have paid again with a new key. It runs under
 // the reservation lock, in the lock order of design 8.1.
 func (s *Service) lateCharge(ctx context.Context, rsv ApplyRow, fee payments.FeePayment, res payments.ChargeResult, now time.Time) error {
 	// The unique live-fee index forbids a second live attempt; a driver who
@@ -217,6 +229,13 @@ func (s *Service) lateCharge(ctx context.Context, rsv ApplyRow, fee payments.Fee
 			"payment_id", fee.PublicID, "reservation_id", rsv.PublicID)
 		return payments.ErrSuccessAfterFinal
 	}
+	// Reservation and slots come before the payment (lock order, design 8.1).
+	expire := rsv.Status == StatusPendingPayment
+	if expire {
+		if err := s.expireUnpaid(ctx, rsv, now); err != nil {
+			return err
+		}
+	}
 	ok, err := s.fees.MarkLateSuccess(ctx, fee.ID, res, now)
 	if err != nil {
 		return err
@@ -226,6 +245,8 @@ func (s *Service) lateCharge(ctx context.Context, rsv ApplyRow, fee payments.Fee
 	}
 	s.log.WarnContext(ctx, "reservations: charge landed after the payment was marked not_submitted, refunding",
 		"payment_id", fee.PublicID, "reservation_id", rsv.PublicID)
-	_, err = s.fees.QueueRefund(ctx, fee.ID, fee.AmountCents, payments.RefundFacilityUnavailable, now)
-	return err
+	if _, err = s.fees.QueueRefund(ctx, fee.ID, fee.AmountCents, payments.RefundFacilityUnavailable, now); err != nil || !expire {
+		return err
+	}
+	return s.enqueueCancelled(ctx, rsv)
 }
