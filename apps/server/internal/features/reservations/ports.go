@@ -111,6 +111,14 @@ type Repo interface {
 	BumpLot(ctx context.Context, lotID int64, now time.Time) error
 	// UserContact is the recipient of the user's emails.
 	UserContact(ctx context.Context, userID int64) (Contact, error)
+
+	// ForQR is the QR entry's unlocked lookup of the lot's reservation
+	// (ID, PublicID and Nonce only); ErrNotFound when the lot has none.
+	ForQR(ctx context.Context, lotID int64, publicID uuid.UUID) (EntryRow, error)
+	// LockForEntry locks the lot's reservation FOR UPDATE; ErrNotFound when unknown.
+	LockForEntry(ctx context.Context, lotID, id int64) (EntryRow, error)
+	// CheckIn moves a confirmed reservation to checked_in at now. Fenced on confirmed.
+	CheckIn(ctx context.Context, id int64, now time.Time) error
 }
 
 // Availability is the public availability the no-space-now check reads
@@ -180,3 +188,13 @@ type QRData struct {
 
 // Contact is the recipient of a user's emails.
 type Contact struct{ Email, Locale string }
+
+// EntryRow is a reservation as the QR entry reads it. Nonce is nil before
+// confirmation.
+type EntryRow struct {
+	ID, UserID, LotID, TariffVersionID int64
+	PublicID                           uuid.UUID
+	Status                             Status
+	Nonce                              []byte
+	Window                             Window
+}

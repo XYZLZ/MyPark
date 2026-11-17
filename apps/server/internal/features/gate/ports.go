@@ -179,10 +179,10 @@ type ReservationRef struct {
 
 // ReservationEntry is a reservation locked for an entry decision.
 type ReservationEntry struct {
-	ID, UserID, TariffVersionID int64
-	PublicID                    uuid.UUID
-	Status                      string
-	WindowStart, WindowEnd      time.Time
+	ID, UserID, LotID, TariffVersionID int64
+	PublicID                           uuid.UUID
+	Status                             string
+	WindowStart, WindowEnd             time.Time
 }
 
 // QRAction is what the entry barrier does with a reservation QR (design 11.1).

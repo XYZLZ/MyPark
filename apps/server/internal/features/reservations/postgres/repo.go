@@ -400,3 +400,43 @@ func (r *Repo) Cancel(ctx context.Context, id int64, cancelledBy, refundReason s
 	}
 	return nil
 }
+
+// ForQR implements reservations.Repo.
+func (r *Repo) ForQR(ctx context.Context, lotID int64, publicID uuid.UUID) (reservations.EntryRow, error) {
+	row, err := r.q(ctx).GetReservationForQR(ctx, dbgen.GetReservationForQRParams{LotID: lotID, PublicID: publicID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.EntryRow{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.EntryRow{}, fmt.Errorf("reservations: read reservation for qr: %w", err)
+	}
+	return reservations.EntryRow{ID: row.ID, PublicID: row.PublicID, LotID: lotID, Nonce: row.QrNonce}, nil
+}
+
+// LockForEntry implements reservations.Repo.
+func (r *Repo) LockForEntry(ctx context.Context, lotID, id int64) (reservations.EntryRow, error) {
+	row, err := r.q(ctx).LockReservationForEntry(ctx, dbgen.LockReservationForEntryParams{LotID: lotID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.EntryRow{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.EntryRow{}, fmt.Errorf("reservations: lock reservation %d for entry: %w", id, err)
+	}
+	return reservations.EntryRow{
+		ID: row.ID, UserID: row.UserID, LotID: lotID, TariffVersionID: row.TariffVersionID, PublicID: row.PublicID,
+		Status: reservations.Status(row.Status), Nonce: row.QrNonce,
+		Window: reservations.Window{Start: row.WindowStart.Time.UTC(), End: row.WindowEnd.Time.UTC()},
+	}, nil
+}
+
+// CheckIn implements reservations.Repo.
+func (r *Repo) CheckIn(ctx context.Context, id int64, now time.Time) error {
+	n, err := r.q(ctx).CheckInReservation(ctx, dbgen.CheckInReservationParams{ID: id, Now: ts(now)})
+	if err != nil {
+		return fmt.Errorf("reservations: check in %d: %w", id, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("reservations: check in %d: not confirmed", id)
+	}
+	return nil
+}
