@@ -480,6 +480,84 @@ func (q *Queries) ListReservationsForUser(ctx context.Context, arg ListReservati
 	return items, nil
 }
 
+const lockReservationForUser = `-- name: LockReservationForUser :one
+select r.id, r.public_id, r.vehicle_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.status, r.fee_cents, r.payment_due_at, r.created_at, r.confirmed_at, r.cancelled_at,
+       r.cancelled_by, r.refund_reason, r.checked_in_at, r.completed_at, r.expired_at,
+       l.public_id as lot_public_id,
+       v.public_id as vehicle_public_id, v.plate_display, v.make, v.model, v.color
+from reservations r
+join lots l on l.id = r.lot_id
+join vehicles v on v.id = r.vehicle_id
+where r.public_id = $1 and r.user_id = $2
+for update of r
+`
+
+type LockReservationForUserParams struct {
+	PublicID uuid.UUID
+	UserID   int64
+}
+
+type LockReservationForUserRow struct {
+	ID              int64
+	PublicID        uuid.UUID
+	VehicleID       int64
+	ArrivalAt       pgtype.Timestamptz
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+	Status          string
+	FeeCents        int64
+	PaymentDueAt    pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	ConfirmedAt     pgtype.Timestamptz
+	CancelledAt     pgtype.Timestamptz
+	CancelledBy     pgtype.Text
+	RefundReason    pgtype.Text
+	CheckedInAt     pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	ExpiredAt       pgtype.Timestamptz
+	LotPublicID     uuid.UUID
+	VehiclePublicID uuid.UUID
+	PlateDisplay    string
+	Make            string
+	Model           string
+	Color           string
+}
+
+// The same row as GetReservationForUser, with the reservation locked for
+// update (design s8.1: reservations before payments).
+func (q *Queries) LockReservationForUser(ctx context.Context, arg LockReservationForUserParams) (LockReservationForUserRow, error) {
+	row := q.db.QueryRow(ctx, lockReservationForUser, arg.PublicID, arg.UserID)
+	var i LockReservationForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.VehicleID,
+		&i.ArrivalAt,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.Status,
+		&i.FeeCents,
+		&i.PaymentDueAt,
+		&i.CreatedAt,
+		&i.ConfirmedAt,
+		&i.CancelledAt,
+		&i.CancelledBy,
+		&i.RefundReason,
+		&i.CheckedInAt,
+		&i.CompletedAt,
+		&i.ExpiredAt,
+		&i.LotPublicID,
+		&i.VehiclePublicID,
+		&i.PlateDisplay,
+		&i.Make,
+		&i.Model,
+		&i.Color,
+	)
+	return i, err
+}
+
 const lockSlotLoads = `-- name: LockSlotLoads :many
 select held from reservation_slot_loads
 where lot_id = $1 and slot_start >= $2 and slot_start < $3
@@ -545,6 +623,21 @@ func (q *Queries) ReadSlotLoads(ctx context.Context, arg ReadSlotLoadsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const setReservationVehicle = `-- name: SetReservationVehicle :exec
+update reservations set vehicle_id = $1, updated_at = $2 where id = $3
+`
+
+type SetReservationVehicleParams struct {
+	VehicleID int64
+	Now       pgtype.Timestamptz
+	ID        int64
+}
+
+func (q *Queries) SetReservationVehicle(ctx context.Context, arg SetReservationVehicleParams) error {
+	_, err := q.db.Exec(ctx, setReservationVehicle, arg.VehicleID, arg.Now, arg.ID)
+	return err
 }
 
 const vehicleHasActiveReservation = `-- name: VehicleHasActiveReservation :one

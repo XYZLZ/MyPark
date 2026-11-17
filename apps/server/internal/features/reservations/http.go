@@ -38,6 +38,8 @@ func (h *Handler) Register(r *router.Router) {
 		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.create)
 	r.Handle("GET /v1/reservations", router.Policy{Roles: router.DriverOnly}, h.list)
 	r.Handle("GET /v1/reservations/{id}", router.Policy{Roles: router.DriverOnly}, h.get)
+	r.Handle("PATCH /v1/reservations/{id}",
+		router.Policy{Roles: router.DriverOnly, Limit: &ratelimit.ReservationWriteUser}, h.changeVehicle)
 }
 
 // Ids arrive as strings: a malformed one is the same 404 as an unknown one
@@ -236,4 +238,26 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		page.NextCursor = &next
 	}
 	response.List(w, r, items, page)
+}
+
+type changeVehicleRequest struct {
+	VehicleID string `json:"vehicle_id" validate:"required"`
+}
+
+func (h *Handler) changeVehicle(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.userID(w, r)
+	if !ok {
+		return
+	}
+	req, err := httpx.DecodeJSON[changeVehicleRequest](r, h.v)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	v, err := h.svc.ChangeVehicle(r.Context(), uid, idOrNil(r.PathValue("id")), idOrNil(req.VehicleID))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	response.OK(w, r, http.StatusOK, toReservationDTO(v))
 }

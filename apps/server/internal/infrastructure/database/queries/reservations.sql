@@ -126,3 +126,23 @@ where r.user_id = @user_id
            coalesce((select c.id from reservations c where c.public_id = @cursor_public_id::uuid and c.user_id = @user_id), 0)))
 order by r.arrival_at desc, r.id desc
 limit @row_limit::int;
+
+
+-- name: LockReservationForUser :one
+-- The same row as GetReservationForUser, with the reservation locked for
+-- update (design s8.1: reservations before payments).
+select r.id, r.public_id, r.vehicle_id, r.arrival_at,
+       lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end,
+       r.status, r.fee_cents, r.payment_due_at, r.created_at, r.confirmed_at, r.cancelled_at,
+       r.cancelled_by, r.refund_reason, r.checked_in_at, r.completed_at, r.expired_at,
+       l.public_id as lot_public_id,
+       v.public_id as vehicle_public_id, v.plate_display, v.make, v.model, v.color
+from reservations r
+join lots l on l.id = r.lot_id
+join vehicles v on v.id = r.vehicle_id
+where r.public_id = @public_id and r.user_id = @user_id
+for update of r;
+
+
+-- name: SetReservationVehicle :exec
+update reservations set vehicle_id = @vehicle_id, updated_at = @now where id = @id;

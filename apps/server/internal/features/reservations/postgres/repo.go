@@ -245,6 +245,18 @@ func (r *Repo) Get(ctx context.Context, userID int64, id uuid.UUID) (reservation
 	return record(row), nil
 }
 
+// Lock implements reservations.Repo.
+func (r *Repo) Lock(ctx context.Context, userID int64, id uuid.UUID) (reservations.Record, error) {
+	row, err := r.q(ctx).LockReservationForUser(ctx, dbgen.LockReservationForUserParams{PublicID: id, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.Record{}, reservations.ErrNotFound
+	}
+	if err != nil {
+		return reservations.Record{}, fmt.Errorf("reservations: lock reservation: %w", err)
+	}
+	return record(dbgen.GetReservationForUserRow(row)), nil
+}
+
 // List implements reservations.Repo.
 func (r *Repo) List(ctx context.Context, userID int64, f reservations.ListFilter) ([]reservations.Record, error) {
 	p := dbgen.ListReservationsForUserParams{UserID: userID, Scope: f.Scope, RowLimit: int32(f.Limit)}
@@ -260,4 +272,12 @@ func (r *Repo) List(ctx context.Context, userID int64, f reservations.ListFilter
 		out[i] = record(dbgen.GetReservationForUserRow(row))
 	}
 	return out, nil
+}
+
+// SetVehicle implements reservations.Repo.
+func (r *Repo) SetVehicle(ctx context.Context, id, vehicleID int64, now time.Time) error {
+	if err := r.q(ctx).SetReservationVehicle(ctx, dbgen.SetReservationVehicleParams{ID: id, VehicleID: vehicleID, Now: ts(now)}); err != nil {
+		return fmt.Errorf("reservations: change vehicle: %w", err)
+	}
+	return nil
 }

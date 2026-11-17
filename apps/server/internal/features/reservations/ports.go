@@ -124,6 +124,10 @@ type ListFilter struct {
 type ReadRepo interface {
 	// Get reads one reservation of the user, or ErrNotFound.
 	Get(ctx context.Context, userID int64, id uuid.UUID) (Record, error)
+	// Lock is Get with the reservation locked for update.
+	Lock(ctx context.Context, userID int64, id uuid.UUID) (Record, error)
 	// List returns at most f.Limit reservations of the user.
 	List(ctx context.Context, userID int64, f ListFilter) ([]Record, error)
+	// SetVehicle points the reservation at another vehicle.
+	SetVehicle(ctx context.Context, id, vehicleID int64, now time.Time) error
 }

@@ -982,7 +982,6 @@ paths:
       description: >-
         Only a `confirmed` reservation, and only before `arrival_at`. Fee,
         window and QR are unchanged. The same vehicle is a no-op `200`.
-      x-mypark-pending: S3.3
       tags: [reservations]
       security: [{ bearerAuth: [] }]
       requestBody:

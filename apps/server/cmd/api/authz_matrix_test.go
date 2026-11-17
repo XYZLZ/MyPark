@@ -186,6 +186,11 @@ var matrix = map[string]matrixEntry{
 	"GET /v1/reservations": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/reservations", nil) }},
 	"GET /v1/reservations/{id}": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
 		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f), nil) }},
+	// The same vehicle is a no-op 200; another driver reaches the reservation lookup first.
+	"PATCH /v1/reservations/{id}": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request {
+			return jsonReq("PATCH", reservationPath(f), map[string]any{"vehicle_id": f.vehicleID.String()})
+		}},
 
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
 
@@ -491,6 +496,7 @@ var specPolicy = map[string]struct {
 	"POST /v1/reservations":            {access: "driver", limit: &ratelimit.ReservationWriteUser},
 	"GET /v1/reservations":             {access: "driver"},
 	"GET /v1/reservations/{id}":        {access: "driver"},
+	"PATCH /v1/reservations/{id}":      {access: "driver", limit: &ratelimit.ReservationWriteUser},
 	"GET /v1/admin/admins":             {access: "admin"},
 	"POST /v1/admin/admins":            {access: "admin"},
 	// A device route declares no Policy.Limit: the router applies DeviceIP

@@ -426,6 +426,36 @@ func TestGetReservation_Representation(t *testing.T) {
 	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 }
 
+// Review Focus 5 (M3B-33): a malformed id, an unknown id and another driver's
+// id answer the same 404 on every {id} route.
+func TestReservations_GarbageIDsAre404(t *testing.T) {
+	e := newRsvEnv(t)
+	ds := testsupport.SeedDrivers(t, e.db, 2)
+	foreign := e.seedRes(ds[1], "confirmed", rsvAt(time.Hour))
+	tok := e.token(ds[0])
+	for _, method := range []string{http.MethodGet, http.MethodPatch} {
+		var bodies []map[string]any
+		for _, x := range []string{"abc", uuid.NewString(), foreign.String()} {
+			var req any
+			if method == http.MethodPatch {
+				req = map[string]any{"vehicle_id": ds[0].VehicleID.String()}
+			}
+			code, body := e.do(tok, method, "/v1/reservations/"+x, req)
+			if code != http.StatusNotFound || errCode(body) != "reservation.not_found" {
+				t.Fatalf("%s %s = %d %v, want 404 reservation.not_found", method, x, code, body)
+			}
+			delete(body["meta"].(map[string]any), "request_id")
+			bodies = append(bodies, body)
+		}
+		for _, b := range bodies[1:] {
+			if !reflect.DeepEqual(bodies[0], b) {
+				t.Errorf("%s: 404 bodies differ: %v vs %v", method, bodies[0], b)
+			}
+		}
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
 func TestListReservations_ScopesAndPaging(t *testing.T) {
 	e := newRsvEnv(t)
 	d := testsupport.SeedDrivers(t, e.db, 1)[0]
@@ -491,4 +521,95 @@ func TestListReservations_BadCursorOrScope(t *testing.T) {
 			t.Errorf("list %q names %v, want field %q", q, fields, fieldName)
 		}
 	}
+}
+
+func TestChangeVehicle(t *testing.T) {
+	patch := func(e *rsvEnv, d testsupport.Driver, id uuid.UUID, vehicle string) (int, map[string]any) {
+		return e.do(e.token(d), http.MethodPatch, "/v1/reservations/"+id.String(), map[string]any{"vehicle_id": vehicle})
+	}
+	secondVehicle := func(e *rsvEnv, d testsupport.Driver) uuid.UUID {
+		var v uuid.UUID
+		if err := e.db.Super.QueryRow(e.t.Context(),
+			`insert into vehicles (user_id, plate_normalized, plate_display, make, model, color)
+			 values ($1, 'ZZ' || upper(substr(md5(random()::text), 1, 6)), 'ZZ1234', 'Honda', 'Civic', 'Rojo')
+			 returning public_id`, d.UserID).Scan(&v); err != nil {
+			e.t.Fatal(err)
+		}
+		return v
+	}
+	updatedAt := func(e *rsvEnv, id uuid.UUID) time.Time {
+		var at time.Time
+		if err := e.db.Super.QueryRow(e.t.Context(), `select updated_at from reservations where public_id = $1`, id).Scan(&at); err != nil {
+			e.t.Fatal(err)
+		}
+		return at
+	}
+
+	t.Run("changes and no-ops", func(t *testing.T) {
+		e := newRsvEnv(t)
+		d := testsupport.SeedDrivers(t, e.db, 1)[0]
+		id := e.seedRes(d, "confirmed", rsvAt(time.Hour))
+		if _, err := e.db.Super.Exec(t.Context(), `update reservations set updated_at = updated_at - interval '1 hour' where public_id = $1`, id); err != nil {
+			t.Fatal(err)
+		}
+		v2 := secondVehicle(e, d)
+		code, body := patch(e, d, id, v2.String())
+		if code != http.StatusOK || field(body, "data.vehicle.id") != v2.String() || field(body, "data.vehicle.make") != "Honda" ||
+			field(body, "data.status") != "confirmed" {
+			t.Fatalf("change = %d %v, want 200 with the new vehicle", code, body)
+		}
+		changed := updatedAt(e, id)
+		if !changed.Equal(rsvNow) {
+			t.Errorf("updated_at = %s, want %s", changed, rsvNow)
+		}
+		e.clk.Set(rsvNow.Add(time.Minute))
+		code, body = patch(e, d, id, v2.String())
+		if code != http.StatusOK || field(body, "data.vehicle.id") != v2.String() {
+			t.Fatalf("same vehicle = %d %v, want 200", code, body)
+		}
+		if got := updatedAt(e, id); !got.Equal(changed) {
+			t.Errorf("same vehicle wrote: updated_at %s -> %s", changed, got)
+		}
+		testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		for _, c := range []struct {
+			name   string
+			status int
+			code   string
+			setup  func(e *rsvEnv, d, o testsupport.Driver) (id uuid.UUID, vehicle string)
+		}{
+			{"pending_payment", 409, "reservation.invalid_state", func(e *rsvEnv, d, _ testsupport.Driver) (uuid.UUID, string) {
+				return e.seedRes(d, "pending_payment", rsvAt(time.Hour)), secondVehicle(e, d).String()
+			}},
+			{"at arrival", 409, "reservation.vehicle_change_closed", func(e *rsvEnv, d, _ testsupport.Driver) (uuid.UUID, string) {
+				arrival := rsvAt(time.Minute)
+				id := e.seedRes(d, "confirmed", arrival)
+				e.clk.Set(arrival)
+				return id, secondVehicle(e, d).String()
+			}},
+			{"other drivers vehicle", 404, "vehicle.not_found", func(e *rsvEnv, d, o testsupport.Driver) (uuid.UUID, string) {
+				return e.seedRes(d, "confirmed", rsvAt(time.Hour)), o.VehicleID.String()
+			}},
+			{"malformed vehicle", 404, "vehicle.not_found", func(e *rsvEnv, d, _ testsupport.Driver) (uuid.UUID, string) {
+				return e.seedRes(d, "confirmed", rsvAt(time.Hour)), "abc"
+			}},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				e := newRsvEnv(t)
+				ds := testsupport.SeedDrivers(t, e.db, 2)
+				id, vehicle := c.setup(e, ds[0], ds[1])
+				before := updatedAt(e, id)
+				code, body := patch(e, ds[0], id, vehicle)
+				if code != c.status || errCode(body) != c.code {
+					t.Fatalf("change = %d %v, want %d %s", code, body, c.status, c.code)
+				}
+				if got := updatedAt(e, id); !got.Equal(before) {
+					t.Errorf("refused change wrote: updated_at %s -> %s", before, got)
+				}
+				testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+			})
+		}
+	})
 }
