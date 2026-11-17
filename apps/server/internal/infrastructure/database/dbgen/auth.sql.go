@@ -212,6 +212,17 @@ func (q *Queries) FindUserForLogin(ctx context.Context, email string) (FindUserF
 	return i, err
 }
 
+const getLiveUserIDByEmail = `-- name: GetLiveUserIDByEmail :one
+select id from users where email = $1 and deleted_at is null
+`
+
+func (q *Queries) GetLiveUserIDByEmail(ctx context.Context, email string) (int64, error) {
+	row := q.db.QueryRow(ctx, getLiveUserIDByEmail, email)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getPasswordHash = `-- name: GetPasswordHash :one
 select password_hash
 from users
@@ -515,6 +526,43 @@ func (q *Queries) InsertSeedAdmin(ctx context.Context, arg InsertSeedAdminParams
 	var i InsertSeedAdminRow
 	err := row.Scan(&i.ID, &i.PublicID)
 	return i, err
+}
+
+const insertSeedDriver = `-- name: InsertSeedDriver :execrows
+insert into users (email, password_hash, password_changed_at, first_name, last_name, role, status,
+                   email_verified_at, locale, terms_version, terms_accepted_at, privacy_version,
+                   privacy_accepted_at, created_at, updated_at)
+values ($1, $2, $3, $4, $5, 'driver', 'active', $3, 'es-DO',
+        $6, $3, $7, $3, $3, $3)
+on conflict (email) where deleted_at is null do nothing
+`
+
+type InsertSeedDriverParams struct {
+	Email          string
+	PasswordHash   pgtype.Text
+	Now            pgtype.Timestamptz
+	FirstName      string
+	LastName       string
+	TermsVersion   pgtype.Text
+	PrivacyVersion pgtype.Text
+}
+
+// A simulated driver (M3B-44): active, verified, current legal versions
+// accepted. A live account that already holds the email is left untouched.
+func (q *Queries) InsertSeedDriver(ctx context.Context, arg InsertSeedDriverParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertSeedDriver,
+		arg.Email,
+		arg.PasswordHash,
+		arg.Now,
+		arg.FirstName,
+		arg.LastName,
+		arg.TermsVersion,
+		arg.PrivacyVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const lockAdminSeed = `-- name: LockAdminSeed :exec

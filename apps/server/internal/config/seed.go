@@ -199,3 +199,55 @@ func loadSecretVar(getenv func(string) string, name, dev string, production bool
 	}
 	return b, nil
 }
+
+// EnvSeedSimulatorDrivers enables the simulated driver seed (M3B-44).
+const EnvSeedSimulatorDrivers = "SEED_SIMULATOR_DRIVERS"
+
+// SeedDrivers is the configuration cmd/seed needs to provision the simulated
+// drivers: the fleet secret their passwords derive from. When the seed is
+// disabled only Enabled is meaningful. String, GoString and LogValue are
+// redacted.
+type SeedDrivers struct {
+	enabled bool
+	fleet   secret.Bytes
+}
+
+// Enabled reports whether SEED_SIMULATOR_DRIVERS is true.
+func (s SeedDrivers) Enabled() bool { return s.enabled }
+
+// FleetSecret returns a copy of the fleet secret as a redacting type.
+func (s SeedDrivers) FleetSecret() secret.Bytes { return slices.Clone(s.fleet) }
+
+// String renders a redacted value, so %v, %+v and %s never print the secret.
+func (SeedDrivers) String() string { return "SeedDrivers{" + redacted + "}" }
+
+// GoString renders the same redacted value for %#v.
+func (s SeedDrivers) GoString() string { return s.String() }
+
+// LogValue implements slog.LogValuer.
+func (SeedDrivers) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// LoadSeedDrivers reads the simulated driver seed variables. With
+// SEED_SIMULATOR_DRIVERS unset or false it returns a disabled value and
+// ignores every other variable. When true it requires SIMULATOR_FLEET_SECRET
+// under the fleet seed's rule, and refuses the committed dev value when
+// APP_ENV=production. Errors name variables and never include a value.
+func LoadSeedDrivers(getenv func(string) string) (SeedDrivers, error) {
+	flag := strings.TrimSpace(getenv(EnvSeedSimulatorDrivers))
+	if flag == "" {
+		return SeedDrivers{}, nil
+	}
+	enabled, err := strconv.ParseBool(flag)
+	if err != nil {
+		return SeedDrivers{}, fmt.Errorf("%s must be true or false", EnvSeedSimulatorDrivers)
+	}
+	if !enabled {
+		return SeedDrivers{}, nil
+	}
+	production := valueOr(getenv(EnvAppEnv), DefaultEnv) == "production"
+	fleet, err := loadSecretVar(getenv, EnvSimulatorFleetSecret, DevSimulatorFleetSecret, production)
+	if err != nil {
+		return SeedDrivers{}, fmt.Errorf("invalid seed configuration: %w", err)
+	}
+	return SeedDrivers{enabled: true, fleet: secret.Bytes(fleet)}, nil
+}
