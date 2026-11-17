@@ -230,6 +230,7 @@ type fixture struct {
 	revoked       principal // driver whose session is revoked
 	vehicleID     uuid.UUID
 	reservationID uuid.UUID // the owner's confirmed reservation, when seeded
+	paymentID     uuid.UUID // the owner's succeeded fee payment, when seeded
 	tampered      string    // owner token with a corrupted signature
 	expired       string    // owner token past its expiry
 	algNone       string    // owner claims, "alg":"none", no signature

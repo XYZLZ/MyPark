@@ -1185,7 +1185,6 @@ paths:
       operationId: listPayments
       summary: List the current driver's payments and receipts
       description: Newest first, keyset-paginated.
-      x-mypark-pending: S5.3
       tags: [payments]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1212,7 +1211,6 @@ paths:
     get:
       operationId: getPayment
       summary: Get one of the current driver's payments
-      x-mypark-pending: S5.3
       tags: [payments]
       security: [{ bearerAuth: [] }]
       responses:

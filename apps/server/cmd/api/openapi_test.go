@@ -193,7 +193,7 @@ func TestOpenAPI_PostDeviceEventSecurity(t *testing.T) {
 // TestOpenAPI_NoPendingOperations skips them, so the M3 contract can ship in S1
 // ahead of its handlers; each serving task removes its marker from openapi.yaml
 // and S9.1 deletes this list, which makes the test strict again.
-var m3PendingAllowlist = map[string]bool{"S5.3": true}
+var m3PendingAllowlist = map[string]bool{}
 
 // m3Operations is the M3 driver contract published by S1, with the slice that
 // serves each operation and removes its marker (design §14.1).

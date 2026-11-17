@@ -38,13 +38,17 @@ type matrixEntry struct {
 	// before the run; notFound is the code of the owned 404 (default: a vehicle).
 	reservation bool
 	// unpaid seeds the reservation as pending_payment (still payable) instead of confirmed.
-	unpaid   bool
+	unpaid bool
+	// payment seeds the reservation and a succeeded fee payment of the owner (f.paymentID).
+	payment  bool
 	notFound errcodes.Code
 }
 
 func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.String() }
 
 func reservationPath(f *fixture) string { return "/v1/reservations/" + f.reservationID.String() }
+
+func paymentPath(f *fixture) string { return "/v1/payments/" + f.paymentID.String() }
 
 // seedReservation gives the owner a confirmed reservation of its vehicle (or a
 // payable pending_payment one when unpaid), with the arrival an hour ahead,
@@ -228,6 +232,10 @@ var matrix = map[string]matrixEntry{
 	"GET /v1/reservations/{id}/qr": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
 		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f)+"/qr", nil) }},
 
+	"GET /v1/payments": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/payments", nil) }},
+	"GET /v1/payments/{id}": {owned: true, payment: true, notFound: errcodes.PaymentNotFound,
+		build: func(f *fixture) *http.Request { return jsonReq("GET", paymentPath(f), nil) }},
+
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
 
 	// Unsigned: the user rows carry at most a bearer, which a device route
@@ -333,6 +341,9 @@ func TestAuthzMatrix(t *testing.T) {
 		entry := matrix[rt.Pattern]
 		t.Run(rt.Pattern, func(t *testing.T) {
 			f := e.newFixture()
+			if entry.payment {
+				f.seedPayment()
+			}
 			if entry.reservation {
 				f.seedReservation(entry.unpaid)
 			}
@@ -398,6 +409,7 @@ func assertSameAsMissing(t *testing.T, e *apiEnv, f *fixture, entry matrixEntry,
 	missing := *f
 	missing.vehicleID = uuid.New()
 	missing.reservationID = uuid.New()
+	missing.paymentID = uuid.New()
 	rec := e.serve(entry.build(&missing), f.owner.token)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing resource: got %d %s, want 404", rec.Code, rec.Body)
@@ -536,6 +548,8 @@ var specPolicy = map[string]struct {
 	"POST /v1/reservations/{id}/pay":    {access: "driver", limit: &ratelimit.ReservationPayUser},
 	"POST /v1/reservations/{id}/cancel": {access: "driver", limit: &ratelimit.ReservationWriteUser},
 	"GET /v1/reservations/{id}/qr":      {access: "driver"},
+	"GET /v1/payments":                  {access: "driver"},
+	"GET /v1/payments/{id}":             {access: "driver"},
 	"GET /v1/admin/admins":              {access: "admin"},
 	"POST /v1/admin/admins":             {access: "admin"},
 	// A device route declares no Policy.Limit: the router applies DeviceIP
@@ -638,4 +652,21 @@ func (m matrixEntry) notFoundCode() errcodes.Code {
 		return m.notFound
 	}
 	return errcodes.VehicleNotFound
+}
+
+// seedPayment gives the owner a completed reservation with a succeeded fee
+// payment (f.paymentID), straight into the database.
+func (f *fixture) seedPayment() {
+	f.env.t.Helper()
+	f.seedReservation(false)
+	err := f.env.db.Super.QueryRow(f.env.t.Context(),
+		`insert into payments (kind, method, amount_cents, status, idempotency_key, reservation_id, user_id, client_key,
+		                       request_fingerprint, card_brand, card_last4, provider_ref, succeeded_at, created_at)
+		 select 'reservation_fee', 'gateway_sim', 15000, 'succeeded', 'rsv-fee:'||r.public_id::text, r.id, r.user_id,
+		        'key-'||r.public_id::text, decode(repeat('00', 32), 'hex'), 'visa', '4242', 'prov-matrix', $2, $2
+		 from reservations r where r.public_id = $1
+		 returning public_id`, f.reservationID, f.env.clk.Now()).Scan(&f.paymentID)
+	if err != nil {
+		f.env.t.Fatalf("seed fixture payment: %v", err)
+	}
 }

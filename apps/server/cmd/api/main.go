@@ -337,6 +337,8 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		QRKey: d.cfg.QRHMACKey(), ChargeTimeout: d.cfg.PaymentChargeTimeout(), Rand: rand.Reader,
 	}), validation.New(), d.log).Register(r)
 
+	payments.NewReceiptHandler(payments.NewReceiptService(tx, paymentspg.NewReceiptRepo(d.pool)), d.log).Register(r)
+
 	// Account deletion reaches vehicles and auth only through their ports.
 	usersSvc := users.NewService(users.Deps{
 		Tx: tx, Repo: userspg.NewRepo(d.pool), Accounts: auth.NewAccounts(authSvc),
