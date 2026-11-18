@@ -292,7 +292,7 @@ create table reservations (
     constraint reservations_expired_check check (
         (status in ('expired_unpaid','expired_no_show')) = (expired_at is not null)),
     -- A refund reason exists only on a cancellation or a late-success expiry (M3B-10).
-    constraint reservations_refund_reason_check check (
+    constraint reservations_refund_reason_status_check check (
         refund_reason is null or status in ('cancelled','expired_unpaid'))
 );
 
@@ -1050,6 +1050,11 @@ Track B integrates against S1 types with MSW mocks, then against S3–S5 mid-wee
 | R6 | `reservation_slot_loads` grows by up to 288 rows a day per lot | Negligible for Phase 1; a purge of past slots is an M5 item |
 | R7 | The derived simulated-driver passwords expose those accounts if the fleet secret leaks (M3B-44) | Dev-only, refused in production, fake `.test` addresses |
 | R8 | One week, nine tasks, three sensitive | S1 on day 1; S8 scenarios are the first to trim (the control-API QR path alone meets the demo) |
+| R9 | **Accepted race:** the no-show block is read unlocked in create (users are last in the lock order), so one create can slip past a block that committed a moment earlier | None; the next create is blocked |
+| R10 | **Accepted:** the pay `Idempotency-Key` fingerprint excludes the full card number (M3B-7), so a reused key with another card sharing brand, last four and expiry replays instead of answering `409`. No money moves | None |
+| R11 | A late charge after a re-pay (new key) is not auto-refunded, because the live-fee index allows one live fee per reservation | A `refund_failed` alert with `details.reason` `duplicate_charge`, `orphan_charge` or `gateway_inconsistent`; the M4 admin refund settles it |
+| R12 | A real gateway adapter must guarantee one refund per charge across refund keys. The simulated gateway enforces it, and a refund requeued after `failed` gets a new key | Adapter contract for Phase 2 |
+| R13 | Deploy order: an old worker voids reservation stays without restoring the hold (M3B-60) | Deploy the worker before the API |
 | Deferred | FR-RES-15 closure, reconciliation job and views, admin reservation and refund views, admin cancel override | M4 |
 | Deferred | Purge of past slot rows, `/metrics` for payment latency | M5 |
 
