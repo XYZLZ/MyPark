@@ -127,6 +127,25 @@ jobs:
           done
           if [ "$missing" -ne 0 ]; then cat m2-named.log; exit 1; fi
 
+      # The M3 scenarios (guarantee G2, reservation arrivals, no-show,
+      # determinism) also run in "Test" above; this step names them like the M2
+      # one does, so a rename or a skip cannot drop them silently. They run on
+      # the step clock and take well under a minute each.
+      - name: M3 reservation scenario tests
+        env:
+          CI: "true"
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: |
+          go test -race -count=1 ./cmd/api -run 'TestScenario_(Guarantee|ReservationArrivals|NoShow|ReservationDeterministic)$' -v > m3-named.log 2>&1 || { cat m3-named.log; exit 1; }
+          missing=0
+          for name in TestScenario_Guarantee TestScenario_ReservationArrivals TestScenario_NoShow TestScenario_ReservationDeterministic; do
+            if ! grep -q -- "^--- PASS: $name " m3-named.log; then
+              echo "::error::$name did not report PASS"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then cat m3-named.log; exit 1; fi
+
       # Domain statement coverage (OC-35 stands in for the 90% branch rule).
       - name: Domain coverage gate
         env:
