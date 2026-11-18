@@ -51,7 +51,6 @@ func (s *Service) Apply(ctx context.Context, paymentID int64, res payments.Charg
 }
 
 func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payments.ChargeResult) error {
-	now := s.clock.Now()
 	fee, err := s.fees.FeeByID(ctx, paymentID)
 	if err != nil {
 		return err
@@ -60,12 +59,13 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 		return nil // idempotent re-apply
 	}
 	// The window never changes, so this unlocked read decides whether the
-	// lot is locked before the reservation (design 8.1, M3B-13).
+	// lot is locked before the reservation (design 8.1, M3B-13). This early
+	// time serves only that decision.
 	pre, err := s.repo.ForApply(ctx, fee.ReservationID)
 	if err != nil {
 		return err
 	}
-	holdsNow := pre.Window.Contains(now)
+	holdsNow := pre.Window.Contains(s.clock.Now())
 	if holdsNow {
 		if err := s.repo.LockLot(ctx, pre.LotID); err != nil {
 			return err
@@ -75,6 +75,13 @@ func (s *Service) applySuccess(ctx context.Context, paymentID int64, res payment
 	if err != nil {
 		return err
 	}
+	// Confirm or late, and every timestamp, use the time the locks were won
+	// (as Cancel does): a success that waited across the window end is late.
+	// If the window opened between the two reads, confirm runs without the
+	// lot lock and skips the bump; the hold-boundary job publishes the change
+	// within 30 s, which is acceptable. The reverse (window closed while
+	// waiting) holds the lot lock needlessly and takes the late branch.
+	now := s.clock.Now()
 	// Every success finalizes under the reservation lock, so a payment still
 	// pending here cannot be finalized by anyone else until this commits.
 	if fee, err = s.fees.FeeByID(ctx, paymentID); err != nil {

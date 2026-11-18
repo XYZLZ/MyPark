@@ -614,3 +614,34 @@ func TestApply_LateChargeAfterCancel(t *testing.T) {
 	}
 	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 }
+
+// M4: the confirm-or-late decision uses the time the locks were won. The
+// first read (lot-lock decision) is just inside the window, the next ones at
+// its end: the success is late, so the reservation expires and is refunded.
+func TestApply_LateDecidedAfterTheLocks(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	end := time.Date(2026, 12, 1, 15, 25, 0, 0, time.UTC) // upper(window)
+	svc := reservations.NewService(reservations.Deps{
+		Tx: database.NewTxRunner(e.db.App), Repo: reservationspg.NewRepo(e.db.App),
+		Clock: &tickClock{times: []time.Time{end.Add(-time.Second), end}}, Log: slogOf(e.logs),
+		Fees: paymentspg.NewRepo(e.db.App), Notify: notificationspg.NewNotifier(e.clk), Alerts: alertspg.NewRecorder(),
+		QRKey: e.cfg.QRHMACKey(),
+	})
+	if err := svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`select count(*) from reservations where id = $1 and status = 'expired_unpaid' and expired_at = $2`, f.rsvRow, end); n != 1 {
+		t.Errorf("reservation %s, want expired_unpaid at the window end", e.status(f.rsvID))
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded' and succeeded_at = $2`, f.paymentID, end); n != 1 {
+		t.Error("want the payment succeeded at the time under the locks")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and reason = 'facility_unavailable'`, f.paymentID); n != 1 {
+		t.Error("want one facility_unavailable refund")
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = $1`, string(notifications.TplReservationConfirmed)); n != 0 {
+		t.Error("a late success must not send the confirmation")
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
