@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/paymentsim"
 	"github.com/XYZLZ/MyPark/apps/server/internal/simulator"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
@@ -77,8 +79,11 @@ type pacer struct {
 	*simulator.StepClock
 	e      *deviceEnv
 	voidAt time.Time // next void tick
-	steps  int       // engine goroutine only until parked, then read by the test
-	moved  broadcast // fired after every step boundary and every park
+	// m3, when set, runs the M3 worker jobs on every void tick, after the void
+	// jobs (the worker's own order).
+	m3    func(ctx context.Context, now time.Time) error
+	steps int       // engine goroutine only until parked, then read by the test
+	moved broadcast // fired after every step boundary and every park
 
 	mu     sync.Mutex
 	limit  time.Time
@@ -119,6 +124,11 @@ func (p *pacer) WaitUntil(ctx context.Context, at time.Time) error {
 		}
 		if _, err := newReservationVoider(p.e.d.pool, p.e.clk, p.e.d.log).Run(ctx, p.e.d.pool, p.voidAt); err != nil && ctx.Err() == nil {
 			p.e.t.Errorf("reservation void job at %s: %v", p.voidAt, err)
+		}
+		if p.m3 != nil {
+			if err := p.m3(ctx, p.voidAt); err != nil && ctx.Err() == nil {
+				p.e.t.Errorf("m3 jobs at %s: %v", p.voidAt, err)
+			}
 		}
 		p.voidAt = p.voidAt.Add(voidTick)
 	}
@@ -210,6 +220,10 @@ type traceTap struct {
 
 var uuidPattern = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
+// qrValuePattern matches a reservation QR token in a payload. The server signs
+// it with a random nonce, so it is scrubbed like the other invented values.
+var qrValuePattern = regexp.MustCompile(`"value":"[A-Za-z0-9_-]{86}"`)
+
 func newTraceTap(next http.RoundTripper) *traceTap {
 	t := &traceTap{next: next, names: map[string]string{}, codes: map[string]struct{}{}, cards: map[string]struct{}{}, count: map[string]int{}}
 	for _, d := range devicefleet.Devices() {
@@ -254,7 +268,7 @@ func (c *traceTap) RoundTrip(r *http.Request) (*http.Response, error) {
 	if json.Unmarshal(req.Payload, &pl) == nil && pl.Kind == gate.KindEmployeeCard && pl.Value != "" {
 		c.cards[pl.Value] = struct{}{}
 	}
-	payload := uuidPattern.ReplaceAllString(string(req.Payload), "<id>")
+	payload := qrValuePattern.ReplaceAllString(uuidPattern.ReplaceAllString(string(req.Payload), "<id>"), `"value":"<qr>"`)
 	for code := range c.codes {
 		payload = strings.ReplaceAll(payload, code, "<code>")
 	}
@@ -299,6 +313,11 @@ type scenarioRig struct {
 	tap      *traceTap
 	client   *simulator.DeviceClient
 	publicID uuid.UUID
+
+	logs    *testsupport.SyncBuffer // the API's log, for the no-500 check
+	jobs    *m3Jobs
+	drivers *simulator.DriverClient // set by withDrivers
+	dtap    *driverTap              // the driver client's requests
 }
 
 // newScenarioRig builds the rig with the shared clock at start. Unlike the
@@ -306,6 +325,13 @@ type scenarioRig struct {
 // the tests need.
 func newScenarioRig(t *testing.T, start time.Time, mods ...func(*deps)) *scenarioRig {
 	t.Helper()
+	logs := &testsupport.SyncBuffer{}
+	noSleep := func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	// The simulated gateway never waits; the log is kept for the no-500 check.
+	mods = append([]func(*deps){func(d *deps) {
+		d.log = slog.New(slog.NewTextHandler(logs, nil))
+		d.gateway = paymentsim.New(d.pool, paymentsim.Config{Clock: d.clock, Sleep: noSleep})
+	}}, mods...)
 	e := newDeviceEnv(t, mods...)
 	q := dbgen.New(e.db.App)
 	if _, err := devices.SeedFleet(t.Context(), q, e.d.sealer, e.lotID, simFleet); err != nil {
@@ -320,26 +346,45 @@ func newScenarioRig(t *testing.T, start time.Time, mods ...func(*deps)) *scenari
 	}
 
 	pace := newPacer(e, start)
+	jobs := newM3Jobs(e, noSleep)
+	pace.m3 = jobs.run
 	tap := newTraceTap(simulator.HandlerTransport(e.h))
-	noSleep := func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	client := simulator.NewDeviceClient(simulator.ClientConfig{
 		BaseURL: "http://api.test", Transport: tap, SignClock: e.clk, FleetSecret: simFleet, Sleep: noSleep,
 	})
 	log := simulator.NewEventLog(20000)
-	runner := simulator.NewRunner(simulator.RunnerDeps{
+	r := &scenarioRig{deviceEnv: e, log: log, pace: pace, tap: tap, client: client, publicID: publicID, logs: logs, jobs: jobs}
+	r.runner = simulator.NewRunner(simulator.RunnerDeps{
 		Client: client, FleetSecret: simFleet, Log: log,
-		// The drain cap is a wall-clock bound: it must not move with virtual time.
-		Wall:     testsupport.NewFakeClock(start),
+		// The drain cap is a wall-clock bound: its timers must not move with
+		// virtual time. Now is the server's clock, which the reserved-car
+		// booking reads (windows are server time).
+		Wall:     serverWall{Timers: testsupport.NewFakeClock(start), now: e.clk},
 		Spaces:   simulator.PublicSpaces(&http.Client{Transport: simulator.HandlerTransport(e.h)}, "http://api.test"),
 		NewClock: func(time.Time, int) simulator.Clock { return pace },
+		Drivers: func(context.Context) (simulator.DriverAPI, error) {
+			if r.drivers == nil {
+				return nil, errors.New("scenario rig: withDrivers was not called")
+			}
+			return r.drivers, nil
+		},
 	})
 	t.Cleanup(func() {
-		_, _ = runner.Stop(false)
+		_, _ = r.runner.Stop(false)
 		pace.release()
-		runner.Wait()
+		r.runner.Wait()
 	})
-	return &scenarioRig{deviceEnv: e, runner: runner, log: log, pace: pace, tap: tap, client: client, publicID: publicID}
+	return r
 }
+
+// serverWall is the runner's wall clock in the rig: timers on a clock that
+// never moves, Now on the shared server clock.
+type serverWall struct {
+	clock.Timers
+	now clock.Clock
+}
+
+func (w serverWall) Now() time.Time { return w.now.Now() }
 
 func (r *scenarioRig) start(sc simulator.Scenario, seed uint64) {
 	r.t.Helper()
