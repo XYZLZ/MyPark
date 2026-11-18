@@ -184,6 +184,19 @@ func (r *Repo) MarkNotSubmitted(ctx context.Context, paymentID int64, cutoff, no
 	return n == 1, nil
 }
 
+// AlertApplyFailed implements payments.Fees.
+func (r *Repo) AlertApplyFailed(ctx context.Context, paymentID int64, now time.Time) (bool, error) {
+	tx, err := database.MustTx(ctx)
+	if err != nil {
+		return false, fmt.Errorf("payments: alert apply failed %d: %w", paymentID, err)
+	}
+	n, err := dbgen.New(tx).OpenApplyFailedAlert(ctx, dbgen.OpenApplyFailedAlertParams{PaymentID: paymentID, Now: ts(now)})
+	if err != nil {
+		return false, fmt.Errorf("payments: alert apply failed %d: %w", paymentID, err)
+	}
+	return n == 1, nil
+}
+
 // LiveFee implements payments.Fees.
 func (r *Repo) LiveFee(ctx context.Context, reservationID int64) (payments.FeePayment, bool, error) {
 	row, err := r.q(ctx).GetLiveFee(ctx, int8v(reservationID))

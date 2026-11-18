@@ -529,7 +529,10 @@ const listPendingFeesBefore = `-- name: ListPendingFeesBefore :many
 select id, public_id, status, coalesce(failure_code, '')::text as failure_code, idempotency_key, reservation_id, amount_cents
 from payments
 where kind = 'reservation_fee' and status = 'pending' and created_at < $1
-order by created_at, id
+order by exists (select 1 from reconciliation_alerts a
+                 where a.kind = 'refund_failed' and a.details->>'reason' = 'apply_failed'
+                   and a.details->>'payment_id' = payments.public_id::text),
+         created_at, id
 limit $2
 `
 
@@ -550,7 +553,9 @@ type ListPendingFeesBeforeRow struct {
 
 // The reconcile job's work list (design 9.4): fee attempts still pending after
 // the charge timeout plus a margin. Unlocked on purpose: the gateway is called
-// with no transaction open, and Apply is fenced on pending.
+// with no transaction open, and Apply is fenced on pending. A payment whose
+// Apply already failed (it has an apply_failed alert) goes last, so a batch of
+// stuck rows never starves younger ones; it is still retried when there is room.
 func (q *Queries) ListPendingFeesBefore(ctx context.Context, arg ListPendingFeesBeforeParams) ([]ListPendingFeesBeforeRow, error) {
 	rows, err := q.db.Query(ctx, listPendingFeesBefore, arg.Cutoff, arg.Batch)
 	if err != nil {

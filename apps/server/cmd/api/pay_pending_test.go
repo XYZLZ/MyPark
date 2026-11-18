@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -203,4 +204,61 @@ func TestGetReservation_LatestPaymentFailed(t *testing.T) {
 	if field(got, "data.latest_payment.status") != "failed" || field(got, "data.latest_payment.failure_code") != "card_declined" {
 		t.Errorf("latest_payment = %v, want failed/card_declined", field(got, "data.latest_payment"))
 	}
+}
+
+// failApply fails Apply for one payment and passes every other one through.
+type failApply struct {
+	payments.OutcomeApplier
+	paymentID int64
+}
+
+func (f failApply) Apply(ctx context.Context, id int64, res payments.ChargeResult) error {
+	if id == f.paymentID {
+		return errors.New("apply: injected failure")
+	}
+	return f.OutcomeApplier.Apply(ctx, id, res)
+}
+
+func (e *feeEnv) paymentOf(rsvID string) (id int64, public string) {
+	e.t.Helper()
+	if err := e.db.App.QueryRow(e.t.Context(), `select p.id, p.public_id::text from payments p join reservations r on r.id = p.reservation_id
+		where r.public_id = $1`, rsvID).Scan(&id, &public); err != nil {
+		e.t.Fatal(err)
+	}
+	return id, public
+}
+
+// I2: a gateway success whose Apply keeps failing raises one refund_failed
+// alert (apply_failed) and is retried, and it does not starve a younger fee.
+func TestReconcile_ApplyFailureAlertsOnceAndDoesNotStarve(t *testing.T) {
+	e := newFeeEnv(t)
+	stuck, _ := e.payTimeout()
+	e.clk.Advance(time.Second)
+	younger, _ := e.payTimeout()
+	stuckPay, stuckPublic := e.paymentOf(stuck)
+	rec, svc := e.reconciler()
+	rec.Batch = 1
+	rec.Outcomes = failApply{OutcomeApplier: svc, paymentID: stuckPay}
+	e.clk.Advance(61 * time.Second)
+
+	for range 3 {
+		if _, err := rec.Run(t.Context(), e.clk.Now()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		e.clk.Advance(30 * time.Second)
+	}
+	if got := e.status(younger); got != "confirmed" {
+		t.Errorf("younger reservation = %s, want confirmed (not starved by the failing one)", got)
+	}
+	if got := e.status(stuck); got != "pending_payment" {
+		t.Errorf("stuck reservation = %s, want pending_payment (retried, not settled)", got)
+	}
+	if n := e.count(`select count(*) from reconciliation_alerts where kind = 'refund_failed'
+		and details->>'reason' = 'apply_failed' and details->>'payment_id' = $1 and details->>'reservation_id' = $2`, stuckPublic, stuck); n != 1 {
+		t.Errorf("apply_failed alerts = %d, want exactly 1 across the ticks", n)
+	}
+	if n := e.count(`select count(*) from reconciliation_alerts`); n != 1 {
+		t.Errorf("alerts = %d, want 1", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
 }

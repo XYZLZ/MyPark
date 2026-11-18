@@ -54,11 +54,16 @@ returning id, public_id, payment_id, amount_cents, reason, status;
 -- name: ListPendingFeesBefore :many
 -- The reconcile job's work list (design 9.4): fee attempts still pending after
 -- the charge timeout plus a margin. Unlocked on purpose: the gateway is called
--- with no transaction open, and Apply is fenced on pending.
+-- with no transaction open, and Apply is fenced on pending. A payment whose
+-- Apply already failed (it has an apply_failed alert) goes last, so a batch of
+-- stuck rows never starves younger ones; it is still retried when there is room.
 select id, public_id, status, coalesce(failure_code, '')::text as failure_code, idempotency_key, reservation_id, amount_cents
 from payments
 where kind = 'reservation_fee' and status = 'pending' and created_at < @cutoff
-order by created_at, id
+order by exists (select 1 from reconciliation_alerts a
+                 where a.kind = 'refund_failed' and a.details->>'reason' = 'apply_failed'
+                   and a.details->>'payment_id' = payments.public_id::text),
+         created_at, id
 limit sqlc.arg('batch');
 
 -- name: LockReservationOfFee :one

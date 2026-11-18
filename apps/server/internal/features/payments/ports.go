@@ -65,7 +65,8 @@ type Fees interface {
 	// failed. It is fenced on status = 'pending' and reports whether it applied.
 	Finalize(ctx context.Context, paymentID int64, res ChargeResult, now time.Time) (applied bool, err error)
 	// PendingFeesBefore lists up to limit pending fee payments created before
-	// cutoff, oldest first. It is an unlocked read: the reconcile job calls
+	// cutoff, oldest first, with the payments that already have an apply_failed
+	// alert last. It is an unlocked read: the reconcile job calls
 	// the gateway with no transaction open.
 	PendingFeesBefore(ctx context.Context, cutoff time.Time, limit int) ([]FeePayment, error)
 	// MarkNotSubmitted fails a pending payment the gateway never saw. It acts
@@ -73,6 +74,10 @@ type Fees interface {
 	// have a charge in flight) and must run in a transaction, where it takes the
 	// reservation lock before touching the payment (design 8.1).
 	MarkNotSubmitted(ctx context.Context, paymentID int64, cutoff, now time.Time) (bool, error)
+	// AlertApplyFailed opens the refund_failed alert (reason apply_failed) of a
+	// gateway success that could not be applied, once per payment: it reports
+	// false when that payment already has one. Runs in a transaction.
+	AlertApplyFailed(ctx context.Context, paymentID int64, now time.Time) (opened bool, err error)
 	// MarkLateSuccess turns a failed not_submitted payment into succeeded: its
 	// charge reached the gateway after all. Fenced on that exact state.
 	MarkLateSuccess(ctx context.Context, paymentID int64, res ChargeResult, now time.Time) (bool, error)

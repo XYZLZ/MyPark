@@ -25,11 +25,17 @@ type fakeFees struct {
 	limit     int
 	marked    []int64
 	markedNow time.Time
+	alerted   []int64
 }
 
 func (f *fakeFees) PendingFeesBefore(_ context.Context, cutoff time.Time, limit int) ([]payments.FeePayment, error) {
 	f.cutoff, f.limit = cutoff, limit
 	return f.pending, nil
+}
+
+func (f *fakeFees) AlertApplyFailed(_ context.Context, id int64, _ time.Time) (bool, error) {
+	f.alerted = append(f.alerted, id)
+	return true, nil
 }
 
 func (f *fakeFees) MarkNotSubmitted(_ context.Context, id int64, cutoff, now time.Time) (bool, error) {
@@ -139,4 +145,21 @@ type errFees struct{ payments.Fees }
 
 func (errFees) PendingFeesBefore(context.Context, time.Time, int) ([]payments.FeePayment, error) {
 	return nil, errors.New("db down")
+}
+
+// I2: a gateway success that Apply refuses opens the apply_failed alert; a
+// success meeting a final payment (alerted inside Apply) does not.
+func TestReconciler_ApplyFailureAlerts(t *testing.T) {
+	broken, final := row(1), row(2)
+	fees := &fakeFees{pending: []payments.FeePayment{broken, final}}
+	app := &fakeApplier{err: map[int64]error{1: errors.New("lock timeout"), 2: payments.ErrSuccessAfterFinal}}
+	r := &payments.Reconciler{
+		Tx: passTx{}, Fees: fees, Gateway: &fakeGateway{}, Outcomes: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if n, err := r.Run(t.Context(), nowT); err != nil || n != 0 {
+		t.Fatalf("Run = %d, %v; want 0", n, err)
+	}
+	if len(fees.alerted) != 1 || fees.alerted[0] != 1 {
+		t.Errorf("alerted %v, want only payment 1", fees.alerted)
+	}
 }
