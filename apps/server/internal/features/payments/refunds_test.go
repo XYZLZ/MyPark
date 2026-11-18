@@ -15,13 +15,14 @@ import (
 )
 
 type fakeRefunds struct {
-	claims  []payments.RefundClaim
-	applied bool // what the fenced finalizers report
-	retried []string
-	retryAt time.Time
-	failed  []string
-	leased  time.Time
-	limit   int
+	claims   []payments.RefundClaim
+	applied  bool // what the fenced finalizers report
+	retried  []string
+	retryAt  time.Time
+	failed   []string
+	leased   time.Time
+	limit    int
+	sweepErr error // what SweepStranded fails with
 }
 
 func (f *fakeRefunds) Claim(_ context.Context, _, lease time.Time, limit int) ([]payments.RefundClaim, error) {
@@ -177,5 +178,19 @@ func TestRefunds_LateClaimsAreLeftToExpire(t *testing.T) {
 }
 
 func (f *fakeRefunds) SweepStranded(context.Context, time.Time, int) ([]payments.RefundClaim, error) {
-	return nil, nil
+	return nil, f.sweepErr
+}
+
+// I3: a sweep that fails is logged and reported, but the due claims are still
+// processed in the same run.
+func TestRefunds_SweepErrorStillProcessesClaims(t *testing.T) {
+	sweepErr := errors.New("sweep: lock timeout")
+	f, n := &fakeRefunds{claims: []payments.RefundClaim{claim(1)}, applied: true, sweepErr: sweepErr}, &countNotice{}
+	got, err := processor(f, refundGW{}, n, &countAlerts{}).Run(t.Context(), nowT)
+	if got != 1 || n.n != 1 {
+		t.Errorf("settled %d, emails %d, want the claim processed despite the sweep error", got, n.n)
+	}
+	if !errors.Is(err, sweepErr) {
+		t.Errorf("Run err = %v, want the sweep error reported", err)
+	}
 }

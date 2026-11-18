@@ -45,11 +45,14 @@ type RefundProcessor struct {
 
 // Run processes the refunds due at now and returns how many it settled as
 // succeeded. A refund that cannot be finalized now is logged and left for the
-// next run; it never stops the batch.
+// next run; it never stops the batch. A failed sweep is logged and reported
+// with errors.Join at the end, but never stops the claims either.
 func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 	lease, callTimeout := p.limits()
-	if err := p.sweep(ctx, now); err != nil {
-		return 0, err
+	sweepErr := p.sweep(ctx, now)
+	if sweepErr != nil {
+		sweepErr = fmt.Errorf("payments: sweep stranded refunds: %w", sweepErr)
+		p.Log.ErrorContext(ctx, "payments: refund sweep failed, claiming anyway", "err", sweepErr)
 	}
 	var claims []RefundClaim
 	err := p.Tx.InTx(ctx, func(ctx context.Context) error {
@@ -58,7 +61,7 @@ func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 		return err
 	})
 	if err != nil {
-		return 0, fmt.Errorf("payments: claim refunds: %w", err)
+		return 0, errors.Join(sweepErr, fmt.Errorf("payments: claim refunds: %w", err))
 	}
 	// A claim is only started while its lease still has room for the call and
 	// the finalize; the rest expire and the next tick reclaims them. Calling
@@ -68,7 +71,7 @@ func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 	settled := 0
 	for _, c := range claims {
 		if ctx.Err() != nil {
-			return settled, ctx.Err()
+			return settled, errors.Join(sweepErr, ctx.Err())
 		}
 		if start.Err() != nil {
 			p.Log.WarnContext(ctx, "payments: refund lease running out, left for the next tick", "refund_id", c.PublicID)
@@ -84,7 +87,7 @@ func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 			settled++
 		}
 	}
-	return settled, nil
+	return settled, sweepErr
 }
 
 // sweep ends the refunds a dead runner left at the attempt limit: failed plus
