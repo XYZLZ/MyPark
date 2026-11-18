@@ -29,7 +29,11 @@ func (e *feeEnv) expireNoShows() int {
 
 // FR-RES-17 (G6): the third no-show inside the window blocks the driver for the
 // captured block days, the create answers 409 with the date, and the email says so.
-func TestNoShow_BlocksAfterThreshold(t *testing.T) {
+func TestNoShow_BlocksAfterThreshold(t *testing.T) { assertThirdNoShowBlocks(t) }
+
+// assertThirdNoShowBlocks is the whole flow, shared with TestM3BackendAcceptance.
+func assertThirdNoShowBlocks(t *testing.T) {
+	t.Helper()
 	e := newFeeEnv(t)
 	d := testsupport.SeedDrivers(t, e.db, 1)[0]
 	id := e.reserve(d, arrivalInWindow)
