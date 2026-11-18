@@ -10,6 +10,8 @@
 #   internal/features/tariffs/calc.go
 #   internal/features/availability/{domain,coalescer}.go
 #   internal/features/gate/{state,codes}.go
+#   internal/features/reservations/{domain,state,qr,qrdecide}.go
+#   internal/features/payments/{card,backoff,replay}.go
 set -eu
 
 if [ "$#" -ne 2 ]; then
@@ -31,7 +33,9 @@ function domain(f) {
 	       f ~ /\/internal\/infrastructure\/hashing\/[^\/]+\.go$/ ||
 	       f ~ /\/internal\/features\/tariffs\/calc\.go$/ ||
 	       f ~ /\/internal\/features\/availability\/(domain|coalescer)\.go$/ ||
-	       f ~ /\/internal\/features\/gate\/(state|codes)\.go$/
+	       f ~ /\/internal\/features\/gate\/(state|codes)\.go$/ ||
+	       f ~ /\/internal\/features\/reservations\/(domain|state|qr|qrdecide)\.go$/ ||
+	       f ~ /\/internal\/features\/payments\/(card|backoff|replay)\.go$/
 }
 NR == 1 && /^mode:/ { next }
 {

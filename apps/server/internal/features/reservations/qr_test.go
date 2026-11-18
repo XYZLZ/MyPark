@@ -1,6 +1,10 @@
 package reservations_test
 
 import (
+	"context"
+	"errors"
+	"time"
+
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
 )
 
@@ -99,5 +105,73 @@ func TestQR_RoundTripAndTamper(t *testing.T) {
 	}
 	if strings.ContainsAny(token, "=+/\n") {
 		t.Errorf("token has characters outside base64url: %q", token)
+	}
+}
+
+// qrStubRepo answers the three calls Service.QR makes.
+type qrStubRepo struct {
+	reservations.Repo
+	data   reservations.QRData
+	err    error
+	limits error
+}
+
+func (r qrStubRepo) SetTxLimits(context.Context) error { return r.limits }
+func (r qrStubRepo) QRData(context.Context, int64, uuid.UUID) (reservations.QRData, error) {
+	return r.data, r.err
+}
+
+type passTx struct{}
+
+func (passTx) InTx(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }
+
+func TestService_QR(t *testing.T) {
+	key, id, nonce, token := loadGolden(t)
+	win := reservations.Window{
+		Start: time.Date(2026, 12, 1, 14, 50, 0, 0, time.UTC), End: time.Date(2026, 12, 1, 15, 25, 0, 0, time.UTC),
+	}
+	svc := func(r qrStubRepo) *reservations.Service {
+		return reservations.NewService(reservations.Deps{Tx: passTx{}, Repo: r, QRKey: key})
+	}
+	data := func(status reservations.Status, n []byte) reservations.QRData {
+		return reservations.QRData{PublicID: id, Status: status, Nonce: n, Window: win}
+	}
+	kind := func(t *testing.T, err error) (apperr.Kind, errcodes.Code) {
+		t.Helper()
+		ae, ok := errors.AsType[*apperr.Error](err)
+		if !ok {
+			t.Fatalf("error = %v, want an *apperr.Error", err)
+		}
+		return ae.Kind, ae.Code
+	}
+
+	for _, st := range []reservations.Status{reservations.StatusConfirmed, reservations.StatusCheckedIn} {
+		got, err := svc(qrStubRepo{data: data(st, nonce[:])}).QR(t.Context(), 1, id)
+		if err != nil || got.Token != token || !got.EntryValidFrom.Equal(win.Start) || !got.EntryValidUntil.Equal(win.End) {
+			t.Errorf("%s: QR = %+v, %v; want the golden token and the window", st, got, err)
+		}
+	}
+	if _, err := svc(qrStubRepo{err: reservations.ErrNotFound}).QR(t.Context(), 1, id); err == nil {
+		t.Error("an unknown reservation gave no error")
+	} else if k, c := kind(t, err); k != apperr.KindNotFound || c != errcodes.ReservationNotFound {
+		t.Errorf("unknown = %v %v, want not found reservation.not_found", k, c)
+	}
+	for _, st := range []reservations.Status{reservations.StatusPendingPayment, reservations.StatusCancelled} {
+		_, err := svc(qrStubRepo{data: data(st, nonce[:])}).QR(t.Context(), 1, id)
+		if k, c := kind(t, err); k != apperr.KindConflict || c != errcodes.ReservationInvalidState {
+			t.Errorf("%s = %v %v, want conflict reservation.invalid_state", st, k, c)
+		}
+	}
+	boom := errors.New("db down")
+	if _, err := svc(qrStubRepo{err: boom}).QR(t.Context(), 1, id); !errors.Is(err, boom) {
+		t.Errorf("a repo error = %v, want it passed through", err)
+	}
+	if _, err := svc(qrStubRepo{limits: boom}).QR(t.Context(), 1, id); !errors.Is(err, boom) {
+		t.Errorf("a SetTxLimits error = %v, want it passed through", err)
+	}
+	if _, err := svc(qrStubRepo{data: data(reservations.StatusConfirmed, nonce[:3])}).QR(t.Context(), 1, id); err == nil {
+		t.Error("a 3-byte nonce produced a token")
+	} else if _, isApp := errors.AsType[*apperr.Error](err); isApp {
+		t.Errorf("a corrupt nonce = %v, want a plain internal error", err)
 	}
 }
