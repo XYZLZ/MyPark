@@ -125,6 +125,7 @@ func (r *scenarioRig) withDrivers() {
 	if err != nil {
 		r.t.Fatalf("seed simulated drivers: %v", err)
 	}
+	r.pace.slots = true
 	r.dtap = &driverTap{next: simulator.HandlerTransport(r.h)}
 	r.drivers = simulator.NewDriverClient(simulator.DriverClientConfig{
 		BaseURL: "http://api.test", HTTP: &http.Client{Transport: r.dtap}, Fleet: simFleet, Clock: r.clk, LotID: r.publicID,

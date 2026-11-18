@@ -81,7 +81,9 @@ type pacer struct {
 	voidAt time.Time // next void tick
 	// m3, when set, runs the M3 worker jobs on every void tick, after the void
 	// jobs (the worker's own order).
-	m3    func(ctx context.Context, now time.Time) error
+	m3 func(ctx context.Context, now time.Time) error
+	// slots adds the slot invariant to the check after every step (M3 runs).
+	slots bool
 	steps int       // engine goroutine only until parked, then read by the test
 	moved broadcast // fired after every step boundary and every park
 
@@ -138,6 +140,9 @@ func (p *pacer) WaitUntil(ctx context.Context, at time.Time) error {
 	p.e.clk.Set(p.Now())
 	p.steps++
 	p.checkInvariants(ctx)
+	if p.slots && ctx.Err() == nil {
+		testsupport.AssertSlotInvariant(p.e.t, p.e.d.pool, p.e.lotID)
+	}
 	p.moved.fire()
 	return nil
 }

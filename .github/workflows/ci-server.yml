@@ -111,13 +111,14 @@ jobs:
       # log-leak checks run in "Test" above too; this step names them so a
       # rename or a skip cannot drop them silently: the step fails unless every
       # named test reports "--- PASS" (a rename matches nothing, and a skip
-      # reports "--- SKIP"). They use the step clock, so they take seconds.
+      # reports "--- SKIP"). The pattern is anchored so the M3 scenarios, which have
+      # their own step below, do not run twice here.
       - name: M2 scenario and log-leak tests
         env:
           CI: "true"
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
         run: |
-          go test -race -count=1 ./cmd/api -run 'TestScenario_|TestNoSecretsInLogs|TestM2BackendAcceptance' -v > m2-named.log 2>&1 || { cat m2-named.log; exit 1; }
+          go test -race -count=1 ./cmd/api -run 'TestScenario_(FillToFull|WeekdayInvariants|Deterministic)$|TestNoSecretsInLogs|TestM2BackendAcceptance' -v > m2-named.log 2>&1 || { cat m2-named.log; exit 1; }
           missing=0
           for name in TestScenario_FillToFull TestScenario_WeekdayInvariants TestScenario_Deterministic TestNoSecretsInLogs_Devices TestM2BackendAcceptance; do
             if ! grep -q -- "^--- PASS: $name " m2-named.log; then
