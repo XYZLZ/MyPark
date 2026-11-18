@@ -194,14 +194,25 @@ func (s *Service) enqueueCancelled(ctx context.Context, rsv ApplyRow, refundStat
 // enqueue writes a reservation email to the outbox, deduplicated per
 // template and reservation.
 func (s *Service) enqueue(ctx context.Context, rsv ApplyRow, tpl notifications.Template, data map[string]string) error {
-	c, err := s.repo.UserContact(ctx, rsv.UserID)
+	return s.send(ctx, rsv, tpl, data, string(tpl)+":"+rsv.PublicID.String())
+}
+
+// send queues one email to the reservation's driver. A deleted account has no
+// one to write to (spec 7.8): the email is skipped and nil returned, so the
+// money or state change it belongs to still commits.
+func (s *Service) send(ctx context.Context, rsv ApplyRow, tpl notifications.Template, data map[string]string, dedupeKey string) error {
+	c, ok, err := s.repo.UserContact(ctx, rsv.UserID)
 	if err != nil {
 		return err
 	}
+	if !ok {
+		s.log.InfoContext(ctx, "reservations: account deleted, email skipped",
+			"template", string(tpl), "reservation_id", rsv.PublicID)
+		return nil
+	}
 	uid := rsv.UserID
 	return s.notify.Enqueue(ctx, notifications.Email{
-		Template: tpl, Locale: c.Locale, To: c.Email, UserID: &uid, Data: data,
-		DedupeKey: string(tpl) + ":" + rsv.PublicID.String(),
+		Template: tpl, Locale: c.Locale, To: c.Email, UserID: &uid, Data: data, DedupeKey: dedupeKey,
 	})
 }
 

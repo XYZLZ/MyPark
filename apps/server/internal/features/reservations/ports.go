@@ -110,8 +110,9 @@ type Repo interface {
 	// BumpLot raises the lot version and notifies lot_changed (design 8.2). The
 	// caller holds the lot lock.
 	BumpLot(ctx context.Context, lotID int64, now time.Time) error
-	// UserContact is the recipient of the user's emails.
-	UserContact(ctx context.Context, userID int64) (Contact, error)
+	// UserContact is the recipient of the user's emails. ok is false when the
+	// account was deleted (or is gone): there is no one to write to.
+	UserContact(ctx context.Context, userID int64) (c Contact, ok bool, err error)
 
 	// ForQR is the QR entry's unlocked lookup of the lot's reservation
 	// (ID, PublicID and Nonce only); ErrNotFound when the lot has none.

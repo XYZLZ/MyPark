@@ -297,3 +297,11 @@ where r.status = 'confirmed'
   and not exists (select 1 from outbox_messages o where o.dedupe_key = 'reservation_reminder:' || r.public_id::text)
 order by r.id
 limit @row_limit::int;
+
+-- name: GetReservationContact :one
+-- The recipient of a reservation email. Unlike GetUserProfileByID it also
+-- reads a deleted (anonymized) user, so the caller can skip the email instead
+-- of failing the money or state change it belongs to.
+select email, locale, (deleted_at is not null)::boolean as deleted
+from users
+where id = @id;

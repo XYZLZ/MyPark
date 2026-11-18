@@ -148,18 +148,9 @@ func (s *Service) RefundSucceeded(ctx context.Context, r payments.RefundDone) er
 	if err != nil {
 		return err
 	}
-	c, err := s.repo.UserContact(ctx, rsv.UserID)
-	if err != nil {
-		return err
-	}
-	uid := rsv.UserID
-	return s.notify.Enqueue(ctx, notifications.Email{
-		Template: notifications.TplRefundSucceeded, Locale: c.Locale, To: c.Email, UserID: &uid,
-		Data: map[string]string{
-			"reservation_id": rsv.PublicID.String(),
-			"amount_cents":   strconv.FormatInt(r.AmountCents, 10),
-			"amount_display": fmt.Sprintf("RD$%d.%02d", r.AmountCents/100, r.AmountCents%100),
-		},
-		DedupeKey: string(notifications.TplRefundSucceeded) + ":" + r.RefundPublicID.String(),
-	})
+	return s.send(ctx, rsv, notifications.TplRefundSucceeded, map[string]string{
+		"reservation_id": rsv.PublicID.String(),
+		"amount_cents":   strconv.FormatInt(r.AmountCents, 10),
+		"amount_display": fmt.Sprintf("RD$%d.%02d", r.AmountCents/100, r.AmountCents%100),
+	}, string(notifications.TplRefundSucceeded)+":"+r.RefundPublicID.String())
 }

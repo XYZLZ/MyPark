@@ -377,13 +377,20 @@ func (r *Repo) BumpLot(ctx context.Context, lotID int64, now time.Time) error {
 	return nil
 }
 
-// UserContact implements reservations.Repo.
-func (r *Repo) UserContact(ctx context.Context, userID int64) (reservations.Contact, error) {
-	u, err := r.q(ctx).GetUserProfileByID(ctx, userID)
-	if err != nil {
-		return reservations.Contact{}, fmt.Errorf("reservations: read user %d: %w", userID, err)
+// UserContact implements reservations.Repo. A deleted or missing user has no
+// contact (ok false), which is not an error.
+func (r *Repo) UserContact(ctx context.Context, userID int64) (reservations.Contact, bool, error) {
+	u, err := r.q(ctx).GetReservationContact(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reservations.Contact{}, false, nil
 	}
-	return reservations.Contact{Email: u.Email, Locale: u.Locale}, nil
+	if err != nil {
+		return reservations.Contact{}, false, fmt.Errorf("reservations: read user %d: %w", userID, err)
+	}
+	if u.Deleted {
+		return reservations.Contact{}, false, nil
+	}
+	return reservations.Contact{Email: u.Email, Locale: u.Locale}, true, nil
 }
 
 // Cancel implements reservations.Repo.

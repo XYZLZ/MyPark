@@ -364,6 +364,28 @@ func (q *Queries) GetReservationBlockedUntil(ctx context.Context, userID int64) 
 	return reservation_blocked_until, err
 }
 
+const getReservationContact = `-- name: GetReservationContact :one
+select email, locale, (deleted_at is not null)::boolean as deleted
+from users
+where id = $1
+`
+
+type GetReservationContactRow struct {
+	Email   string
+	Locale  string
+	Deleted bool
+}
+
+// The recipient of a reservation email. Unlike GetUserProfileByID it also
+// reads a deleted (anonymized) user, so the caller can skip the email instead
+// of failing the money or state change it belongs to.
+func (q *Queries) GetReservationContact(ctx context.Context, id int64) (GetReservationContactRow, error) {
+	row := q.db.QueryRow(ctx, getReservationContact, id)
+	var i GetReservationContactRow
+	err := row.Scan(&i.Email, &i.Locale, &i.Deleted)
+	return i, err
+}
+
 const getReservationForApply = `-- name: GetReservationForApply :one
 select r.id, r.public_id, r.user_id, r.lot_id, r.status,
        lower(r.hold_window)::timestamptz as window_start, upper(r.hold_window)::timestamptz as window_end
