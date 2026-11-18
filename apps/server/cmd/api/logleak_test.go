@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +23,8 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/email"
 	"github.com/XYZLZ/MyPark/apps/server/internal/simulator"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
@@ -387,4 +392,274 @@ func colonHex(h string) string {
 		parts = append(parts, h[i:i+2])
 	}
 	return strings.Join(parts, ":")
+}
+
+// capturedMail is an email.Sender that keeps what it was given, so the test
+// can scan the delivered messages and the outbox rows after they were sent.
+type capturedMail struct {
+	mu   sync.Mutex
+	sent []email.Message
+}
+
+func (c *capturedMail) Send(_ context.Context, m email.Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sent = append(c.sent, m)
+	return nil
+}
+
+// Spec 15.4 and M3B-12 for the reservation and payment surface. One run drives
+// the production handler, the worker's M3 jobs, the mail dispatcher and the
+// simulator's driver client with debug logging: card payments (success,
+// decline, timeout and a malformed number), QR fetch and QR entry at the
+// barrier, cancel and refund, the no-show job, the reminder and every email.
+// None of the logs, error bodies, stored rows, delivered mail or simulator
+// events holds a card number (with or without spaces), a CVC, a QR token,
+// QR_HMAC_KEY, the fleet secret or a simulated driver's password.
+func TestNoSecretsInLogs_M3(t *testing.T) {
+	var logs testsupport.SyncBuffer
+	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	start := weekdayStart.Add(2 * time.Minute) // 07:02 in the lot's zone
+	r := newScenarioRig(t, start, func(d *deps) { d.log = log })
+	r.withDrivers()
+	r.start(simulator.ScenarioIdle, 42)
+	var errBodies []string
+
+	const cvc = "737"
+	pans := []string{
+		"4242424242424242", "4000000000000002", "4000000000009995", "4242424242424243", // the last one fails Luhn
+	}
+	spaced := func(pan string) string { return pan[0:4] + " " + pan[4:8] + " " + pan[8:12] + " " + pan[12:] }
+	card := func(pan string) map[string]any {
+		return map[string]any{"card_number": pan, "exp_month": 12, "exp_year": 2030, "cvc": cvc}
+	}
+	call := func(method, path, token, key string, body any) (int, map[string]any) {
+		t.Helper()
+		req := jsonReq(method, path, body)
+		if key != "" {
+			req.Header.Set("Idempotency-Key", key)
+		}
+		rec := r.serve(req, token)
+		if rec.Code >= http.StatusBadRequest {
+			errBodies = append(errBodies, rec.Body.String())
+		}
+		return rec.Code, decodeBody(t, rec)
+	}
+	login := func(n int, password string) (int, string) {
+		code, body := call("POST", "/v1/auth/login", "", "", map[string]any{
+			"email": devicefleet.SimDriverEmail(n), "password": password, "client_kind": "web"})
+		tok, _ := field(body, "data.access_token").(string)
+		return code, tok
+	}
+	reserve := func(n int, tok string, arrival time.Time) string {
+		t.Helper()
+		if err := r.drivers.Login(t.Context(), n); err != nil {
+			t.Fatalf("driver client login %d: %v", n, err)
+		}
+		vehicle, err := r.drivers.Vehicle(t.Context(), n)
+		if err != nil {
+			t.Fatalf("vehicle %d: %v", n, err)
+		}
+		code, body := call("POST", "/v1/reservations", tok, "", map[string]any{
+			"lot_id": r.publicID.String(), "vehicle_id": vehicle.String(), "arrival_at": arrival.Format(time.RFC3339)})
+		if code != http.StatusCreated {
+			t.Fatalf("reserve %d = %d %v", n, code, body)
+		}
+		return field(body, "data.id").(string)
+	}
+	qrOf := func(tok, id string) string {
+		t.Helper()
+		code, body := call("GET", "/v1/reservations/"+id+"/qr", tok, "", nil)
+		token, _ := field(body, "data.token").(string)
+		if code != http.StatusOK || len(token) != 86 {
+			t.Fatalf("qr = %d %v", code, body)
+		}
+		return token
+	}
+
+	// A wrong password is an error body that must not echo the password.
+	if code, _ := login(2, "wrong-"+devicefleet.SimDriverPassword(simFleet, devicefleet.SimDriverEmail(2)).Reveal()); code != http.StatusUnauthorized {
+		t.Fatalf("wrong password login = %d, want 401", code)
+	}
+
+	// Driver 1 goes through the simulator's own client and its QR car.
+	arrivalA := start.Truncate(5 * time.Minute).Add(20 * time.Minute) // 07:20, window opens 07:05
+	if err := r.drivers.Login(t.Context(), 1); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	vehicle, err := r.drivers.Vehicle(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsvA, err := r.drivers.Create(t.Context(), 1, arrivalA, vehicle)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if status, err := r.drivers.Pay(t.Context(), 1, rsvA.ID, uuid.NewString()); err != nil || status != "confirmed" {
+		t.Fatalf("pay A = %q, %v", status, err)
+	}
+	qrA, err := r.drivers.QR(t.Context(), 1, rsvA.ID)
+	if err != nil {
+		t.Fatalf("qr A: %v", err)
+	}
+
+	// Driver 2: a malformed number, a decline, a timeout that the reconcile job
+	// confirms, then the QR and a cancel whose refund the refund job settles.
+	code, tok2 := login(2, devicefleet.SimDriverPassword(simFleet, devicefleet.SimDriverEmail(2)).Reveal())
+	if code != http.StatusOK {
+		t.Fatalf("login 2 = %d", code)
+	}
+	idB := reserve(2, tok2, start.Add(48*time.Minute).Truncate(5*time.Minute))
+	if code, _ := call("POST", "/v1/reservations/"+idB+"/pay", tok2, "key-leak-bad", card(spaced(pans[3]))); code != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed number = %d, want 422", code)
+	}
+	if code, _ := call("POST", "/v1/reservations/"+idB+"/pay", tok2, "key-leak-decl", card(spaced(pans[1]))); code != http.StatusPaymentRequired {
+		t.Fatalf("decline = %d, want 402", code)
+	}
+	if code, _ := call("POST", "/v1/reservations/"+idB+"/pay", tok2, "key-leak-time", card(pans[2])); code != http.StatusAccepted {
+		t.Fatalf("timeout = %d, want 202", code)
+	}
+
+	// Driver 3: a good card, a QR that nobody presents, so the reminder and the
+	// no-show job both run for it.
+	code, tok3 := login(3, devicefleet.SimDriverPassword(simFleet, devicefleet.SimDriverEmail(3)).Reveal())
+	if code != http.StatusOK {
+		t.Fatalf("login 3 = %d", code)
+	}
+	arrivalC := start.Add(88 * time.Minute).Truncate(5 * time.Minute)
+	idC := reserve(3, tok3, arrivalC)
+	if code, body := call("POST", "/v1/reservations/"+idC+"/pay", tok3, "key-leak-good", card(pans[0])); code != http.StatusOK {
+		t.Fatalf("good card = %d %v", code, body)
+	}
+	qrC := qrOf(tok3, idC)
+
+	// The reconcile tick confirms driver 2; the QR car of driver 1 enters.
+	r.pace.runTo(t, arrivalA.Add(-15*time.Minute))
+	if _, err := r.runner.Inject(simulator.InjectParams{Cred: simulator.CredReservationQR, QR: qrA, DwellMinutes: 30}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	r.pace.runTo(t, arrivalA.Add(-10*time.Minute))
+	qrB := qrOf(tok2, idB)
+	if code, body := call("POST", "/v1/reservations/"+idB+"/cancel", tok2, "", nil); code != http.StatusOK {
+		t.Fatalf("cancel B = %d %v", code, body)
+	}
+	// A QR of a cancelled reservation is refused.
+	if code, _ := call("GET", "/v1/reservations/"+idB+"/qr", tok2, "", nil); code != http.StatusConflict {
+		t.Fatalf("qr of a cancelled reservation = %d, want 409", code)
+	}
+	r.pace.runTo(t, arrivalA.Add(-5*time.Minute)) // the refund job settles it
+
+	// The reminder window of driver 3, then past her window for the no-show.
+	r.pace.runTo(t, arrivalC.Add(-25*time.Minute))
+	if n, err := r.jobs.expiry.Reminders(t.Context(), r.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Reminders = %d, %v; want 1", n, err)
+	}
+	r.pace.runTo(t, arrivalC.Add(time.Hour))
+	r.drain()
+
+	mail := &capturedMail{}
+	dispatcher := notifications.NewDispatcher(r.d.pool, mail, r.clk, "noreply@mypark.test", log)
+	for range 5 {
+		if n, err := dispatcher.Tick(t.Context()); err != nil || n == 0 {
+			break
+		}
+	}
+
+	// The run must have covered the flows the check is about.
+	for query, want := range map[string]int64{
+		`select count(*) from payments where status = 'succeeded'`:                                          3, // A, B, C
+		`select count(*) from payments where status = 'failed' and failure_code = 'card_declined'`:          1,
+		`select count(*) from refunds where status = 'succeeded'`:                                           1,
+		`select count(*) from sim_gateway_charges`:                                                          4, // A, decline, timeout, C
+		`select count(*) from outbox_messages where status = 'sent' and template = 'reservation_reminder'`:  1,
+		`select count(*) from outbox_messages where status = 'sent' and template = 'reservation_confirmed'`: 3,
+		`select count(*) from reservations where status = 'expired_no_show'`:                                1,
+	} {
+		if got := r.count(query); got != want {
+			t.Fatalf("%q = %d, want %d: the run would prove nothing", query, got, want)
+		}
+	}
+	if open, _ := r.qrEntries(); open != 1 {
+		t.Fatalf("QR entries open = %d, want 1", open)
+	}
+	if got := len(mail.sent); got < 6 {
+		t.Fatalf("only %d emails were delivered", got)
+	}
+	output := logs.String()
+	if !strings.Contains(output, "/v1/reservations") || strings.Count(output, "\n") < 100 {
+		t.Fatalf("the log capture looks empty:\n%.2000s", output)
+	}
+	if len(errBodies) < 4 {
+		t.Fatalf("only %d error bodies were captured", len(errBodies))
+	}
+
+	secrets := map[string]string{
+		"SIMULATOR_FLEET_SECRET": config.DevSimulatorFleetSecret, "QR_HMAC_KEY": config.DevQRHMACKey,
+		"JWT_SIGNING_KEY": config.DevJWTSigningKey,
+		"QR token A":      qrA.Reveal(), "QR token B": qrB, "QR token C": qrC,
+	}
+	addBytes := func(label string, raw []byte) {
+		secrets[label+" (hex)"] = hex.EncodeToString(raw)
+		secrets[label+" (base64)"] = base64.StdEncoding.EncodeToString(raw)
+		secrets[label+" (base64url)"] = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	addBytes("fleet secret", simFleet)
+	qrKey, err := base64.StdEncoding.DecodeString(config.DevQRHMACKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addBytes("QR_HMAC_KEY", qrKey)
+	for n := 1; n <= devicefleet.SimDriverCount; n++ {
+		email := devicefleet.SimDriverEmail(n)
+		secrets["derived password of driver "+email] = devicefleet.SimDriverPassword(simFleet, email).Reveal()
+	}
+	for _, pan := range pans {
+		secrets["card number "+pan] = pan
+		secrets["card number "+spaced(pan)] = spaced(pan)
+	}
+	// A CVC is three digits, so it only counts next to a cvc key or as a lone
+	// JSON string: bare "737" also occurs inside uuids and timestamps.
+	cvcPattern := regexp.MustCompile(`(?i)(cvc|cvv|security_?code)[^a-z0-9]{0,6}` + cvc + `|"` + cvc + `"`)
+
+	rows := func(table string) string {
+		t.Helper()
+		var out string
+		if err := r.db.Super.QueryRow(t.Context(),
+			`select coalesce(string_agg(to_jsonb(x)::text, E'\n'), '') from `+table+` x`).Scan(&out); err != nil {
+			t.Fatalf("read %s: %v", table, err)
+		}
+		return out
+	}
+	events, err := json.Marshal(r.log.After(0))
+	if err != nil || len(events) < 1000 {
+		t.Fatalf("simulator event log: %d bytes, %v; the capture looks empty", len(events), err)
+	}
+	var delivered strings.Builder
+	for _, m := range mail.sent {
+		delivered.WriteString(m.Subject + "\n" + m.Text + "\n" + m.HTML + "\n")
+	}
+	surfaces := map[string]string{
+		"logs": output, "error bodies": strings.Join(errBodies, "\n"), "device error bodies": strings.Join(r.tap.errorsSeen(), "\n"),
+		"payments": rows("payments"), "refunds": rows("refunds"), "sim_gateway_charges": rows("sim_gateway_charges"),
+		"device_events": rows("device_events"), "outbox_messages": rows("outbox_messages"), "audit_log": rows("audit_log"),
+		"reconciliation_alerts": rows("reconciliation_alerts"), "reservations": rows("reservations"),
+		"simulator event log": string(events), "delivered emails": delivered.String(),
+	}
+	for surface, text := range surfaces {
+		lower := strings.ToLower(text)
+		for label, secretValue := range secrets {
+			if strings.Contains(lower, strings.ToLower(secretValue)) {
+				t.Errorf("%s contain the %s", surface, label)
+			}
+		}
+		if cvcPattern.MatchString(text) {
+			t.Errorf("%s contain a CVC", surface)
+		}
+	}
+	// Queued mail keeps its token only until it is sent (design 11.2).
+	var tokensLeft int
+	if err := r.db.Super.QueryRow(t.Context(),
+		`select count(*) from outbox_messages where status = 'sent' and payload ? 'qr_token'`).Scan(&tokensLeft); err != nil || tokensLeft != 0 {
+		t.Errorf("sent outbox rows still holding a qr_token = %d, %v; want 0", tokensLeft, err)
+	}
 }
