@@ -179,7 +179,7 @@ Requirement IDs are stable; tests and PRs reference them. **Must** means Phase 1
 | ID | Requirement |
 |---|---|
 | FR-GATE-1 | **Drive-up entry:** the podium detects a vehicle, the dispenser asks the API, and the API issues a ticket if public available > 0, otherwise denies with `gate.lot_full` |
-| FR-GATE-2 | **Reservation entry:** the QR is validated as in FR-RES-8. It skips the public-availability check because its hold is already netted out, but under the `lot_occupancy` lock it still requires `active stays < effective_capacity`, so occupancy never goes above effective capacity. If the lot is physically full, the gate denies with `gate.lot_physically_full`, and the system cancels the reservation (`confirmed → cancelled`, `refund_reason = facility_unavailable`), queues a full refund and opens an incident alert **(our call)** |
+| FR-GATE-2 | **Reservation entry:** the QR is validated as in FR-RES-8. It skips the public-availability check because its hold is already netted out, but under the `lot_occupancy` lock it still requires `occupied + pending entries < effective_capacity`, so occupancy never goes above effective capacity. If the lot is physically full, the gate denies with `gate.lot_physically_full`, and the system cancels the reservation (`confirmed → cancelled`, `refund_reason = facility_unavailable`), queues a full refund and opens an incident alert **(our call)** |
 | FR-GATE-3 | **Employee entry:** an active employee card opens the barrier if public available > 0. The stay is marked as an employee stay (RD$0) |
 | FR-GATE-4 | Occupancy changes **only** when the barrier reports the vehicle passed (`barrier.passed`), not when a credential is accepted. An entry accepted but not passed within 60 s is voided **(our call)** |
 | FR-GATE-5 | **Pay station:** scanning a ticket or reservation QR returns the amount due per §5.1. A simulated cash payment marks the stay `paid` and sets `exit_deadline = paid_at + 15 min` |
@@ -598,7 +598,7 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
 8. Early arrival window 15 min; payment timeout 10 min; slot granularity 5 min.
 9. "Before arrival" means before the booked arrival time.
 10. Same-time reservations (< 15 min away) need current availability ≥ 1.
-11. A reserved driver may enter while `active stays < effective_capacity` (re-checked under lock). If they present the QR while the lot is physically full: `gate.lot_physically_full`, immediate system cancellation (`facility_unavailable`), full refund, incident alert.
+11. A reserved driver may enter while `occupied + pending entries < effective_capacity` (re-checked under lock). If they present the QR while the lot is physically full: `gate.lot_physically_full`, immediate system cancellation (`facility_unavailable`), full refund, incident alert.
 12. A sensor/gate discrepancy of ≥ 3 for 10 min raises an alert. Sensors never gate.
 13. An entry not passed within 60 s is voided.
 14. Employees who reserve through the app pay the normal fee.

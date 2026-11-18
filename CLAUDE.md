@@ -35,6 +35,9 @@ Dates and scope per milestone: `docs/spec.md` §8.
 - Live `no_show` takes up to 25 real minutes (design R1); the demo uses a CI run or starts it first.
 - M4 hooks: lot closure (FR-RES-15, `facility_closed`), the reconciliation job and views, admin refund and cancel override. The admin refund also settles late-charge alerts (`refund_failed`, `details.reason` `duplicate_charge`, `orphan_charge`, `gateway_inconsistent`). The admin tariff and policy forms must validate `max_active_per_user = 1`, `slot_min = 5` and a reservation fee above zero (M3B-48, M3B-49).
 - Accepted, not fixed (spec §10.2 #43): the no-show block is read unlocked in create; the pay key fingerprint excludes the full card number; NFR-TEST-1 is measured as statement coverage (at least 90%).
+- **Two CI-equivalent checks fail on this branch and will fail the PR; the user must decide before merge.** Neither comes from M3: `git diff main -- apps/mobile/package.json package.json package-lock.json` is empty.
+    - `npx expo install --check` wants expo ~58.0.26, expo-router ~58.0.32 and jest-expo ~58.0.15 (upstream patch releases).
+    - `npm audit --omit=dev --audit-level=high` reports GHSA-fc5q-39xc-vjpf (picomatch ReDoS) through the jest chain. `npm audit fix --force` would be a breaking downgrade (expo 52, jest 29), so it was not applied.
 - Deploy: worker before API (an old worker voids reservation stays without restoring the hold). `SEED_SIMULATOR_DRIVERS` must be `false` in production.
 - Phase 2: a real gateway adapter must guarantee one refund per charge across refund keys, and needs a timeout-to-alert rule for payments stuck `pending`.
 
