@@ -52,6 +52,9 @@ func (p *RefundProcessor) Run(ctx context.Context, now time.Time) (int, error) {
 	sweepErr := p.sweep(ctx, now)
 	if sweepErr != nil {
 		sweepErr = fmt.Errorf("payments: sweep stranded refunds: %w", sweepErr)
+		if ctx.Err() != nil { // shutting down: nothing to claim, nothing to report loudly
+			return 0, sweepErr
+		}
 		p.Log.ErrorContext(ctx, "payments: refund sweep failed, claiming anyway", "err", sweepErr)
 	}
 	var claims []RefundClaim
