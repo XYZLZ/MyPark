@@ -5,6 +5,10 @@ import usersHttp from '../../../../apps/server/internal/features/users/http.go?r
 import vehiclePlate from '../../../../apps/server/internal/features/vehicles/plate.go?raw';
 import vehiclesHttp from '../../../../apps/server/internal/features/vehicles/http.go?raw';
 import envelopeGo from '../../../../apps/server/internal/features/devices/envelope.go?raw';
+import cardGo from '../../../../apps/server/internal/features/payments/card.go?raw';
+import payHttp from '../../../../apps/server/internal/features/reservations/pay_http.go?raw';
+import reservationsRead from '../../../../apps/server/internal/features/reservations/read.go?raw';
+import keysetGo from '../../../../apps/server/internal/infrastructure/keyset/keyset.go?raw';
 import controlGo from '../../../../apps/server/internal/simulator/control.go?raw';
 import strictGo from '../../../../apps/server/internal/transport/http/httpx/strict.go?raw';
 import validationGo from '../../../../apps/server/internal/infrastructure/validation/validation.go?raw';
@@ -20,7 +24,7 @@ const DEVICE_ONLY_RULES = ['uuid', 'datetime', 'future', 'format'];
 /** Every rule name the Go server can put in `details.fields[].rule`, read from its sources. */
 function serverRules(): string[] {
   const rules = new Set<string>();
-  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo, envelopeGo, controlGo];
+  const sources = [authHttp, adminsHttp, usersHttp, vehiclesHttp, vehiclePlate, validationGo, strictGo, envelopeGo, controlGo, cardGo, payHttp, reservationsRead, keysetGo];
   for (const src of sources) {
     for (const [, tags] of src.matchAll(/validate:"([^"]+)"/g)) {
       for (const tag of (tags ?? '').split(',')) {
@@ -30,6 +34,7 @@ function serverRules(): string[] {
     }
     for (const [, name] of src.matchAll(/RegisterValidation\("([a-z0-9_]+)"/g)) rules.add(name ?? '');
     for (const [, name] of src.matchAll(/\brule[A-Z][A-Za-z]*\s*=\s*"([a-z0-9_]+)"/g)) rules.add(name ?? '');
+    for (const [, name] of src.matchAll(/FieldError\([^,()]+,\s*"([a-z0-9_]+)"/g)) rules.add(name ?? '');
     for (const [, name] of src.matchAll(/Rule:\s*"([a-z0-9_]+)"/g)) rules.add(name ?? '');
   }
   return [...rules].sort();

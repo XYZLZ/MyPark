@@ -141,6 +141,12 @@
     "known_space": "Ese espacio no existe en el estacionamiento.",
     "pattern": "El formato no es válido.",
     "integer": "Escribe un número entero.",
+    "luhn": "Revisa el número de la tarjeta.",
+    "number": "Usa solo dígitos.",
+    "card_expiry": "La tarjeta está vencida o la fecha no es válida.",
+    "cursor": "La referencia de página no es válida.",
+    "numeric": "Escribe un número.",
+    "idempotency_key": "La clave de la solicitud no es válida.",
     "unknown": "Revisa este campo."
   },
   "session": {

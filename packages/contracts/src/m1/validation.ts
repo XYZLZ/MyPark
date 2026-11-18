@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Hand-written single-line literals: scripts/check-i18n-parity.mjs reads them with a regex.
-export const VALIDATION_RULES = ['required', 'email', 'min', 'max', 'oneof', 'phone', 'code6', 'password_common', 'plate', 'unknown_field', 'excluded_unless', 'known_space', 'pattern', 'integer', 'unknown'] as const;
+export const VALIDATION_RULES = ['required', 'email', 'min', 'max', 'oneof', 'phone', 'code6', 'password_common', 'plate', 'unknown_field', 'excluded_unless', 'known_space', 'pattern', 'integer', 'luhn', 'number', 'card_expiry', 'cursor', 'numeric', 'idempotency_key', 'unknown'] as const;
 export type ValidationRule = (typeof VALIDATION_RULES)[number];
 
 export const CLIENT_ERROR_CODES = ['client.network', 'client.timeout'] as const;

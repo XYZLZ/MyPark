@@ -141,6 +141,12 @@
     "known_space": "That space does not exist in the lot.",
     "pattern": "The format is not valid.",
     "integer": "Enter a whole number.",
+    "luhn": "Check the card number.",
+    "number": "Use digits only.",
+    "card_expiry": "The card has expired or the date is not valid.",
+    "cursor": "The page reference is not valid.",
+    "numeric": "Enter a number.",
+    "idempotency_key": "The request key is not valid.",
     "unknown": "Check this field."
   },
   "session": {
