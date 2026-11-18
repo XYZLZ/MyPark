@@ -1,6 +1,8 @@
 package testsupport
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,46 +13,61 @@ import (
 // the number of pending_payment and confirmed reservations whose hold window
 // covers it, and the held total equals the slots those reservations span
 // (so a reservation without slot rows is caught too). Call it at the end of
-// every reservation integration test.
+// every reservation integration test. A read error is fatal; use
+// CheckSlotInvariant off the test goroutine.
 func AssertSlotInvariant(t testing.TB, db *pgxpool.Pool, lotID int64) {
 	t.Helper()
-	rows, err := db.Query(t.Context(),
+	broken, err := CheckSlotInvariant(t.Context(), db, lotID)
+	if err != nil {
+		t.Fatalf("testsupport: %v", err)
+	}
+	for _, msg := range broken {
+		t.Error(msg)
+	}
+}
+
+// CheckSlotInvariant is the non-fatal form of AssertSlotInvariant, safe on any
+// goroutine: it returns one message per broken slot or total, and an error when
+// the database cannot be read.
+func CheckSlotInvariant(ctx context.Context, db *pgxpool.Pool, lotID int64) (broken []string, err error) {
+	rows, err := db.Query(ctx,
 		`select s.slot_start, s.held,
 		        (select count(*) from reservations r
 		          where r.lot_id = s.lot_id and r.status in ('pending_payment', 'confirmed')
 		            and r.hold_window @> s.slot_start)
 		 from reservation_slot_loads s where s.lot_id = $1 order by s.slot_start`, lotID)
 	if err != nil {
-		t.Fatalf("testsupport: read slot loads of lot %d: %v", lotID, err)
+		return nil, fmt.Errorf("read slot loads of lot %d: %w", lotID, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var start time.Time
 		var held, covering int64
 		if err := rows.Scan(&start, &held, &covering); err != nil {
-			t.Fatalf("testsupport: scan slot load: %v", err)
+			return nil, fmt.Errorf("scan slot load: %w", err)
 		}
 		if held != covering {
-			t.Errorf("slot invariant broken for lot %d at %s: held = %d, active reservations covering = %d",
-				lotID, start.UTC().Format(time.RFC3339), held, covering)
+			broken = append(broken, fmt.Sprintf("slot invariant broken for lot %d at %s: held = %d, active reservations covering = %d",
+				lotID, start.UTC().Format(time.RFC3339), held, covering))
 		}
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatalf("testsupport: iterate slot loads: %v", err)
+		return nil, fmt.Errorf("iterate slot loads: %w", err)
 	}
 	var total, spanned int64
-	if err := db.QueryRow(t.Context(),
+	if err := db.QueryRow(ctx,
 		`select coalesce((select sum(held) from reservation_slot_loads where lot_id = $1), 0),
 		        coalesce((select sum(extract(epoch from upper(hold_window) - lower(hold_window)) / 300)
 		                    from reservations
 		                   where lot_id = $1 and status in ('pending_payment', 'confirmed')), 0)`,
 		lotID).Scan(&total, &spanned); err != nil {
-		t.Fatalf("testsupport: sum slot loads of lot %d: %v", lotID, err)
+		return nil, fmt.Errorf("sum slot loads of lot %d: %w", lotID, err)
 	}
 	if total != spanned {
-		t.Errorf("slot invariant broken for lot %d: held total = %d, slots spanned by active reservations = %d",
-			lotID, total, spanned)
+		broken = append(broken, fmt.Sprintf("slot invariant broken for lot %d: held total = %d, slots spanned by active reservations = %d",
+			lotID, total, spanned))
 	}
+	return broken, nil
 }
 
 // HoldSlots sets held on every 5-minute slot in [start, end), creating the

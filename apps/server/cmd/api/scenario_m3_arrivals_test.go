@@ -91,9 +91,9 @@ func TestScenario_Guarantee(t *testing.T) {
 }
 
 // TestScenario_ReservationArrivals: two virtual hours of weekday traffic plus
+// reserved cars booked at 8 an hour. Every reserved car reaches the gate inside
 // its window and gets in; the pacer checks the occupancy and slot invariants
 // after every step; a drain completes every reservation.
-// step, as is the slot invariant (M3 runs); a drain completes every reservation.
 func TestScenario_ReservationArrivals(t *testing.T) {
 	r := newScenarioRig(t, weekdayStart)
 	r.withDrivers()

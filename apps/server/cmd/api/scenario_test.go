@@ -141,7 +141,13 @@ func (p *pacer) WaitUntil(ctx context.Context, at time.Time) error {
 	p.steps++
 	p.checkInvariants(ctx)
 	if p.slots && ctx.Err() == nil {
-		testsupport.AssertSlotInvariant(p.e.t, p.e.d.pool, p.e.lotID)
+		broken, err := testsupport.CheckSlotInvariant(ctx, p.e.d.pool, p.e.lotID)
+		if err != nil && ctx.Err() == nil {
+			p.e.t.Errorf("step %d at %s: %v", p.steps, p.Now(), err)
+		}
+		for _, msg := range broken {
+			p.e.t.Errorf("step %d at %s: %s", p.steps, p.Now(), msg)
+		}
 	}
 	p.moved.fire()
 	return nil
