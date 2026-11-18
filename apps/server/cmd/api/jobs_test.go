@@ -105,3 +105,71 @@ func TestNoShow_StrandedCheckInAfterWindow(t *testing.T) {
 	}
 	e.invariants()
 }
+
+// M6: the car of a stranded check-in passes after the no-show job expired its
+// reservation. The pass is acked and counted, the stay becomes active, and
+// the reservation stays expired_no_show (a late entry pass only checks in a
+// confirmed reservation).
+func TestNoShow_LateEntryPassAfterExpiry(t *testing.T) {
+	e := newQREnv(t)
+	id, _, qr := e.confirmed(arrivalInWindow)
+	_, upper := e.window(id)
+	e.clk.Set(upper.Add(-30 * time.Second))
+	stay := wantQROpen(t, e.present(qr))
+	e.clk.Set(upper.Add(31 * time.Second))
+	if n := e.void(); n != 1 {
+		t.Fatalf("voided = %d, want 1", n)
+	}
+	if n := e.expireNoShows(); n != 1 {
+		t.Fatalf("expired = %d, want 1", n)
+	}
+	occupied := e.count(`select occupied from lot_occupancy where lot_id = $1`, e.lotID)
+
+	if got := e.dev.pass(e.barrier, stay); got != (passData{Result: "ack"}) {
+		t.Fatalf("late entry pass = %+v, want ack", got)
+	}
+	if n := e.count(`select count(*) from stays where public_id = $1 and status = 'active'`, stay); n != 1 {
+		t.Error("want the stay active")
+	}
+	if o := e.count(`select occupied from lot_occupancy where lot_id = $1`, e.lotID); o != occupied+1 {
+		t.Errorf("occupied = %d, want %d", o, occupied+1)
+	}
+	if st := e.status(id); st != "expired_no_show" {
+		t.Errorf("status = %s, want expired_no_show (unchanged)", st)
+	}
+	e.invariants()
+}
+
+// T327: the no-show job only expires confirmed reservations. Checked-in and
+// cancelled ones whose window closed are left alone: no status change, no
+// slot change, no refund, no email. A confirmed one in the same run expires,
+// so the job did run.
+func TestNoShow_SkipsCheckedInAndCancelled(t *testing.T) {
+	e := newFeeEnv(t)
+	r := &rsvEnv{lotEnv: e.lotEnv}
+	ds := testsupport.SeedDrivers(t, e.db, 3)
+	arrival := rsvAt(time.Hour)
+	checkedIn := r.seedRes(ds[0], "checked_in", arrival)
+	cancelled := r.seedRes(ds[1], "cancelled", arrival)
+	control := r.seedRes(ds[2], "confirmed", arrival)
+	e.clk.Set(arrival.Add(21 * time.Minute)) // past upper(window)
+
+	if n := e.expireNoShows(); n != 1 {
+		t.Fatalf("expired = %d, want 1 (only the confirmed one)", n)
+	}
+	for id, want := range map[string]string{checkedIn.String(): "checked_in", cancelled.String(): "cancelled", control.String(): "expired_no_show"} {
+		if got := e.status(id); got != want {
+			t.Errorf("reservation %s = %s, want %s", id, got, want)
+		}
+	}
+	if n := e.count(`select count(*) from reservation_slot_loads where held > 0`); n != 0 {
+		t.Errorf("slots holding = %d, want 0 (only the control's hold, released)", n)
+	}
+	if n := e.count(`select count(*) from refunds`); n != 0 {
+		t.Errorf("refunds = %d, want none", n)
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = 'reservation_no_show'`); n != 1 {
+		t.Errorf("no-show emails = %d, want 1 (the control)", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}

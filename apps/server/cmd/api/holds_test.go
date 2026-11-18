@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -126,14 +127,11 @@ func TestCreate_VehicleDeleteSerialized(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), `select 1 from vehicles where public_id = $1 for share`, d.VehicleID); err != nil {
 		t.Fatal(err)
 	}
-	type res struct {
-		code int
-		body map[string]any
-	}
-	done := make(chan res, 1)
+	// The goroutine only serves; decoding (which may t.Fatalf) runs on the
+	// test goroutine.
+	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		rec := e.serve(jsonReq(http.MethodDelete, "/v1/vehicles/"+d.VehicleID.String(), nil), tok)
-		done <- res{rec.Code, decodeBody(t, rec)}
+		done <- e.serve(jsonReq(http.MethodDelete, "/v1/vehicles/"+d.VehicleID.String(), nil), tok)
 	}()
 	if _, err := tx.Exec(t.Context(),
 		`insert into reservations (user_id, vehicle_id, lot_id, arrival_at, hold_window, status, fee_cents,
@@ -148,17 +146,17 @@ func TestCreate_VehicleDeleteSerialized(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case r := <-done:
-		t.Fatalf("delete answered %d %v while the vehicle was share-locked", r.code, r.body)
+	case rec := <-done:
+		t.Fatalf("delete answered %d %v while the vehicle was share-locked", rec.Code, decodeBody(t, rec))
 	case <-time.After(300 * time.Millisecond):
 	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case r := <-done:
-		if r.code != http.StatusConflict || errCode(r.body) != "vehicle.in_use" {
-			t.Fatalf("delete = %d %v, want 409 vehicle.in_use", r.code, r.body)
+	case rec := <-done:
+		if body := decodeBody(t, rec); rec.Code != http.StatusConflict || errCode(body) != "vehicle.in_use" {
+			t.Fatalf("delete = %d %v, want 409 vehicle.in_use", rec.Code, body)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("delete never answered after the create committed")

@@ -199,3 +199,20 @@ func TestOpenAPI_NoPendingOperations(t *testing.T) {
 		}
 	}
 }
+
+// Every documented operation, served, pending or simulator, has a non-empty
+// operationId, and no two share one: the generated client names its calls
+// after them.
+func TestOpenAPI_OperationIDsPresentAndUnique(t *testing.T) {
+	seen := map[string]string{}
+	for key, op := range loadOperations(t) {
+		if op.id == "" {
+			t.Errorf("%s has no operationId", key)
+			continue
+		}
+		if other, dup := seen[op.id]; dup {
+			t.Errorf("operationId %q is used by both %s and %s", op.id, other, key)
+		}
+		seen[op.id] = key
+	}
+}
