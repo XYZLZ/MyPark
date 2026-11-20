@@ -158,10 +158,21 @@ func (d *Dispatcher) sendRow(ctx context.Context, row dbgen.ClaimOutboxBatchRow)
 	if err != nil {
 		return err
 	}
-	return d.send.Send(ctx, email.Message{
+	msg := email.Message{
 		From: d.from, To: row.ToAddress, Subject: subject, Text: text, HTML: html,
 		MessageID: email.MessageID(row.DedupeKey),
-	})
+	}
+	if Template(row.Template) == TplReservationConfirmed {
+		// The QR is generated at send time from the token, which the outbox
+		// drops once the message is sent. Its errors are fixed strings: the
+		// token is a credential and last_error is stored and logged.
+		png, err := QRImage(data["qr_token"])
+		if err != nil {
+			return errors.New("outbox qr image unavailable")
+		}
+		msg.Inline = []email.Inline{{ContentID: "qr", ContentType: "image/png", Data: png}}
+	}
+	return d.send.Send(ctx, msg)
 }
 
 // addressLike matches email addresses so SMTP replies that echo the

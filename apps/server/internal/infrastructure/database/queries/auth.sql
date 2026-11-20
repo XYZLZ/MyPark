@@ -256,3 +256,19 @@ insert into users (email, password_hash, password_changed_at, first_name, last_n
 values (@email, @password_hash, @now, @first_name, @last_name, 'admin', 'active', @now, 'es-DO', @now, @now)
 on conflict (email) where deleted_at is null do nothing
 returning id, public_id;
+
+-- name: InsertSeedDriver :execrows
+-- A simulated driver (M3B-44): active, verified, current legal versions
+-- accepted. A live account that already holds the email is left untouched.
+insert into users (email, password_hash, password_changed_at, first_name, last_name, role, status,
+                   email_verified_at, locale, terms_version, terms_accepted_at, privacy_version,
+                   privacy_accepted_at, created_at, updated_at)
+values (@email, @password_hash, @now, @first_name, @last_name, 'driver', 'active', @now, 'es-DO',
+        @terms_version, @now, @privacy_version, @now, @now, @now)
+on conflict (email) where deleted_at is null do nothing;
+
+-- name: GetLiveUserIDByEmail :one
+select id from users where email = @email and deleted_at is null;
+
+-- name: GetLiveDriverIDByEmail :one
+select id from users where email = @email and deleted_at is null and role = 'driver';

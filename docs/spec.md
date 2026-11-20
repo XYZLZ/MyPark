@@ -101,7 +101,7 @@ Requirement IDs are stable; tests and PRs reference them. **Must** means Phase 1
 | FR-VEH-1 | A driver can add, edit and remove vehicles (plate, make, model, color) |
 | FR-VEH-2 | Plates are normalized (uppercase, no spaces or dashes) for uniqueness. The display form is kept as entered |
 | FR-VEH-3 | A plate can be active on at most one account. A conflict returns `vehicle.plate_taken` **(our call)** |
-| FR-VEH-4 | A vehicle with a `confirmed` or `checked_in` reservation cannot be removed |
+| FR-VEH-4 | A vehicle with a `pending_payment`, `confirmed` or `checked_in` reservation cannot be removed (M3B-31: a vehicle deleted during the payment window would confirm a reservation on a deleted car) |
 | FR-VEH-5 | A driver can have up to 5 vehicles **(our call, configurable)** |
 
 ### 3.3 FR-AVAIL — Live availability and lot information
@@ -138,7 +138,7 @@ Requirement IDs are stable; tests and PRs reference them. **Must** means Phase 1
 | FR-RES-12 | Drivers see active and past reservations with status, fee, refund status and stay summary |
 | FR-RES-13 | For an arrival less than 15 minutes away, the reservation is only allowed if public available ≥ 1 right now **(our call)** |
 | FR-RES-14 | Reservations can be made for any time **24/7**, because the lot operates 24/7 **(our call)**. They are not allowed while the lot is `closed` |
-| FR-RES-15 | If an admin closes the lot, every confirmed reservation whose hold window overlaps the closure is cancelled by the system (`refund_reason = facility_closed`) with a full refund and an email **(our call)** |
+| FR-RES-15 | **(M4, M3B-2)** If an admin closes the lot, every confirmed reservation whose hold window overlaps the closure is cancelled by the system (`refund_reason = facility_closed`) with a full refund and an email **(our call)** |
 | FR-RES-16 | A driver can change the vehicle on a `confirmed` reservation until the booked arrival time (`PATCH /v1/reservations/{id}`). Fee and window stay the same **(our call)** |
 | FR-RES-17 | No-show block: `noshow_block_threshold` (3) no-shows within `noshow_window_days` (30) block new reservations for `noshow_block_days` (7). The values are configurable in policy versions, and blocked attempts return `reservation.blocked_no_shows` with the unblock date **(our call)** |
 | FR-RES-18 | The tariff version and policy version in effect at booking are captured on the reservation, and the resulting stay inherits that tariff version **(our call)** |
@@ -179,7 +179,7 @@ Requirement IDs are stable; tests and PRs reference them. **Must** means Phase 1
 | ID | Requirement |
 |---|---|
 | FR-GATE-1 | **Drive-up entry:** the podium detects a vehicle, the dispenser asks the API, and the API issues a ticket if public available > 0, otherwise denies with `gate.lot_full` |
-| FR-GATE-2 | **Reservation entry:** the QR is validated as in FR-RES-8. It skips the public-availability check because its hold is already netted out, but under the `lot_occupancy` lock it still requires `active stays < effective_capacity`, so occupancy never goes above effective capacity. If the lot is physically full, the gate denies with `gate.lot_physically_full`, and the system cancels the reservation (`confirmed → cancelled`, `refund_reason = facility_unavailable`), queues a full refund and opens an incident alert **(our call)** |
+| FR-GATE-2 | **Reservation entry:** the QR is validated as in FR-RES-8. It skips the public-availability check because its hold is already netted out, but under the `lot_occupancy` lock it still requires `occupied + pending entries < effective_capacity`, so occupancy never goes above effective capacity. If the lot is physically full, the gate denies with `gate.lot_physically_full`, and the system cancels the reservation (`confirmed → cancelled`, `refund_reason = facility_unavailable`), queues a full refund and opens an incident alert **(our call)** |
 | FR-GATE-3 | **Employee entry:** an active employee card opens the barrier if public available > 0. The stay is marked as an employee stay (RD$0) |
 | FR-GATE-4 | Occupancy changes **only** when the barrier reports the vehicle passed (`barrier.passed`), not when a credential is accepted. An entry accepted but not passed within 60 s is voided **(our call)** |
 | FR-GATE-5 | **Pay station:** scanning a ticket or reservation QR returns the amount due per §5.1. A simulated cash payment marks the stay `paid` and sets `exit_deadline = paid_at + 15 min` |
@@ -194,7 +194,7 @@ Requirement IDs are stable; tests and PRs reference them. **Must** means Phase 1
 | ID | Requirement |
 |---|---|
 | FR-SIM-1 | A Go service (`apps/server/cmd/simulator`) acts as the podium, dispenser, entry/exit barriers, pay station, 280 space sensors and employee cards |
-| FR-SIM-2 | It uses **only** the public device API with per-device HMAC keys, exactly as real hardware would |
+| FR-SIM-2 | It uses only public APIs (the device API and the driver API), never the database. The device API is called with per-device HMAC keys, exactly as real hardware would. The driver API is called as 20 seeded simulated drivers (`sim-driver-01@mypark.test` and up) that log in, quote, create, pay and fetch their QR like a real app (M3B-44). The seed refuses them in production |
 | FR-SIM-3 | Scenarios: `idle`, `weekday`, `weekend_peak`, `fill_to_full`, `reservation_arrivals`, `no_show`, `sensor_drift` (sensors disagree with gates). Each has a speed factor for how often events fire |
 | FR-SIM-4 | Each simulated car has a lifecycle: arrive → (ticket / QR / card) → pass → occupy a random free space (sensor) → dwell (scenario distribution) → pay → exit → free the space |
 | FR-SIM-5 | A control HTTP API (internal network only) lets you start/stop scenarios, inject a single car, present a specific reservation QR, present an employee card, mark a ticket lost and toggle a sensor fault |
@@ -311,7 +311,7 @@ else:
   amount = full_blocks × daily_cap + block_fee(remainder)
 ```
 
-- For a reservation stay, `entered_at` is the check-in time.
+- For a reservation stay, `entered_at` is the time of the entry barrier pass, the same as every M2 stay (M3B-25). The credential is accepted (check-in) a few seconds earlier, so the stay is billed up to 60 s later than "the check-in time", in the driver's favour.
 - **Lost ticket (our call):** the lost-ticket fee **replaces** the time charge for the first 24 h block. Any further full or partial 24 h blocks (if entry time is known from device events) are charged normally.
 - **Tariff version capture (our call):** a reservation captures the tariff version and policy version in effect **at booking**, so its fee, rules and hourly rates are fixed then, and the resulting stay inherits `reservations.tariff_version_id`. Drive-up and employee stays capture the version in effect **at entry**. A later tariff change never affects a running stay or a confirmed reservation.
 
@@ -322,16 +322,16 @@ else:
 | `capacity` | The lot's configured spaces (280) |
 | `effective_capacity` | `capacity − spaces marked out_of_service` |
 | `occupied` | Vehicles inside, by gate count: `barrier.passed` entries minus exits. **The authoritative count** |
-| `hold window` | `[arrival − early_arrival, arrival + arrival_grace]` = `[arrival − 15 min, arrival + 20 min]` |
+| `hold window` | Half-open `[arrival − early_arrival, arrival + arrival_grace)` = `[arrival − 15 min, arrival + 20 min)`. A QR is accepted when `lower ≤ now < upper`, and the no-show job acts when `now ≥ upper` (M3B-18) |
 | `effective_holds` | Confirmed reservations whose hold window contains *now* and that have not yet checked in |
 | `public available` | `max(0, effective_capacity − occupied − effective_holds)` |
 | `sensor_occupied` | Spaces reported occupied by the sensors. Used for the map and reconciliation only, **never for gating** |
 
 Rules:
 1. Drive-up and employee entries are allowed only if `public available > 0`.
-2. Reservation entries inside the hold window skip the public-availability check, because their spot is already in `effective_holds`. They are allowed whenever `active stays < effective_capacity`, re-checked under the `lot_occupancy` row lock, so `occupied` never goes above `effective_capacity` **(our call)**.
+2. Reservation entries inside the hold window skip the public-availability check, because their spot is already in `effective_holds`. They are allowed whenever `occupied + pending entries < effective_capacity` (rule 5), re-checked under the `lot_occupancy` row lock, so `occupied` never goes above `effective_capacity` **(our call)**.
 3. The reservable cap (§5.3) is `floor(max_reservable_pct × effective_capacity)` at any instant, so at least 70% always stays available to drive-ups. It is recomputed when spaces go out of or back into service. Existing confirmed reservations are never auto-cancelled by a cap change, and any overflow falls under rule 4 **(our call)**.
-4. **Accepted limitation:** a hold only subtracts from availability once it becomes effective (15 min before arrival). If the lot is physically full of overstaying vehicles when a hold becomes effective, the reserved driver gets the **first** space that frees up, because drive-ups are denied while `public available = 0`. If the driver presents the QR while the lot is physically full (`active stays ≥ effective_capacity`), entry is denied with `gate.lot_physically_full`, and the system **immediately** cancels the reservation (`confirmed → cancelled`, `refund_reason = facility_unavailable`), queues a full refund and opens an incident alert **(our call)**.
+4. **Accepted limitation:** a hold only subtracts from availability once it becomes effective (15 min before arrival). If the lot is physically full of overstaying vehicles when a hold becomes effective, the reserved driver gets the **first** space that frees up, because drive-ups are denied while `public available = 0`. If the driver presents the QR while the lot is physically full (`occupied + pending entries ≥ effective_capacity`), entry is denied with `gate.lot_physically_full`, and the system **immediately** cancels the reservation (`confirmed → cancelled`, `refund_reason = facility_unavailable`), queues a full refund and opens an incident alert **(our call)**.
 5. For entry decisions, accepted-but-not-yet-passed entries (`entry_pending`) count as occupied, so two simultaneous acceptances can't both take the last space. The displayed `occupied` still changes only on `barrier.passed` **(our call)**.
 6. Gate vs sensor discrepancy: if `|occupied − sensor_occupied| ≥ 3` for more than 10 minutes, the system raises a reconciliation alert **(our call)**.
 
@@ -366,12 +366,15 @@ Rules:
 stateDiagram-v2
   [*] --> pending_payment: create
   pending_payment --> confirmed: payment succeeded
-  pending_payment --> expired_unpaid: payment timeout (10 min)
+  pending_payment --> expired_unpaid: payment timeout (10 min), never while a fee payment is pending
+  pending_payment --> expired_unpaid: a charge resolves as succeeded after the window - full refund queued (facility_unavailable)
   pending_payment --> cancelled: driver cancels
   confirmed --> checked_in: valid QR at entry within window
+  checked_in --> confirmed: the void job voids its stay (no pass within 60 s) - hold restored without a cap check
+  confirmed --> checked_in: QR presented again, or a late entry pass, after that void
   confirmed --> cancelled: driver/admin cancels (refund per rules)
   confirmed --> cancelled: system - QR presented while physically full (facility_unavailable, full refund)
-  confirmed --> cancelled: system - lot closed (facility_closed, full refund)
+  confirmed --> cancelled: system - lot closed (facility_closed, full refund; M4)
   confirmed --> expired_no_show: arrival + 20 min passed
   checked_in --> completed: stay exited
   completed --> [*]
@@ -386,7 +389,8 @@ stateDiagram-v2
 stateDiagram-v2
   [*] --> pending
   pending --> succeeded: gateway success
-  pending --> failed: gateway decline/timeout
+  pending --> failed: gateway decline, or never submitted (failure_code not_submitted)
+  pending --> pending: unknown outcome or timeout - stays pending until the worker re-queries by key
   succeeded --> refunded: its refund succeeded
   failed --> [*]
   refunded --> [*]
@@ -412,6 +416,7 @@ stateDiagram-v2
   entry_pending --> active: barrier.passed (entry)
   entry_pending --> voided: not passed within 60 s
   voided --> active: late barrier.passed (entry) - counted, warn log, audited
+  voided --> entry_pending: reservation stays only - QR presented again (one stay per reservation, ever)
   active --> paid: pay station payment
   active --> paid: exit barrier.passed with amount 0 (grace/employee) - zero payment, method none, then exited in the same tx
   paid --> active: exit deadline passed (extra time due)
@@ -523,14 +528,16 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 
 ### M3 — Reservations + payments
 
-**Scope:** FR-RES-1…18 (including the lot-closed refund, vehicle change, no-show block and version capture), FR-PAY-1…9, the refunds table and worker, the cap accounting (slot loads), QR tokens, the worker jobs (unpaid expiry, no-show expiry, refunds, reminders), and reservation emails.
+**Scope:** FR-RES-1…18 except FR-RES-15 (the lot-closed refund moved to M4, M3B-2; including vehicle change, no-show block and version capture), FR-PAY-1…9, the refunds table and worker, the cap accounting (slot loads), QR tokens, the worker jobs (unpaid expiry, no-show expiry, refunds, reminders), and reservation emails.
 **Exit criteria**
-- [ ] A concurrency test: 200 parallel reservation attempts never exceed the cap.
-- [ ] Guarantee scenario (§3.4) passes end-to-end with the simulator.
-- [ ] Cancel before arrival → refund `refunded`; cancel after → no refund; no-show → `expired_no_show`.
-- [ ] Simulated decline/timeout paths work and are visible in the UI.
-- [ ] A QR presented while physically full → `gate.lot_physically_full`, the reservation is cancelled and the refund succeeds.
-- [ ] Closing the lot refunds overlapping reservations. After 3 no-shows in 30 days, a new reservation is rejected with `reservation.blocked_no_shows`.
+Backend criteria are ticked with their evidence (`TestM3BackendAcceptance` in `apps/server/cmd/api` runs each one and names the fuller test). The UI criteria belong to the M3 clients track.
+- [x] A concurrency test: 200 parallel reservation attempts never exceed the cap (`TestReservations_CapConcurrent200`, `TestReservations_CapAtomicPair`).
+- [x] Guarantee scenario (§3.4) passes end-to-end with the simulator (`TestScenario_Guarantee`, `TestGateQR_Guarantee`).
+- [x] Cancel before arrival → refund `refunded`; cancel after → no refund; no-show → `expired_no_show` (`TestCancel_*`, `TestRefunds_SuccessFlow`, `TestNoShow_*`).
+- [x] Simulated decline (`402`) and timeout (`202`) paths work (`TestPay_DeclineThenRetry`, `TestPay_TimeoutCardReturns202`, `TestReconcile_ConfirmsTimeoutCard`). Visible in the UI: clients track, pending.
+- [x] A QR presented while physically full → `gate.lot_physically_full`, the reservation is cancelled and the refund succeeds (`TestGateQR_PhysicallyFull`).
+- [x] After 3 no-shows in 30 days, a new reservation is rejected with `reservation.blocked_no_shows` (`TestNoShow_BlocksAfterThreshold`).
+- [ ] ~~Closing the lot refunds overlapping reservations~~ moved to M4 with the admin lot endpoints (M3B-2). M3 keeps the schema hooks (`facility_closed` refund reason).
 **Demo:** reserve on mobile → pay → show QR → the simulator presents it → the barrier opens → the stay is billed hourly at exit.
 
 ### M4 — Admin + analytics + tariff config
@@ -562,7 +569,7 @@ There are two developers, and each reviews the other's PRs (`policies.md` §2.2)
 | Space | A physical parking spot with a sensor |
 | Stay | One vehicle's visit from entry to exit |
 | Hold | A pooled spot reserved for a confirmed reservation during its hold window |
-| Hold window | `[arrival − 15 min, arrival + 20 min]` |
+| Hold window | Half-open `[arrival − 15 min, arrival + 20 min)` |
 | Effective hold | A hold whose window contains now and that hasn't checked in |
 | Public available | Spaces shown as available to drive-ups (§5.2) |
 | Drive-up | A driver entering without a reservation (paper ticket) |
@@ -591,7 +598,7 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
 8. Early arrival window 15 min; payment timeout 10 min; slot granularity 5 min.
 9. "Before arrival" means before the booked arrival time.
 10. Same-time reservations (< 15 min away) need current availability ≥ 1.
-11. A reserved driver may enter while `active stays < effective_capacity` (re-checked under lock). If they present the QR while the lot is physically full: `gate.lot_physically_full`, immediate system cancellation (`facility_unavailable`), full refund, incident alert.
+11. A reserved driver may enter while `occupied + pending entries < effective_capacity` (re-checked under lock). If they present the QR while the lot is physically full: `gate.lot_physically_full`, immediate system cancellation (`facility_unavailable`), full refund, incident alert.
 12. A sensor/gate discrepancy of ≥ 3 for 10 min raises an alert. Sensors never gate.
 13. An entry not passed within 60 s is voided.
 14. Employees who reserve through the app pay the normal fee.
@@ -631,6 +638,26 @@ Simulator instead of hardware (no C/C++); pool-based reservations; 20-min arriva
     7. Held cars clear when the status goes from running to not running, not "on a new run" as M2B-32 says (PF10), because a Start that takes over an implicit idle session keeps its cars (M2B-44).
     8. Navigation keys extend existing namespaces: web `common.nav.*` and mobile `nav.*`, not the design's `nav` and `tabs` (PF8).
     9. Known limits: the console event log cannot detect a simulator restart between two successful polls; the mobile Button focus outline relies on Uniwind `outline` support (device check pending); on mobile, a late spaces REST response can briefly overwrite a newer stream frame because the spaces payload carries no version (availability is guarded; the next frame corrects it).
+
+42. M3 backend decisions M3B-5 to M3B-59 (our calls) are accepted as listed in the M3 backend design (`docs/superpowers/specs/2026-11-16-m3-backend-reservations-payments-design.md` §2.2), with §19 and §20 folded into this spec and `docs/architecture.md`. M3B-1 to M3B-4, M3B-44 and M3B-60 are decisions of the user, not our calls: scope, closure moved to M4, pay semantics, delivery, simulated drivers (FR-SIM-2 reworded) and the stranded check-in (`checked_in → confirmed`). Plan decisions and gaps resolved while building:
+    1. Import cycle: `payments` calls back into `reservations` through `payments.OutcomeApplier` and `payments.RefundNotifier`, defined in `payments` and implemented by `*reservations.Service`.
+    2. `gate.Reservations` gains `RestoreAfterVoid` and `LateEntryPass`. Reopening and finding a reservation stay are gate repository methods, because stays belong to `gate`.
+    3. `email.Message` gains inline attachments (`multipart/related`) for the QR image.
+    4. The payment and refund `public_id` is generated in Go (`uuid.NewV7`), so the gateway key `rsv-fee:<public_id>` exists at insert.
+    5. Each task adds its own sqlc queries instead of S2 adding them all.
+    6. Card numbers are accepted with spaces or hyphens; the server strips them before validation, and anything else non-numeric is `422`.
+    7. S1 ships OpenAPI types and fixtures typed with `satisfies`; the clients track adds the m3 zod schemas.
+    8. The worker pool stays at 8 connections (`cmd/worker` already had it), with a test.
+    9. The email port is `notifications.Notifier`, not `Enqueuer`.
+    10. The same-key concurrency test asserts one charge, one row and `202` replays of the in-flight attempt, not "all answers equal".
+    11. `max_active_per_user` and `slot_min` stay fixed at 1 and 5 in Phase 1 (M3B-48), because the active-reservation index and the slot rows hard-code them. The reservation service refuses a policy version with other values, or with window minutes that are not multiples of 5, and the M4 admin form must validate the same. A zero reservation fee is refused too (M3B-49).
+    12. `VoidUnpassedEntries` stays batch-only and excludes reservation stays; the per-row path is `gate.ReservationVoider`, run in the same worker tick.
+43. Accepted limits of the M3 backend (none moves money wrongly; each has a follow-up in `CLAUDE.md`):
+    1. **No-show block race.** Create reads the no-show block unlocked (users are last in the lock order), so one create can slip past a block that committed a moment earlier.
+    2. **Pay key fingerprint.** The `Idempotency-Key` fingerprint excludes the full card number (M3B-7). Reusing a key with another card that shares brand, last four and expiry replays the stored outcome instead of `409`. No money moves.
+    3. **Late charge after a re-pay.** If the driver paid again with a new key, a late success of the first charge is not refunded automatically, because the live-fee index allows one live fee per reservation. It raises a `refund_failed` alert with `details.reason` `duplicate_charge`, `orphan_charge` or `gateway_inconsistent`, and the M4 admin refund settles it.
+    4. **Coverage.** NFR-TEST-1 is measured as at least 90% statement coverage, because Go has no branch coverage (M3B-52).
+    5. **Simulated drivers** are refused in production whatever the secret: `SEED_SIMULATOR_DRIVERS` must be `false` there.
 
 ### 10.3 Open questions
 

@@ -133,8 +133,12 @@ func (s *Service) exit(ctx context.Context, lotID int64, stay Stay, now time.Tim
 		}
 	}
 	if stay.Status == StatusActive {
+		userID, err := s.paymentUser(ctx, stay)
+		if err != nil {
+			return Result{}, err
+		}
 		if _, err := s.repo.InsertPayment(ctx, NewPayment{
-			StayID: stay.ID, Method: "none", AmountCents: 0, SucceededAt: now,
+			StayID: stay.ID, UserID: userID, Method: "none", AmountCents: 0, SucceededAt: now,
 			IdempotencyKey: "zero:" + stay.PublicID.String(),
 		}); err != nil {
 			return Result{}, err
@@ -142,6 +146,12 @@ func (s *Service) exit(ctx context.Context, lotID int64, stay Stay, now time.Tim
 	}
 	if err := s.repo.SetStayExited(ctx, lotID, stay.ID, now); err != nil {
 		return Result{}, err
+	}
+	// design 8.1: stays, payments, then the reservation, under the lot lock.
+	if stay.ReservationID != 0 {
+		if err := s.reservations.Complete(ctx, stay.ReservationID, now); err != nil {
+			return Result{}, err
+		}
 	}
 	version, err := s.repo.BumpOccupancy(ctx, lotID, -1, now)
 	if err != nil {

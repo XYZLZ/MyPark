@@ -9,7 +9,9 @@ import (
 	"math/rand/v2"
 	"mime"
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/apperr"
@@ -208,8 +210,9 @@ func (c *control) stop(w http.ResponseWriter, r *http.Request) {
 }
 
 type injectRequest struct {
-	Credential   CredentialKind `json:"credential" validate:"required,oneof=ticket employee_card"`
+	Credential   CredentialKind `json:"credential" validate:"required,oneof=ticket employee_card reservation_qr"`
 	Card         *string        `json:"card"`
+	QR           *string        `json:"qr"`
 	Hold         bool           `json:"hold"`
 	DwellMinutes *int           `json:"dwell_minutes" validate:"omitnil,min=1,max=600"`
 }
@@ -221,6 +224,10 @@ func (c *control) inject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := InjectParams{Cred: req.Credential, Hold: req.Hold}
+	if err := c.injectQR(&req, &p); err != nil {
+		c.fail(w, r, err)
+		return
+	}
 	if req.Card != nil {
 		switch {
 		case req.Credential != CredEmployeeCard:
@@ -244,6 +251,39 @@ func (c *control) inject(w http.ResponseWriter, r *http.Request) {
 		CarID string `json:"car_id"`
 	}{id})
 }
+
+// injectQR checks the qr field, which the OpenAPI schema cannot make
+// conditional: required with reservation_qr, excluded otherwise, and a
+// well-formed token. The error names the field and rule, never the value.
+func (c *control) injectQR(req *injectRequest, p *InjectParams) error {
+	switch {
+	case req.Credential == CredReservationQR && req.QR == nil:
+		return httpx.InvalidFields(validation.FieldError{Field: "qr", Rule: "required"})
+	case req.Credential != CredReservationQR && req.QR != nil:
+		return httpx.InvalidFields(validation.FieldError{Field: "qr", Rule: "excluded_unless", Param: "credential reservation_qr"})
+	case req.QR != nil && !qrPattern.MatchString(*req.QR):
+		return httpx.InvalidFields(validation.FieldError{Field: "qr", Rule: "pattern", Param: qrPattern.String()})
+	case req.QR != nil:
+		p.QR = secret.String(*req.QR)
+	}
+	return nil
+}
+
+// InjectCredentials lists the credential kinds POST /control/cars accepts, read
+// off injectRequest's validate tag, and QRPattern is the pattern of its qr
+// field; the OpenAPI parity test compares them with the schema.
+func InjectCredentials() []string {
+	field, _ := reflect.TypeFor[injectRequest]().FieldByName("Credential")
+	for rule := range strings.SplitSeq(field.Tag.Get("validate"), ",") {
+		if list, ok := strings.CutPrefix(rule, "oneof="); ok {
+			return strings.Fields(list)
+		}
+	}
+	return nil
+}
+
+// QRPattern is the regular expression a qr value must match.
+func QRPattern() string { return qrPattern.String() }
 
 type leaveRequest struct {
 	LoseTicket bool `json:"lose_ticket"`

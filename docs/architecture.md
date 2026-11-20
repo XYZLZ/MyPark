@@ -167,7 +167,7 @@ Every response uses one baseline envelope (decided 2026-11-07, see the M1 backen
 - The code catalog lives in `apps/server/internal/domain/errcodes/errcodes.go`. It is exported to `packages/contracts/src/error-codes.ts` by `go generate`, and CI fails on drift.
 - Input validation failures return `validation.failed` (422) with `details.fields[{field, rule, param}]`.
 - Unknown routes and wrong methods return JSON envelopes too: `http.not_found` (404) and `http.method_not_allowed` (405).
-- HTTP status mapping: validation 422, auth 401, forbidden 403, not found 404, conflict/state 409, rate limit 429.
+- HTTP status mapping: validation 422, auth 401, payment declined 402 (`payment.declined`, M3B-32), forbidden 403, not found 404, conflict/state 409, rate limit 429.
 
 ### 4.4 API surface (v1 overview)
 
@@ -235,9 +235,9 @@ sequenceDiagram
   A2->>C: (same for its subscribers)
 ```
 
-- Every state change that affects availability (gate pass, reservation confirm/cancel/expire, hold becoming effective, space out of service, lot open/close) runs `pg_notify('lot_changed', lot_id || ':' || version)` **in the same transaction**, so it fires only on commit.
+- Every state change that affects availability (gate pass, reservation confirm/cancel, QR check-in, hold becoming effective, space out of service, lot open/close) runs `pg_notify('lot_changed', lot_id || ':' || version)` **in the same transaction**, so it fires only on commit. The transaction takes `lot_occupancy FOR UPDATE` first and bumps `version`, because the stream drops any push that is not newer. A confirm or cancel counts only when the reservation's hold window contains `now`. **An expiry sends no NOTIFY** (M3 design I10): an unpaid expiry never held an effective hold, and a no-show acts after the window closed, so neither changes the effective holds.
 - Each API instance holds **one dedicated listener connection** (acquired from the pool and hijacked) and fans out to in-memory subscribers. It coalesces bursts to at most 4 pushes/s per lot.
-- Holds become effective with time, not with an event. The worker emits `lot_changed` at each hold-window boundary (scan every 30 s).
+- Holds become effective with time, not with an event. The worker's `hold_boundary_notify` job (every 30 s) compares `effective_holds(now)` with the value it last notified, per lot, and bumps the version and NOTIFYs on a difference or on its first tick. Clients can therefore see a time-based change up to 30 s late. Gate decisions compute holds live and do not depend on the job.
 - SSE (`GET /v1/lots/{id}/availability/stream`): `retry: 3000`, then **snapshot first**: the current `event: availability` with `id: <version>`, on every connect and reconnect. Then pushes and a heartbeat every **15 s** (`event: heartbeat`, so clients can observe it). Clients mark data **stale** when the connection drops or no event or heartbeat arrives for **45 s** **(our call)**. Admin stream (`/v1/admin/stream`) adds `space_changed`, `reservation_changed`, `alert_opened`.
   - `Last-Event-ID` is parsed and logged, never trusted: the snapshot already carries the latest state, so there is nothing to replay. A malformed value is ignored.
   - The stream subscribes to the hub before it reads its snapshot, and drops any push whose version is not newer than the one it sent. A change that commits during connect is never lost, and an older push never follows the snapshot.
@@ -255,9 +255,9 @@ sequenceDiagram
 
 **Approach (our call): slot-load counters + row locks.**
 
-1. Time is split into 5-minute slots. A hold window `[arrival − 15, arrival + 20)` covers 7 slots.
+1. Time is split into 5-minute slots. A hold window is half-open, `[arrival − 15, arrival + 20)`, and covers 7 slots (M3B-18). `arrival_at` is rounded up to the next 5 minutes in UTC before anything else (M3B-17).
 2. Table `reservation_slot_loads(lot_id, slot_start, held)` has a row per slot that has holds.
-3. Create reservation (single short transaction):
+3. Create reservation (single short transaction). **As built (M3B-15), the reservation row is inserted first and the slots are locked after it**, so the one-active-reservation index rejects a second booking before any slot is touched, and a cap failure rolls the insert back. Every flow then locks in the same order (M3B-14): `lot_occupancy` → `reservations` → `reservation_slot_loads` (ascending `slot_start`) → `stays` → `payments` → `refunds` → `users`. The sketch below shows the slot half only:
    ```sql
    insert into reservation_slot_loads (lot_id, slot_start, held)
    select $lot, s, 0 from generate_series($w_start, $w_end - interval '5 min', interval '5 min') s
@@ -267,17 +267,17 @@ sequenceDiagram
     order by slot_start for update;              -- fixed order prevents deadlocks
    -- if any held >= cap → rollback, 409 reservation.capacity_reached
    update reservation_slot_loads set held = held + 1 where ...;
-   insert into reservations (...) values (...);   -- partial unique index enforces 1 active/user
    ```
-4. Releasing a hold (cancel, expiry, check-in) decrements the same slots in the same transaction as the status change. `check (held >= 0)` catches bugs.
-5. The external payment call happens **outside** the transaction (pending_payment first, then confirm), so locks are held for milliseconds.
+   `cap` uses an `effective_capacity` read unlocked in the create transaction (M3B-16). The no-show block is also read unlocked, so one create can slip past a block that committed a moment earlier (accepted; users are last in the lock order).
+4. Releasing a hold (cancel, expiry, no-show, check-in, physically-full cancel) decrements the same slots in the same transaction as the status change. `check (held >= 0)` catches bugs. The one exception is the stranded check-in: when the void job voids a reservation stay, the same transaction moves the reservation `checked_in → confirmed` and re-increments its slots **without** a cap check (M3B-60). Overflow then falls under the gate's rule 2 and §7.1.
+5. The external payment call happens **outside** the transaction (pending_payment first, then confirm), so locks are held for milliseconds. Driver-API transactions set `lock_timeout = '1s'` and `statement_timeout = '2s'` (M3B-55).
 
 Other invariants enforced by the database, not just the code:
 
 | Invariant | Mechanism |
 |---|---|
 | One active reservation per driver | `unique (user_id) where status in ('pending_payment','confirmed')` |
-| One open stay per reservation | `unique (reservation_id) where reservation_id is not null` |
+| One stay per reservation, ever | `unique (reservation_id) where reservation_id is not null`. The index covers every status, so a voided stay is re-opened (`voided → entry_pending`) on re-presentation, never replaced (M3B-24) |
 | One active plate per account system-wide | `unique (plate_normalized) where deleted_at is null` |
 | Occupancy never negative and never above effective capacity | `lot_occupancy.occupied` has `check (occupied >= 0)`. Every entry acceptance re-checks under `select ... for update` on the `lot_occupancy` row (§7.1), counting `occupied + pending_entries` |
 | Payments not duplicated | `unique (idempotency_key)` on payments and refunds |
@@ -291,9 +291,11 @@ Every entry decision takes `select ... from lot_occupancy where lot_id = $1 for 
 | Credential | Allowed when | Denial |
 |---|---|---|
 | Ticket request (drive-up) / employee card | `effective_capacity − occupied − effective_holds > 0` | `gate.lot_full` |
-| Reservation QR inside its window | `occupied < effective_capacity` (its hold is already netted out of public availability) | `gate.lot_physically_full` → same transaction sets the reservation `confirmed → cancelled` (`refund_reason = facility_unavailable`), releases its slot loads, inserts a `refunds` row (`pending`) and a `reconciliation_alerts` incident **(our call)** |
+| Reservation QR inside its window | `occupied + pending_entries < effective_capacity` (its hold is already netted out of public availability) | `gate.lot_physically_full` → same transaction sets the reservation `confirmed → cancelled` (`refund_reason = facility_unavailable`), releases its slot loads, inserts a `refunds` row (`pending`) and a `reconciliation_alerts` incident **(our call)** |
 
-`occupied` only increments on `barrier.passed`. Accepted-but-not-passed entries (`entry_pending`) also count toward `occupied` for decisions, so two simultaneous acceptances can't both take the last space **(our call)**.
+`occupied` only increments on `barrier.passed`. Accepted-but-not-passed entries (`entry_pending`, 60 s) also count toward `occupied` for decisions, so two simultaneous acceptances can't both take the last space **(our call)**. The predicate is the same in every wording: `occupied + pending_entries(60 s) ≥ effective_capacity` is physically full (M3B-23). A pending entry that later voids can still cause a guaranteed driver's cancellation and refund; that is accepted.
+
+Reservation QR outcomes (M3B-22, M3B-24, M3B-60): inside the window and `confirmed` opens a stay (`checked_in`); re-presenting a `checked_in` reservation whose stay is still `entry_pending` answers `open` with the same `stay_id`; after the void job restored the reservation to `confirmed`, a re-presentation reuses the voided stay; at or after `upper(hold_window)` the answer is `reservation.window_closed`; unknown, forged, cancelled, completed, expired-unpaid or `pending_payment` give `gate.credential_invalid`; a second car on a checked-in reservation whose stay is inside gives `gate.credential_in_use`.
 
 Gate decisions serialize per lot on the `lot_occupancy` row (`for update`). At the expected ≤ 50 events/s this is a few milliseconds of contention, which is acceptable for one lot and partitionable per lot later.
 
@@ -366,10 +368,13 @@ type PaymentGateway interface {
 }
 ```
 
-- **Flow:** reservation created (`pending_payment`) → `payments` row `pending` committed → `Charge` called outside any transaction → result committed (`succeeded` → reservation `confirmed`, holds already counted; `failed` → stays `pending_payment`).
-- If a timeout or crash leaves the result unknown, the worker re-queries by idempotency key (`Charge` is idempotent) and finalizes.
-- **Simulated adapter:** card `4242…` succeeds, `4000 0000 0000 0002` declines, `4000 0000 0000 9995` times out, plus a configurable latency. Its state lives in its own table (`sim_gateway_charges`) so behavior survives restarts.
-- **Refunds (our call):** a separate `refunds` table, one row per refund attempt chain, with status `pending → succeeded | failed`, plus `attempts`, `reason` (`cancelled_before_arrival`, `facility_unavailable`, `facility_closed`, `admin_override`) and its own idempotency key. The row is written in the same transaction as the cancellation and processed by the worker with exponential backoff. When it succeeds, the parent payment moves `succeeded → refunded`. When it fails after max attempts, an admin alert is raised. `payments.status in ('pending','succeeded','failed','refunded')`.
+- **Request shape (M3B-9):** `ChargeRequest` carries the card optionally. A `Charge` whose idempotency key the provider already saw returns the recorded result and does not need the card; a key it never saw with no card returns `ErrChargeUnknown`. That key-only call is the re-query, so no `Lookup` method exists. The gateway key is server-generated, `rsv-fee:<payment public_id>`; the client's `Idempotency-Key` is separate and scoped to the reservation (M3B-7, M3B-8).
+- **Flow:** reservation created (`pending_payment`) → `payments` row `pending` committed → `Charge` called outside any transaction (deadline `PAYMENT_CHARGE_TIMEOUT`, default 5 s) → result committed in a second transaction on a context detached from the request (M3B-56). `succeeded` → reservation `confirmed`, holds already counted, and `200`. `failed` → `402 payment.declined`, the reservation stays `pending_payment`. An unknown outcome → `202`, the payment stays `pending`.
+- If a timeout or crash leaves the result unknown, the worker (`payment_reconcile`) re-queries payments pending longer than `PAYMENT_CHARGE_TIMEOUT + 10 s` by key and finalizes. `ErrChargeUnknown` (the API died before calling the gateway) makes the payment `failed` with `failure_code = 'not_submitted'`.
+- **Late-success rule (M3B-10):** a success that resolves while `now < upper(hold_window)` confirms the reservation. A later one moves it `pending_payment → expired_unpaid` and queues a full refund (`facility_unavailable`). The unpaid-expiry job skips a reservation with a pending fee payment, and cancel answers `409 payment.in_progress` while one is pending. If the driver paid again with a new key first, the late charge is not auto-refunded (one live fee per reservation); it raises a `refund_failed` alert with `details.reason` `duplicate_charge`, `orphan_charge` or `gateway_inconsistent`, and the M4 admin refund settles it.
+- **Callback ports (plan gap 1):** `payments` cannot import `reservations` (the reverse import exists), so it defines `OutcomeApplier` and `RefundNotifier`, and `*reservations.Service` implements them.
+- **Simulated adapter:** card `4242 4242 4242 4242` succeeds, `4000 0000 0000 0002` declines (`card_declined`), `4000 0000 0000 9995` is recorded as succeeded but answers after `SIM_GATEWAY_TIMEOUT_DELAY` (default 30 s), so the API answers `202` and the worker confirms it later, and any other Luhn-valid number declines (`card_not_supported`). Latency is `SIM_GATEWAY_LATENCY` (default 300 ms). Its state lives in its own table (`sim_gateway_charges`) so behavior survives restarts. `PAYMENT_GATEWAY` accepts only `simulated`, and production requires it set explicitly (M3B-54). A real adapter must guarantee one refund per charge across refund keys: the simulated gateway enforces it, and a refund requeued after `failed` gets a new key.
+- **Refunds (our call):** a separate `refunds` table, one row per refund attempt chain, with status `pending → succeeded | failed`, plus `attempts`, `reason` (`cancelled_before_arrival`, `facility_unavailable`, `facility_closed`, `admin_override`) and its own idempotency key. The row is written in the same transaction as the cancellation and processed by the worker with exponential backoff. When it succeeds, the parent payment moves `succeeded → refunded`. When it fails after max attempts, an admin alert is raised. The worker claims a row with a lease (`attempts + 1`, `next_attempt_at = now + 60 s`), calls the gateway outside any transaction, then finalizes fenced on `(status, attempts)`. A finalize error after a gateway success counts as a failed attempt. A sweep at the attempt limit fails stranded refunds and raises a `refund_failed` alert with `details.reason` `max_attempts`. Claims stop at the lease edge. `payments.status in ('pending','succeeded','failed','refunded')`.
 - **Zero payments:** grace and employee exits record a `parking_fee` payment with `amount_cents = 0`, `method = 'none'`, `status = 'succeeded'`, so every exited stay has a payment record.
 
 ---
@@ -378,21 +383,26 @@ type PaymentGateway interface {
 
 | Job | Cadence | Mechanism |
 |---|---|---|
-| Expire unpaid reservations | 30 s | `update ... where status='pending_payment' and created_at < now() - timeout` + release slots |
-| Expire no-shows | 30 s | `select ... where status='confirmed' and arrival_at + grace < now() for update skip locked` |
-| Hold boundary notifications | 30 s | NOTIFY lots whose effective holds changed since the last tick |
+| Expire unpaid reservations (`expire_unpaid_reservations`) | 30 s | `pending_payment` with `payment_due_at <= @now` and no `pending` fee payment, claimed `for update skip locked`; status change and slot release in one transaction; no NOTIFY |
+| Expire no-shows (`expire_no_shows`) | 30 s | `confirmed` with `upper(hold_window) <= @now`, `for update skip locked`; releases nothing already released and applies the no-show block in the same transaction |
+| Hold boundary notifications (`hold_boundary_notify`) | 30 s | compares `effective_holds(@now)` per lot with the last notified value (in memory); on a difference or the first tick, bumps `lot_occupancy.version` and NOTIFYs |
+| Payment reconcile (`payment_reconcile`) | 15 s | re-queries `pending` fee payments older than `PAYMENT_CHARGE_TIMEOUT + 10 s` by gateway key and finalizes them (late-success rule, §9) |
 | Void unpassed entries | 15 s | `entry_pending` with `accepted_at` older than 60 s → `voided`, `voided_at = $now` (server clock), in batches of 200 claimed with `for update skip locked`, repeated while a batch is full. No occupancy change and no NOTIFY: a pending entry never counted. A car that passes later is a late entry pass (`voided → active`, counted, audited `gate.late_entry_pass`). Rows are never deleted |
 | Occupancy snapshot | 5 min, aligned to the wall clock | `insert ... on conflict (lot_id, captured_at) do nothing` (idempotent across replicas) |
 | Purge device events | 24 h | `purge_device_events(5000)` (SQL function, `security definer`, 12-month floor enforced inside it, so no caller can shorten retention) called by `devices.PurgeEvents` until a call deletes fewer than 5000 rows; logs the total. `device_events` is otherwise append-only, so the function is the only delete path |
 | Outbox dispatch (email) | 2 s | `for update skip locked`, retry with backoff, max attempts → `dead` |
-| Refund processing | 10 s | same claim pattern on `refunds where status='pending' and next_attempt_at <= now()` |
-| No-show block | on each `expired_no_show` | count no-shows in `noshow_window_days`; if ≥ threshold set `users.reservation_blocked_until` |
-| Reservation reminders | 1 min | enqueue an outbox email 30 min before arrival, deduplicated by unique key |
+| Refund processing (`refund_processing`) | 10 s | claim `pending` refunds with `next_attempt_at <= @now` (`for update skip locked`, batch 20) with a 60 s lease, call the gateway outside any transaction, finalize fenced on `attempts`. Backoff `10 s × 2^(attempts−1)`, capped at 30 min; 10 attempts, then `failed` + a `refund_failed` alert |
+| No-show block | on each `expired_no_show` | count no-shows in `noshow_window_days` with the expired reservation's captured policy; if ≥ threshold set `users.reservation_blocked_until = greatest(existing, @now + noshow_block_days)` |
+| Reservation reminders (`reservation_reminders`) | 1 min | enqueue `reservation_reminder` for `confirmed` reservations arriving within 30 min, deduplicated by `reservation_reminder:<public_id>` |
 | Reconciliation | 1 min | compare `lot_occupancy.occupied` vs `count(stays active)` vs sensors, open/close alerts |
+
+Every time column a job compares is read against `@now` from `clock.Clock`, never SQL `now()` (M2 D3, M3 design I7), so jobs run on the fake clock in tests.
 
 Running several worker replicas is safe because every job claims rows with `SKIP LOCKED` or is idempotent by unique key.
 
-**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). **Since M2:** void unpassed entries (15 s) and device events purge (24 h). The rest arrive with their milestones.
+**Deploy order:** deploy the worker before the API. An old worker voids reservation stays without restoring the hold (M3B-60), so a mixed fleet in the other order strands guaranteed drivers. The worker pool is 8 connections (M3B-51).
+
+**Running since M1:** outbox dispatch (2 s), rate-limit purge (1 min), auth purge (1 h: tokens, codes and sessions 30 days past expiry) and outbox purge (24 h: `sent` and `dead` rows older than 90 days). **Since M2:** void unpassed entries (15 s, which also voids reservation stays per row and restores the hold, M3B-60) and device events purge (24 h). **Since M3:** the jobs above except reconciliation of gate and sensor counts, which is M4 (M3B-2).
 
 ---
 
@@ -421,16 +431,16 @@ Conventions (from supabase-postgres-best-practices):
 | `tariff_versions` | id, lot_id, effective_from, first_hour_cents, additional_hour_cents, exit_grace_min, post_payment_exit_min, daily_cap_cents, lost_ticket_cents, reservation_fee_cents, created_by | `unique(lot_id, effective_from)`; all cents `>= 0` |
 | `policy_versions` | id, lot_id, effective_from, max_reservable_pct, booking_horizon_days, arrival_grace_min, early_arrival_min, payment_timeout_min, max_active_per_user, slot_min, noshow_block_threshold, noshow_window_days, noshow_block_days, created_by | `unique(lot_id, effective_from)`; `max_reservable_pct between 0 and 100`; no-show fields `> 0` |
 | `legal_documents` | id, kind, version, published_at, url_es, url_en | `unique(kind, version)`; `kind in ('terms','privacy')` |
-| `reservations` | id, public_id, user_id, vehicle_id, lot_id, arrival_at, hold_window `tstzrange`, status, fee_cents, tariff_version_id, policy_version_id, qr_nonce, confirmed_at, cancelled_at, cancelled_by (`driver`/`admin`/`system`), refund_reason, checked_in_at, expired_at | `tariff_version_id` and `policy_version_id` set **at booking**; `refund_reason in ('cancelled_before_arrival','none_after_arrival','facility_unavailable','facility_closed','admin_override')`; partial unique (user_id) for active statuses; idx(lot_id, status, arrival_at); GiST(hold_window) where status='confirmed'; idx(vehicle_id); `status in (...)` |
+| `reservations` | id, public_id, user_id, vehicle_id, lot_id, arrival_at, hold_window `tstzrange` (half-open), status, fee_cents, tariff_version_id, policy_version_id, qr_nonce, payment_due_at, confirmed_at, cancelled_at, cancelled_by (`driver`/`admin`/`system`), refund_reason, checked_in_at, completed_at, expired_at | `tariff_version_id` and `policy_version_id` set **at booking**; `refund_reason in ('cancelled_before_arrival','none_after_arrival','facility_unavailable','facility_closed','admin_override')`; partial unique (user_id) for active statuses; idx(lot_id, status, arrival_at); GiST(hold_window) where status='confirmed'; idx(vehicle_id); `status in (...)` |
 | `reservation_slot_loads` | lot_id, slot_start, held | PK(lot_id, slot_start); `held >= 0` |
 | `stays` | id, public_id, lot_id, credential_kind, ticket_code_hash, employee_card_id, status, tariff_version_id, accepted_at, entered_at, paid_at, exit_deadline_at, exit_authorized_at, exited_at, voided_at, lost_ticket, updated_at | `tariff_version_id` is captured at acceptance (the reservation's version for reservation stays, from M3). There is no stored amount due: it is computed from the tariff and the timestamps. `status in ('entry_pending','active','paid','exited','voided')`; `credential_kind in ('ticket','reservation','employee_card')`; `unique(ticket_code_hash)`; state checks (`paid` needs `paid_at` and `exit_deadline_at`; `exit_deadline_at` needs `paid_at`); `unique(employee_card_id) where status in ('entry_pending','active','paid')`; idx(lot_id) where status in ('entry_pending','active','paid'); FK idxs. M3 adds `reservation_id` with `unique(reservation_id) where not null` |
-| `payments` | id, public_id, kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at | M2 minimal. `unique(idempotency_key)`; `kind in ('reservation_fee','parking_fee')`; `status in ('pending','succeeded','failed','refunded')`; `method in ('gateway_sim','cash','none')`; `(method = 'none') = (amount_cents = 0)`; at most one `none` payment per stay; FK idxs. M3 drops `stay_id not null` and adds `reservation_id`, `user_id`, `num_nonnulls(reservation_id, stay_id) = 1` and the provider columns |
-| `refunds` | id, public_id, payment_id, amount_cents, reason, status, idempotency_key, attempts, next_attempt_at, last_error, provider_ref | `unique(idempotency_key)`; `status in ('pending','succeeded','failed')`; `unique(payment_id) where status in ('pending','succeeded')` (no double refund); idx(next_attempt_at) where status='pending'; idx(payment_id) |
+| `payments` | id, public_id, kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at | M2 minimal. `unique(idempotency_key)`; `kind in ('reservation_fee','parking_fee')`; `status in ('pending','succeeded','failed','refunded')`; `method in ('gateway_sim','cash','none')`; `(method = 'none') = (amount_cents = 0)`; at most one `none` payment per stay; FK idxs. M3 drops `stay_id not null` and adds `reservation_id`, `user_id`, `num_nonnulls(reservation_id, stay_id) = 1` and the provider columns: `client_key` (the pay `Idempotency-Key`, unique per reservation), `request_fingerprint` (SHA-256 of reservation id, brand, last four and expiry, never the full number), `provider_ref`, `card_brand`, `card_last4`, `failure_code`, `failed_at`, `refunded_at`. A partial unique index allows one live `reservation_fee` per reservation. Fee rows write `created_at = @now` (M3B-53) |
+| `refunds` | id, public_id, payment_id, amount_cents, reason, status, idempotency_key, attempts, next_attempt_at, last_error, provider_ref, succeeded_at, failed_at | `unique(idempotency_key)`; `status in ('pending','succeeded','failed')`; `unique(payment_id) where status in ('pending','succeeded')` (no double refund); idx(next_attempt_at) where status='pending'; idx(payment_id) |
 | `devices` | id, public_id, lot_id, kind, name, secret_ciphertext, secret_key_id, status, last_seen_at, revoked_at, created_at | `kind in ('podium','dispenser','entry_barrier','exit_barrier','pay_station','sensor_gateway')` |
 | `device_events` | id, lot_id, device_id, event_id uuid, type, occurred_at, received_at, body_sha256, payload jsonb, response jsonb | `unique(device_id, event_id)`; idx(lot_id, received_at); append-only; monthly partitioning when > 10M rows (Phase 2+) |
 | `employee_cards` | id, public_id, lot_id, card_uid_hash, holder_name, employee_code, status, created_by, created_at, revoked_at | `unique(card_uid_hash)` (HMAC with `CARD_UID_PEPPER`, the UID is never stored); `status in ('active','revoked')`; `(status = 'revoked') = (revoked_at is not null)`; FK idxs |
 | `occupancy_snapshots` | lot_id, captured_at, occupied, available, effective_holds, sensor_occupied, capacity | PK(lot_id, captured_at); BRIN(captured_at) |
-| `reconciliation_alerts` | id, lot_id, kind, details jsonb, opened_at, resolved_at, resolved_by, resolution_note | idx(lot_id) where resolved_at is null |
+| `reconciliation_alerts` | id, public_id, lot_id, kind, details jsonb, opened_at, resolved_at, resolved_by, resolution_note | idx(lot_id) where resolved_at is null. One table for every incident (M3 design I12). M3 kinds: `reservation_unadmitted` (physically-full cancel) and `refund_failed` (`details.reason`: `max_attempts`, `duplicate_charge`, `orphan_charge`, `gateway_inconsistent`); details hold public ids only. M4 adds its kinds with a constraint swap and the resolve flow |
 | `outbox_messages` | id, kind, template, locale, to_address `citext`, user_id, payload jsonb, dedupe_key, status, attempts, last_error, available_at, created_at, sent_at | `unique(dedupe_key)`; `status in ('pending','sending','sent','dead')`; idx(user_id); idx(available_at) where status in ('pending','sending'). The plaintext `payload.code` is scrubbed once sent or dead |
 | `rate_limit_counters` | key `bytea` PK (SHA-256 of the rule key), window_start, count, expires_at | `UNLOGGED`; idx(expires_at); purged by the worker every minute (ADR-12) |
 | `audit_log` | id, occurred_at, actor_user_id, actor_kind, action, entity_type, entity_id, before jsonb, after jsonb, ip, request_id | idx(occurred_at desc); idx(actor_user_id); idx(entity_type, entity_id); append-only |
@@ -438,6 +448,8 @@ Conventions (from supabase-postgres-best-practices):
 ### 11.2 QR tokens
 
 `qr = base64url(public_id || qr_nonce || HMAC-SHA256(qr_key, public_id || qr_nonce))`. The token is opaque, cannot be forged, and leaks nothing guessable. Rotating `qr_nonce` invalidates an old QR. Validation happens at the entry device event: signature → reservation lookup → status `confirmed` → time window.
+
+As built (M3B-21): the token is 86 characters, `base64url_nopad(public_id[16] ‖ qr_nonce[16] ‖ HMAC-SHA256(QR_HMAC_KEY, public_id ‖ qr_nonce)[32])`, and `qr_nonce` is 16 random bytes generated at confirmation. There is one key and no key id. **Rotation note:** rotating `QR_HMAC_KEY` invalidates every outstanding QR, including offline copies, until clients re-fetch `GET /v1/reservations/{id}/qr`. Phase 1 does no rotation. The key (base64, at least 32 bytes) has a dev default in compose and is refused in production at that value. QR values are redacted in `device_events` and the logs show `sha256:<12 hex>`.
 
 ### 11.3 Roles and connections
 
@@ -449,7 +461,7 @@ Conventions (from supabase-postgres-best-practices):
 
 - The roles are created by the postgres init script `deploy/compose/postgres/init/01-roles.sh`, not by a migration, because creating roles needs a superuser.
 - `revoke all on schema public from public`.
-- pgxpool `max_conns = 10` per API instance (`DB_MAX_CONNS`), 4 for the worker (a constant in `cmd/worker`, enough for the readiness checks; raised with the jobs). Transactions are kept short: no network I/O inside a transaction.
+- pgxpool `max_conns = 10` per API instance (`DB_MAX_CONNS`), 8 for the worker (a constant in `cmd/worker`, M3B-51). Transactions are kept short: no network I/O inside a transaction.
 
 ---
 
@@ -533,7 +545,7 @@ src/
 | Request ID | Accepts `X-Request-Id` or generates a UUIDv7; echoed in responses and error envelopes |
 | Health | `/healthz` (process alive), `/readyz` (DB reachable, migrations at the expected version, listener connected) |
 | Metrics | Counters exposed at `/metrics` (Prometheus text) for events/s, SSE clients and notify latency **(our call)**. Moved from M2 to M5 (M2C-50) |
-| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`, `SECRETBOX_KEY` (with `SECRETBOX_KEY_ID` and `SECRETBOX_OLD_KEYS` for rotation), `CARD_UID_PEPPER`, `RATE_LIMIT_PEPPER` (keys the logged and stored rate-limit key hashes), `SIMULATOR_FLEET_SECRET`, `SIMULATOR_CONTROL_TOKEN`; later phases add `QR_HMAC_KEY`. M2 limits: `SSE_MAX_PER_IP` (20), `SSE_MAX_STREAMS` (2000), `DEVICE_RATE_LIMIT_PER_S` (100, range 1-10000) |
+| Config | 12-factor env vars, validated at startup (fails fast). No `.env` files are committed or required: compose uses inline `${VAR:-dev-default}` dev-only defaults. Secrets: `JWT_SIGNING_KEY`, `AUTH_CODE_PEPPER`, `DATABASE_URL`, `SMTP_PASSWORD`, `SECRETBOX_KEY` (with `SECRETBOX_KEY_ID` and `SECRETBOX_OLD_KEYS` for rotation), `CARD_UID_PEPPER`, `RATE_LIMIT_PEPPER` (keys the logged and stored rate-limit key hashes), `SIMULATOR_FLEET_SECRET`, `SIMULATOR_CONTROL_TOKEN`; `QR_HMAC_KEY` (M3). M2 limits: `SSE_MAX_PER_IP` (20), `SSE_MAX_STREAMS` (2000), `DEVICE_RATE_LIMIT_PER_S` (100, range 1-10000). M3 adds `PAYMENT_GATEWAY` (only `simulated`; required explicitly in production), `PAYMENT_CHARGE_TIMEOUT` (default 5 s, range 1-10 s), `SIM_GATEWAY_LATENCY` (default 300 ms), `SIM_GATEWAY_TIMEOUT_DELAY` (default 30 s) and `SEED_SIMULATOR_DRIVERS` (dev only: the seed and the simulator refuse the simulated drivers when `APP_ENV=production`, whatever the secret) |
 
 ---
 
@@ -575,3 +587,4 @@ src/
 | ADR-13 | `proxy.ts` is the sole web refresher, with an in-flight lock and a 30 s result cache bound to `mp_csrf` | Refresh in RSC or route handlers; a backend replay window | RSC cannot set cookies, one entry point means one lock, and refresh tokens stay strictly single-use |
 | ADR-14 | Local limiter scope (M2C-5, M2C-22): `Rule.Scope` routes device, public-read and SSE-connect rules to a per-instance in-memory fixed-window limiter (`ratelimit.Memory`, behind `Composite`); every M1 rule stays `ScopeShared` on Postgres | Postgres counters for every device request (1000/s per IP) or public read; Redis | A Postgres upsert per device event would dominate the hot path and contend on one row. These rules guard capacity, not credential abuse, so an approximate count is enough. Caveat: with N API instances the effective limit is up to N times the configured value, and a restart resets the counts. Auth rules (login, codes, refresh) need exact global counts and stay shared |
 | ADR-15 | Derived fleet secrets (M2C-25): each simulated device secret is `HMAC-SHA256(SIMULATOR_FLEET_SECRET, "mypark/device-secret/v1/" + public_id)`, and card UIDs use a `card-uid` label, over a committed manifest of fixed public ids | A key file mounted into the simulator; random keys read back from the database; the simulator reading the DB | Policies §2.5 forbid secret files, and the simulator must not read the DB. One env value gives seed and simulator the same keys with nothing to copy. Caveat: whoever holds the fleet secret holds every simulated device key, so it is dev-only and the dev value is refused when `APP_ENV=production`. Real devices get random secrets, shown once, in M4 |
+| ADR-16 | Pay is synchronous with a `202` fallback (M3B-3): `POST /v1/reservations/{id}/pay` calls `Charge` with a 5 s deadline and answers `200` on success, `402` on a decline and `202` when the outcome is unknown; the worker re-queries by key and the client polls the reservation | Always asynchronous (`202` plus polling); a webhook from the provider | One round trip in the common case, and the driver sees the result at once. The fallback needs the reconcile job and client polling, and keeps the reservation `pending_payment` (slots held) until the gateway answers. A real provider needs a timeout-to-alert rule in Phase 2 |

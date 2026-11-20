@@ -20,12 +20,16 @@ const (
 	envMailpitAPI = "TEST_MAILPIT_API"
 )
 
+// MailpitInline is an inline attachment of a captured message.
+type MailpitInline struct{ ContentID, ContentType string }
+
 // MailpitMessage is a message captured by Mailpit.
 type MailpitMessage struct {
 	Subject   string
 	MessageID string
 	Text      string
 	HTML      string
+	Inline    []MailpitInline
 }
 
 // Mailpit returns the SMTP address and API base URL of the Mailpit test
@@ -126,9 +130,10 @@ func MailpitMessages(t *testing.T, apiURL, to string) []MailpitMessage {
 			MessageID string
 			Text      string
 			HTML      string
+			Inline    []MailpitInline
 		}
 		getJSON(t, apiURL+"/api/v1/message/"+m.ID, &d)
-		out = append(out, MailpitMessage{Subject: d.Subject, MessageID: d.MessageID, Text: d.Text, HTML: d.HTML})
+		out = append(out, MailpitMessage{Subject: d.Subject, MessageID: d.MessageID, Text: d.Text, HTML: d.HTML, Inline: d.Inline})
 	}
 	return out
 }

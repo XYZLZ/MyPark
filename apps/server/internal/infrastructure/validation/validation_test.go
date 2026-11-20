@@ -3,6 +3,7 @@ package validation_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/validation"
 )
@@ -86,5 +87,25 @@ func TestValidator_PhoneTagMatchesDBCheck(t *testing.T) {
 		if (err == nil) != valid {
 			t.Errorf("phone %q: err = %v, want valid=%v", phone, err, valid)
 		}
+	}
+}
+
+func TestLuhn(t *testing.T) {
+	for number, want := range map[string]bool{
+		"4242424242424242": true, "4242424242424241": false, "": false, "42 42": false, "0": true,
+	} {
+		if got := validation.Luhn(number); got != want {
+			t.Errorf("Luhn(%q) = %v, want %v", number, got, want)
+		}
+	}
+}
+
+func TestCardExpiryValid_LotTimeZone(t *testing.T) {
+	// 03:00Z on Dec 1 is still Nov 30 in Santo Domingo.
+	if !validation.CardExpiryValid(11, 2026, time.Date(2026, 12, 1, 3, 0, 0, 0, time.UTC)) {
+		t.Error("11/2026 rejected on Nov 30 local time")
+	}
+	if validation.CardExpiryValid(11, 2026, time.Date(2026, 12, 1, 4, 0, 0, 0, time.UTC)) {
+		t.Error("11/2026 accepted on Dec 1 local time")
 	}
 }

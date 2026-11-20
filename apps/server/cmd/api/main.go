@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	authpg "github.com/XYZLZ/MyPark/apps/server/internal/features/auth/postgres"
@@ -38,6 +39,10 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	lotspg "github.com/XYZLZ/MyPark/apps/server/internal/features/lots/postgres"
 	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
 	tariffspg "github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/users"
@@ -48,6 +53,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jwt"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/paymentsim"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/pubsub"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/secretbox"
@@ -135,7 +141,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	// One hub fans lot changes out to every stream. Its listener holds a
 	// dedicated connection, hijacked out of the request pool (design §11.6).
 	// REST and SSE share one availability service, so both see the same
-	// reservation holds when M3 replaces NoReservations.
+	// reservation holds.
 	availSvc := newAvailabilityService(pool, clock.System{})
 	hub := availability.NewHub(availSvc, clock.System{}, log)
 	listener := pubsub.New(pool, log, pubsub.Handlers{
@@ -221,6 +227,9 @@ type deps struct {
 	hub        *availability.Hub
 	timers     clock.Timers // the hub and stream heartbeats; nil: clock.System
 	listenerUp func() bool  // the LISTEN connection is up (/readyz); nil: no listener check
+
+	// gateway charges and refunds cards; nil means the simulated gateway on pool.
+	gateway payments.Gateway
 }
 
 // newHandler builds the API router with every feature handler and wraps it
@@ -283,13 +292,26 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 
 	tx := database.NewTxRunner(d.pool)
 	auditRec := auditpg.NewRecorder()
+	notifier := notificationspg.NewNotifier(d.clock)
+	gateway := d.gateway
+	if gateway == nil {
+		gateway = paymentsim.New(d.pool, paymentsim.Config{
+			Clock: d.clock, Latency: d.cfg.SimGatewayLatency(), TimeoutDelay: d.cfg.SimGatewayTimeoutDelay(),
+		})
+	}
+	reservationSvc := reservations.NewService(reservations.Deps{
+		Tx: tx, Repo: reservationspg.NewRepo(d.pool), Tariffs: tariffSvc, Avail: availSvc, Clock: d.clock, Log: d.log,
+		Fees: paymentspg.NewRepo(d.pool), Gateway: gateway, Notify: notifier, Alerts: alertspg.NewRecorder(),
+		QRKey: d.cfg.QRHMACKey(), ChargeTimeout: d.cfg.PaymentChargeTimeout(), Rand: rand.Reader,
+	})
 	devices.NewHandler(devices.HandlerDeps{
 		Tx:    tx,
 		Store: deviceRepo,
 		Gate: gate.NewService(gate.Deps{
 			Repo: gatepg.NewRepo(), Clock: d.clock, Log: d.log, Tariffs: tariffSvc, Audit: auditRec,
-			// NoReservations until M3 (M2C-1); ticket codes come from crypto/rand.
-			Holds: availability.NoReservations{}, CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
+			// Real reservation holds since M3; ticket codes come from crypto/rand.
+			Holds: reservations.NewHolds(d.pool), CardPepper: d.cfg.CardUIDPepper(), Rand: rand.Reader,
+			Reservations: reservations.NewGateAccess(reservationSvc),
 		}),
 		Sealer:     d.sealer,
 		CardPepper: d.cfg.CardUIDPepper(),
@@ -297,7 +319,6 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 		Log:        d.log,
 	}).Register(r)
 
-	notifier := notificationspg.NewNotifier(d.clock)
 	authSvc := auth.NewService(auth.Deps{
 		Tx:     tx,
 		Repo:   authRepo,
@@ -311,10 +332,14 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	})
 	auth.NewHandler(authSvc, validation.New(), d.limiter, d.keys, d.log).Register(r)
 
-	// NoReservations is the M1 checker (OC-29); M3 swaps in the reservations adapter.
+	// A vehicle with a pending, confirmed or checked-in reservation cannot be deleted.
 	vehicleSvc := vehicles.NewService(tx, vehiclespg.NewRepo(d.pool),
-		vehicles.NoReservations{}, d.cfg.MaxVehiclesPerUser(), d.clock)
+		reservations.NewVehicleChecker(d.pool), d.cfg.MaxVehiclesPerUser(), d.clock)
 	vehicles.NewHandler(vehicleSvc, validation.New(), d.cfg.MaxVehiclesPerUser(), d.log).Register(r)
+
+	reservations.NewHandler(reservationSvc, validation.New(), d.log).Register(r)
+
+	payments.NewReceiptHandler(payments.NewReceiptService(tx, paymentspg.NewReceiptRepo(d.pool)), d.log).Register(r)
 
 	// Account deletion reaches vehicles and auth only through their ports.
 	usersSvc := users.NewService(users.Deps{
@@ -326,8 +351,8 @@ func newHandlerWithRoutes(d deps) (http.Handler, []router.Route) {
 	return httpserver.NewHandler(d.log, mux, d.cfg.CORSAllowedOrigins()), r.Routes()
 }
 
-// newAvailabilityService builds the availability service. NoReservations
-// until M3 (M2C-1).
+// newAvailabilityService builds the availability service over the real
+// reservation holds.
 func newAvailabilityService(pool *pgxpool.Pool, clk clock.Clock) *availability.Service {
-	return availability.NewService(availabilitypg.NewRepo(pool), availability.NoReservations{}, clk)
+	return availability.NewService(availabilitypg.NewRepo(pool), reservations.NewHolds(pool), clk)
 }

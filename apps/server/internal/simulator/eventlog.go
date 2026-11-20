@@ -6,7 +6,7 @@ import (
 )
 
 // LogEntry is one device event the simulator sent. It never carries a ticket
-// code or a card UID.
+// code, a card UID or a reservation token.
 type LogEntry struct {
 	Seq    int64     `json:"seq"`
 	At     time.Time `json:"at"`
@@ -15,6 +15,10 @@ type LogEntry struct {
 	Result string    `json:"result"`
 	Reason string    `json:"reason,omitempty"`
 	CarID  string    `json:"car_id,omitempty"`
+	// Credential is the kind a QR car presented; CredentialRef is the first 12
+	// hex digits of the token's SHA-256, never the token (M3B-46).
+	Credential    string `json:"credential,omitempty"`
+	CredentialRef string `json:"credential_ref,omitempty"`
 }
 
 // EventLog is a ring buffer of the latest entries (design §13.3).

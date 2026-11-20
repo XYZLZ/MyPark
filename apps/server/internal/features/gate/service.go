@@ -21,6 +21,8 @@ type Deps struct {
 	Tariffs tariffs.Current               // version captured at entry (M2C-2)
 	Holds   availability.ReservationHolds // spaces held for reservations
 	Audit   audit.Recorder
+	// Reservations answers reservation QRs (design 11.1).
+	Reservations Reservations
 	// CardPepper keys HashCardUID (M2C-26).
 	CardPepper []byte
 	// Rand is crypto/rand.Reader in production: ticket codes are secrets.
@@ -29,14 +31,15 @@ type Deps struct {
 
 // Service is the gate use cases behind the device API.
 type Service struct {
-	repo       Repo
-	clock      clock.Clock
-	log        *slog.Logger
-	tariffs    tariffs.Current
-	holds      availability.ReservationHolds
-	audit      audit.Recorder
-	cardPepper []byte
-	rand       io.Reader
+	repo         Repo
+	clock        clock.Clock
+	log          *slog.Logger
+	tariffs      tariffs.Current
+	holds        availability.ReservationHolds
+	audit        audit.Recorder
+	reservations Reservations
+	cardPepper   []byte
+	rand         io.Reader
 }
 
 var _ Handler = (*Service)(nil)
@@ -45,7 +48,7 @@ var _ Handler = (*Service)(nil)
 func NewService(d Deps) *Service {
 	return &Service{
 		repo: d.Repo, clock: d.Clock, log: d.Log, tariffs: d.Tariffs, holds: d.Holds,
-		audit: d.Audit, cardPepper: d.CardPepper, rand: d.Rand,
+		audit: d.Audit, reservations: d.Reservations, cardPepper: d.CardPepper, rand: d.Rand,
 	}
 }
 

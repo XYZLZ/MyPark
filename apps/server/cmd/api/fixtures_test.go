@@ -221,18 +221,20 @@ func (e *apiEnv) mint(s userSpec) principal {
 // owned vehicle and token variants. Every route gets a fresh one, so a
 // destructive request (logout, delete) never disturbs the next.
 type fixture struct {
-	env       *apiEnv
-	owner     principal // active driver, owns vehicleID
-	other     principal // active driver who owns nothing here
-	admin     principal
-	pending   principal // active driver who owes a legal re-acceptance
-	suspended principal
-	revoked   principal // driver whose session is revoked
-	vehicleID uuid.UUID
-	tampered  string // owner token with a corrupted signature
-	expired   string // owner token past its expiry
-	algNone   string // owner claims, "alg":"none", no signature
-	uniq      int64
+	env           *apiEnv
+	owner         principal // active driver, owns vehicleID
+	other         principal // active driver who owns nothing here
+	admin         principal
+	pending       principal // active driver who owes a legal re-acceptance
+	suspended     principal
+	revoked       principal // driver whose session is revoked
+	vehicleID     uuid.UUID
+	reservationID uuid.UUID // the owner's confirmed reservation, when seeded
+	paymentID     uuid.UUID // the owner's succeeded fee payment, when seeded
+	tampered      string    // owner token with a corrupted signature
+	expired       string    // owner token past its expiry
+	algNone       string    // owner claims, "alg":"none", no signature
+	uniq          int64
 }
 
 func (e *apiEnv) newFixture() *fixture {

@@ -23,7 +23,7 @@ func TestArrivalsPerHour_Table(t *testing.T) {
 		{ScenarioWeekendPeak, 19, 50}, {ScenarioWeekendPeak, 20, 15}, {ScenarioWeekendPeak, 23, 15},
 		{ScenarioSensorDrift, 8, 60}, // as weekday
 		{ScenarioFillToFull, 0, 600}, {ScenarioFillToFull, 13, 600}, {ScenarioFillToFull, 23, 600},
-		{ScenarioIdle, 8, 0}, {ScenarioReservationArrivals, 8, 0}, {ScenarioNoShow, 8, 0},
+		{ScenarioIdle, 8, 0}, {ScenarioReservationArrivals, 8, 60}, {ScenarioNoShow, 8, 60}, // drive-up traffic as weekday
 	}
 	for _, c := range cases {
 		if got := ArrivalsPerHour(c.s, c.hour); got != c.want {
@@ -83,5 +83,24 @@ func TestNextArrival_CrossesHourBoundaries(t *testing.T) {
 	}
 	if before > 30 || after < 100 {
 		t.Errorf("arrivals before 07:00 = %d, 07:00-14:00 = %d", before, after)
+	}
+}
+
+func TestScenarios_ReservedRates(t *testing.T) {
+	for s, want := range map[Scenario]float64{
+		ScenarioReservationArrivals: 8, ScenarioNoShow: 4, ScenarioWeekday: 0, ScenarioIdle: 0, ScenarioFillToFull: 0,
+	} {
+		if got := ReservedPerHour(s); got != want {
+			t.Errorf("ReservedPerHour(%s) = %v, want %v", s, got, want)
+		}
+	}
+	// Poisson sanity: about 8 arrivals in an hour on average.
+	r := rand.New(rand.NewPCG(7, 7))
+	n, at, end := 0, monday7, monday7.Add(100*time.Hour)
+	for at = nextReserved(r, ScenarioReservationArrivals, at); at.Before(end); at = nextReserved(r, ScenarioReservationArrivals, at) {
+		n++
+	}
+	if per := float64(n) / 100; per < 7 || per > 9 {
+		t.Errorf("%.2f reserved cars per hour, want about 8", per)
 	}
 }

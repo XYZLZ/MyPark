@@ -38,6 +38,7 @@ func TestLoad_RateLimitPepper(t *testing.T) {
 	prod := map[string]string{
 		"DATABASE_URL": "postgres://x", "APP_ENV": "production", "JWT_SIGNING_KEY": other, "AUTH_CODE_PEPPER": other,
 		"SECRETBOX_KEY": other, "CARD_UID_PEPPER": other, "RATE_LIMIT_PEPPER": config.DevRateLimitPepper,
+		"QR_HMAC_KEY": other, "PAYMENT_GATEWAY": "simulated",
 	}
 	_, err = config.Load(env(prod))
 	if err == nil || !strings.Contains(err.Error(), "RATE_LIMIT_PEPPER must not be the development default") {

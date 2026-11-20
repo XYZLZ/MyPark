@@ -4,14 +4,14 @@ Real-time parking availability and reservations for the Banreservas Zona Colonia
 Monorepo: Go API + worker + simulator (`apps/server`), Next.js web (`apps/web`), Expo mobile
 (`apps/mobile`), shared contracts (`packages/contracts`), compose in `deploy/compose`.
 
-## Where we are (2026-11-16)
+## Where we are (2026-11-18)
 
 | Milestone | Theme | Status |
 |---|---|---|
 | M0 | Foundations | Done |
 | M1 | Auth + vehicles (backend + clients) | Done, on `main` |
 | M2 | Live availability, gates, simulator, console | Done, on `main` (`3db159e`) |
-| M3 | Reservations + payments | **Next** — no design or plan yet |
+| M3 | Reservations + payments | Track A (backend) done on `feat/m3-backend`, **not merged**. Track B (clients) **next**. Design: `docs/superpowers/specs/2026-11-16-m3-backend-reservations-payments-design.md`; plan: `docs/superpowers/plans/2026-11-16-m3-backend-reservations-payments.md` |
 | M4 | Admin + analytics + tariff config | Not started |
 | M5 | Hardening + demo | Not started |
 
@@ -26,6 +26,22 @@ Dates and scope per milestone: `docs/spec.md` §8.
   360 dp, 200% zoom, Hermes `expo/fetch` streaming).
 - Known limits and deferred minors: `docs/spec.md` §10.2 item 41.
 - Compose changed the API CORS default (Track A block) — mention it to the backend owner.
+
+### M3 leftovers (human or follow-up)
+
+- Both developers approve the contract changes made after the S1 handoff (policies §2.2): `SimulatorEvent` gained optional `credential` and `credential_ref`; `VALIDATION_RULES` gained `luhn`, `number`, `card_expiry`, `cursor`, `numeric` and `idempotency_key`.
+- Final whole-branch review of `feat/m3-backend` is done and its fix wave is merged into the branch. The user decides on merge or push.
+- Product decision: account deletion has no guard for active reservations, pending fees or queued refunds. M3 only skips the emails of a deleted account so money changes still commit. Decide whether deletion is blocked or cancels and refunds first.
+- Final-review follow-ups (not fixed): the reminder job re-reads a deleted owner's reservation every tick for 30 minutes; a transient `apply_failed` alert stays open after a later success; a gateway *failed* outcome whose apply keeps failing is not moved to the back of the reconcile batch; no index on alerts `details->>'payment_id'`.
+- Track B (web + mobile): reservation screens, pay form with the three test cards, the decline (`402`) and timeout (`202` poll) paths, QR screen, receipts. Add the m3 zod schemas over the S1 fixtures.
+- Live `no_show` takes up to 25 real minutes (design R1); the demo uses a CI run or starts it first.
+- M4 hooks: lot closure (FR-RES-15, `facility_closed`), the reconciliation job and views, admin refund and cancel override. The admin refund also settles late-charge alerts (`refund_failed`, `details.reason` `duplicate_charge`, `orphan_charge`, `gateway_inconsistent`). The admin tariff and policy forms must validate `max_active_per_user = 1`, `slot_min = 5` and a reservation fee above zero (M3B-48, M3B-49).
+- Accepted, not fixed (spec §10.2 #43): the no-show block is read unlocked in create; the pay key fingerprint excludes the full card number; NFR-TEST-1 is measured as statement coverage (at least 90%).
+- **Two CI-equivalent checks fail on this branch and will fail the PR; the user must decide before merge.** Neither comes from M3: `git diff main -- apps/mobile/package.json package.json package-lock.json` is empty.
+    - `npx expo install --check` wants expo ~58.0.26, expo-router ~58.0.32 and jest-expo ~58.0.15 (upstream patch releases).
+    - `npm audit --omit=dev --audit-level=high` reports GHSA-fc5q-39xc-vjpf (picomatch ReDoS) through the jest chain. `npm audit fix --force` would be a breaking downgrade (expo 52, jest 29), so it was not applied.
+- Deploy: worker before API (an old worker voids reservation stays without restoring the hold). `SEED_SIMULATOR_DRIVERS` must be `false` in production.
+- Phase 2: a real gateway adapter must guarantee one refund per charge across refund keys, and needs a timeout-to-alert rule for payments stuck `pending`.
 
 ## Key docs (read before designing)
 

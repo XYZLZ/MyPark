@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="es-DO">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#ffffff;font:16px/1.5 Arial,Helvetica,sans-serif;color:#111827">
+{{template "brand_header"}}
+<div style="padding:24px">
+<p>Hola{{with .first_name}} {{.}}{{end}},</p>
+<p>No llegaste durante el horario de tu reserva, por lo que la reserva expiró. El costo de la reserva no es reembolsable.</p>
+{{if .blocked_until}}<p>Por haber perdido varias reservas, no podrás hacer una nueva hasta el {{.blocked_until}}.</p>
+{{end}}{{template "brand_footer"}}
+</div>
+</body>
+</html>

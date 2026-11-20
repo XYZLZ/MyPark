@@ -217,6 +217,50 @@ func TestWorkerJobs_IncludeVoid(t *testing.T) {
 	}
 }
 
+// TestWorkerJobs_VoidRunsBoth checks the void job body voids a stale ticket
+// stay through the M2 batch and a stale reservation stay through the
+// reservation voider (M3B-60), in one tick.
+func TestWorkerJobs_VoidRunsBoth(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lotID := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	now := clk.Now()
+	drivers := testsupport.SeedDrivers(t, db, 1)
+	testsupport.SeedReservations(t, db, lotID, drivers, now.Add(-5*time.Minute), now.Add(-15*time.Minute), now.Add(15*time.Minute), now)
+	if _, err := db.App.Exec(t.Context(),
+		`with r as (update reservations set status = 'checked_in', confirmed_at = $2, qr_nonce = '\x00000000000000000000000000000000',
+		                                    checked_in_at = $2, updated_at = $2
+		            returning id, tariff_version_id)
+		 insert into stays (lot_id, credential_kind, ticket_code_hash, reservation_id, status, tariff_version_id, accepted_at, updated_at)
+		 select $1::bigint, 'reservation', null, r.id, 'entry_pending', r.tariff_version_id, $2::timestamptz, $2::timestamptz from r
+		 union all
+		 select $1, 'ticket', sha256('t'::bytea), null, 'entry_pending', r.tariff_version_id, $2, $2 from r`,
+		lotID, now.Add(-61*time.Second)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "void_unpassed_entries" {
+			job = &list[i]
+		}
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var voided, confirmed int
+	if err := db.App.QueryRow(t.Context(),
+		`select (select count(*) from stays where status = 'voided' and voided_at = $1),
+		        (select count(*) from reservations where status = 'confirmed' and checked_in_at is null)`, now).Scan(&voided, &confirmed); err != nil {
+		t.Fatal(err)
+	}
+	if voided != 2 || confirmed != 1 {
+		t.Fatalf("voided = %d, confirmed = %d; want both stays voided and the reservation confirmed", voided, confirmed)
+	}
+	testsupport.AssertOccupancyInvariant(t, db.App, lotID)
+	testsupport.AssertSlotInvariant(t, db.App, lotID)
+}
+
 // TestWorkerJobs_IncludePurge checks device_events_purge runs daily and its
 // body deletes what is past retention in batches of 5000 (12 001 rows take
 // three calls) while it keeps the recent rows.
@@ -267,5 +311,143 @@ func TestWorkerJobs_IncludePurge(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "12001") {
 		t.Errorf("the job did not log the deleted count 12001: %s", logs.String())
+	}
+}
+
+// TestWorkerJobs_IncludeReconcile checks payment_reconcile runs every 15 s and
+// its body settles a fee attempt the gateway never saw (not_submitted).
+func TestWorkerJobs_IncludeReconcile(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lot := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 12, 1, 13, 58, 10, 0, time.UTC))
+	drivers := testsupport.SeedDrivers(t, db, 1)
+	arrival := clk.Now().Add(2 * time.Hour)
+	testsupport.SeedReservations(t, db, lot, drivers, arrival, arrival.Add(-15*time.Minute), arrival.Add(20*time.Minute), clk.Now())
+	var rsv int64
+	if err := db.App.QueryRow(t.Context(), `select id from reservations where user_id = $1`, drivers[0].UserID).Scan(&rsv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.App.Exec(t.Context(),
+		`insert into payments (kind, method, amount_cents, status, idempotency_key, reservation_id, user_id,
+		                       client_key, request_fingerprint, card_brand, card_last4, created_at)
+		 values ('reservation_fee', 'gateway_sim', 15000, 'pending', 'rsv-fee:worker-test', $1, $2,
+		         'key-worker-0001', $3, 'visa', '4242', $4)`,
+		rsv, drivers[0].UserID, make([]byte, 32), clk.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("seed pending fee: %v", err)
+	}
+
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "payment_reconcile" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != 15*time.Second {
+		t.Fatalf("payment_reconcile job = %+v, want one running every 15 s", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	var n int
+	if err := db.App.QueryRow(t.Context(),
+		`select count(*) from payments where idempotency_key = 'rsv-fee:worker-test' and status = 'failed'
+		 and failure_code = 'not_submitted' and failed_at = $1`, clk.Now()).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("settled payments = %d, %v; want the unseen attempt failed as not_submitted", n, err)
+	}
+}
+
+// TestWorkerJobs_IncludeRefunds checks refund_processing runs every 10 s and
+// its body settles a due refund at the job clock.
+func TestWorkerJobs_IncludeRefunds(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	clk := testsupport.NewFakeClock(time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC))
+	var job *jobs.Job
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		if list[i].Name == "refund_processing" {
+			job = &list[i]
+		}
+	}
+	if job == nil || job.Every != 10*time.Second {
+		t.Fatalf("refund_processing job = %+v, want one running every 10 s", job)
+	}
+	if err := job.Run(t.Context()); err != nil {
+		t.Fatalf("job on an empty queue: %v", err)
+	}
+}
+
+// TestWorkerJobs_IncludeExpiry checks both reservation expiry jobs run every
+// 30 s, that the unpaid one acts at the job clock, and that the pool size
+// stays at M3B-51's target.
+func TestWorkerJobs_IncludeExpiry(t *testing.T) {
+	if maxConns != 8 {
+		t.Errorf("maxConns = %d, want 8", maxConns)
+	}
+	db := testsupport.NewTestDB(t)
+	lot := testsupport.SeedPilotLot(t, db)
+	now := time.Date(2026, 12, 1, 13, 0, 0, 0, time.UTC)
+	clk := testsupport.NewFakeClock(now)
+	d := testsupport.SeedDrivers(t, db, 1)
+	arrival := now.Add(2 * time.Hour)
+	testsupport.SeedReservations(t, db, lot, d, arrival, arrival.Add(-15*time.Minute), arrival.Add(20*time.Minute), now)
+	testsupport.HoldSlots(t, db, lot, arrival.Add(-15*time.Minute), arrival.Add(20*time.Minute), 1)
+
+	found := map[string]*jobs.Job{}
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		found[list[i].Name] = &list[i]
+	}
+	for _, name := range []string{"expire_unpaid_reservations", "expire_no_shows"} {
+		if found[name] == nil || found[name].Every != 30*time.Second {
+			t.Fatalf("%s job = %+v, want one running every 30 s", name, found[name])
+		}
+	}
+	clk.Set(now.Add(11 * time.Minute)) // payment_due_at is now + 10 min
+	for _, name := range []string{"expire_no_shows", "expire_unpaid_reservations"} {
+		if err := found[name].Run(t.Context()); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	var status string
+	if err := db.App.QueryRow(t.Context(), `select status from reservations`).Scan(&status); err != nil || status != "expired_unpaid" {
+		t.Fatalf("status = %q, %v; want expired_unpaid", status, err)
+	}
+	testsupport.AssertSlotInvariant(t, db.App, lot)
+}
+
+// TestWorkerJobs_IncludeBoundaryAndReminders checks the hold boundary job runs
+// every 30 s and notifies on its first tick, and the reminder job every minute.
+func TestWorkerJobs_IncludeBoundaryAndReminders(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	lot := testsupport.SeedPilotLot(t, db)
+	clk := testsupport.NewFakeClock(time.Date(2026, 12, 1, 13, 0, 0, 0, time.UTC))
+	found := map[string]*jobs.Job{}
+	list := workerJobs(db.App, config.WorkerConfig{}, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range list {
+		found[list[i].Name] = &list[i]
+	}
+	for name, every := range map[string]time.Duration{"hold_boundary_notify": 30 * time.Second, "reservation_reminders": time.Minute} {
+		if found[name] == nil || found[name].Every != every {
+			t.Fatalf("%s job = %+v, want one running every %s", name, found[name], every)
+		}
+	}
+	version := func() (v int64) {
+		if err := db.App.QueryRow(t.Context(), `select version from lot_occupancy where lot_id = $1`, lot).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before := version()
+	for range 2 {
+		if err := found["hold_boundary_notify"].Run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := version(); got != before+1 {
+		t.Errorf("version = %d, want %d (the first tick bumps, the second finds nothing changed)", got, before+1)
+	}
+	if err := found["reservation_reminders"].Run(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }

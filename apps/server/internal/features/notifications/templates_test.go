@@ -81,3 +81,125 @@ func TestBackoff_Schedule(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplates_ReservationConfirmedRenders(t *testing.T) {
+	const token = "SECRET-QR-TOKEN-0123456789"
+	data := map[string]string{
+		"reservation_id": "0198f5a0-0000-7000-8000-000000000001", "arrival_at": "2026-12-01 11:02",
+		"window": "2026-12-01 10:50 - 2026-12-01 11:25", "plate_display": "A123456", "fee_cents": "15000",
+		"qr_token": token,
+	}
+	for _, locale := range []string{"es-DO", "en"} {
+		t.Run(locale, func(t *testing.T) {
+			subject, text, html, err := notifications.Render(notifications.TplReservationConfirmed, locale, data)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if strings.TrimSpace(subject) == "" || strings.ContainsAny(subject, "\r\n") {
+				t.Errorf("subject = %q, want one non-empty line", subject)
+			}
+			for _, want := range []string{"2026-12-01 11:02", "2026-12-01 10:50 - 2026-12-01 11:25", "A123456", brandLine} {
+				if !strings.Contains(text, want) || !strings.Contains(html, want) {
+					t.Errorf("%q missing (text %t, html %t)", want, strings.Contains(text, want), strings.Contains(html, want))
+				}
+			}
+			if !strings.Contains(html, `src="cid:qr"`) {
+				t.Errorf("html lacks the inline image reference: %s", html)
+			}
+			for name, body := range map[string]string{"subject": subject, "text": text, "html": html} {
+				if strings.Contains(body, token) {
+					t.Errorf("%s contains the QR token", name)
+				}
+			}
+		})
+	}
+	es, _, _, _ := notifications.Render(notifications.TplReservationConfirmed, "es-DO", data)
+	en, _, _, _ := notifications.Render(notifications.TplReservationConfirmed, "en", data)
+	if es == en {
+		t.Error("the two locales must have different subjects")
+	}
+}
+
+func TestTemplates_ReservationCancelled(t *testing.T) {
+	for _, locale := range []string{"es-DO", "en"} {
+		pending := map[string]string{"refund_status": "pending", "refund_reason": "cancelled_before_arrival", "fee_cents": "15000"}
+		none := map[string]string{"refund_status": "none", "refund_reason": "none_after_arrival", "fee_cents": "15000"}
+		sp, tp, hp, err := notifications.Render(notifications.TplReservationCancelled, locale, pending)
+		if err != nil {
+			t.Fatalf("%s pending: %v", locale, err)
+		}
+		sn, tn, hn, err := notifications.Render(notifications.TplReservationCancelled, locale, none)
+		if err != nil {
+			t.Fatalf("%s none: %v", locale, err)
+		}
+		if sp == "" || sn == "" || tp == tn || hp == hn {
+			t.Errorf("%s: the refund wording must differ by refund_status (subject %q/%q)", locale, sp, sn)
+		}
+		for _, s := range []string{tp, hp, tn, hn} {
+			if !strings.Contains(s, brandLine) {
+				t.Errorf("%s: brand line missing", locale)
+			}
+		}
+	}
+}
+
+func TestTemplates_RefundSucceeded(t *testing.T) {
+	data := map[string]string{"reservation_id": "r", "amount_cents": "15000", "amount_display": "RD$150.00"}
+	subjects := map[string]string{}
+	for _, locale := range []string{"es-DO", "en"} {
+		subject, text, html, err := notifications.Render(notifications.TplRefundSucceeded, locale, data)
+		if err != nil {
+			t.Fatalf("%s: %v", locale, err)
+		}
+		subjects[locale] = subject
+		for _, body := range []string{text, html} {
+			if !strings.Contains(body, "RD$150.00") || !strings.Contains(body, brandLine) {
+				t.Errorf("%s: amount or brand line missing: %s", locale, body)
+			}
+		}
+	}
+	if subjects["es-DO"] == subjects["en"] || subjects["en"] == "" {
+		t.Errorf("subjects = %v, want one per locale", subjects)
+	}
+}
+
+func TestTemplates_ReservationNoShow(t *testing.T) {
+	for _, locale := range []string{"es-DO", "en"} {
+		subject, plain, html, err := notifications.Render(notifications.TplReservationNoShow, locale, map[string]string{"blocked_until": "2026-12-08 11:00"})
+		if err != nil || subject == "" {
+			t.Fatalf("%s: %q, %v", locale, subject, err)
+		}
+		_, plainNoBlock, htmlNoBlock, err := notifications.Render(notifications.TplReservationNoShow, locale, map[string]string{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, c := range map[string][2]string{"text": {plain, plainNoBlock}, "html": {html, htmlNoBlock}} {
+			if !strings.Contains(c[0], "2026-12-08 11:00") || strings.Contains(c[1], "2026-12-08") || c[0] == c[1] {
+				t.Errorf("%s %s: blocked_until must show only when set", locale, name)
+			}
+			if !strings.Contains(c[0], brandLine) {
+				t.Errorf("%s %s: brand line missing", locale, name)
+			}
+		}
+	}
+}
+
+func TestTemplates_ReservationReminder(t *testing.T) {
+	data := map[string]string{"arrival_at": "2026-12-01 13:00", "window": "2026-12-01 12:45 - 2026-12-01 13:20"}
+	subjects := map[string]string{}
+	for _, locale := range []string{"es-DO", "en"} {
+		subject, plain, html, err := notifications.Render(notifications.TplReservationReminder, locale, data)
+		if err != nil || subject == "" {
+			t.Fatalf("%s: %q, %v", locale, subject, err)
+		}
+		subjects[locale] = subject
+		for name, body := range map[string]string{"text": plain, "html": html} {
+			if !strings.Contains(body, "2026-12-01 13:00") || !strings.Contains(body, "12:45") || !strings.Contains(body, brandLine) {
+				t.Errorf("%s %s: arrival, window or brand line missing: %s", locale, name, body)
+			}
+		}
+	}
+	if subjects["es-DO"] == subjects["en"] {
+		t.Errorf("subjects = %v, want one per locale", subjects)
+	}
+}

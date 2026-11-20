@@ -103,7 +103,7 @@ func (q *Queries) EnqueueOutboxEmail(ctx context.Context, arg EnqueueOutboxEmail
 
 const markOutboxDead = `-- name: MarkOutboxDead :execrows
 update outbox_messages
-set status = 'dead', last_error = $1, payload = payload - 'code'
+set status = 'dead', last_error = $1, payload = payload - 'code' - 'qr_token'
 where id = $2 and status = 'sending' and attempts = $3
 `
 
@@ -149,7 +149,7 @@ func (q *Queries) MarkOutboxRetry(ctx context.Context, arg MarkOutboxRetryParams
 
 const markOutboxSent = `-- name: MarkOutboxSent :execrows
 update outbox_messages
-set status = 'sent', sent_at = $1, last_error = null, payload = payload - 'code'
+set status = 'sent', sent_at = $1, last_error = null, payload = payload - 'code' - 'qr_token'
 where id = $2 and status = 'sending' and attempts = $3
 `
 
@@ -185,10 +185,10 @@ func (q *Queries) PurgeOutbox(ctx context.Context, cutoff pgtype.Timestamptz) (i
 
 const scrubPendingOutboxCodesForUser = `-- name: ScrubPendingOutboxCodesForUser :exec
 update outbox_messages
-set payload = payload - 'code'
+set payload = payload - 'code' - 'qr_token'
 where user_id = $1
   and status in ('pending', 'sending')
-  and payload ? 'code'
+  and payload ?| array['code', 'qr_token']
 `
 
 func (q *Queries) ScrubPendingOutboxCodesForUser(ctx context.Context, userID pgtype.Int8) error {

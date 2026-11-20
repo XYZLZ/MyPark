@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/XYZLZ/MyPark/apps/server/internal/simulator"
 )
 
 // The simulator control operations in openapi.yaml (path-level
@@ -69,5 +71,40 @@ func TestOpenAPI_CoversSimulatorRoutes(t *testing.T) {
 	}
 	if len(served) != 7 {
 		t.Errorf("%d control routes, want the 7 of design §13.3", len(served))
+	}
+}
+
+// The InjectCarRequest schema matches the simulator's own injectRequest: the
+// same credential kinds, and the qr pattern the handler enforces.
+func TestSimulatorOpenAPI_InjectCarParity(t *testing.T) {
+	raw, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas struct {
+				Inject struct {
+					Properties struct {
+						Credential struct {
+							Enum []string `yaml:"enum"`
+						} `yaml:"credential"`
+						QR struct {
+							Pattern string `yaml:"pattern"`
+						} `yaml:"qr"`
+					} `yaml:"properties"`
+				} `yaml:"InjectCarRequest"`
+			} `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse openapi.yaml: %v", err)
+	}
+	props := doc.Components.Schemas.Inject.Properties
+	if got, want := slices.Sorted(slices.Values(props.Credential.Enum)), slices.Sorted(slices.Values(simulator.InjectCredentials())); !slices.Equal(got, want) {
+		t.Errorf("credential enum = %v, injectRequest accepts %v", got, want)
+	}
+	if props.QR.Pattern != simulator.QRPattern() {
+		t.Errorf("qr pattern = %q, handler enforces %q", props.QR.Pattern, simulator.QRPattern())
 	}
 }

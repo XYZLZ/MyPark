@@ -26,6 +26,9 @@ export const simulatorEventSchema = z.strictObject({
   result: z.string(),
   reason: z.string().optional(),
   car_id: z.string().optional(),
+  /** Only on reservation QR cars: the kind, and sha256:<12 hex> of the token (never the token). */
+  credential: z.literal('reservation_qr').optional(),
+  credential_ref: z.string().optional(),
 });
 
 export const injectCarResultSchema = z.strictObject({ car_id: z.string().regex(CAR_ID_PATTERN) });

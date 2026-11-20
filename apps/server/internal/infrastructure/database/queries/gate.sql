@@ -31,10 +31,11 @@ values (@lot_id, @card_uid_hash, @holder_name, @employee_code, @status, sqlc.nar
 on conflict (card_uid_hash) do nothing;
 
 -- name: InsertStay :one
--- Every business timestamp is the server clock (§8.4).
-insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, status,
+-- Every business timestamp is the server clock (§8.4). reservation_id is set
+-- exactly for a reservation stay (stays_reservation_id_check).
+insert into stays (lot_id, credential_kind, ticket_code_hash, employee_card_id, reservation_id, status,
                    tariff_version_id, accepted_at, entered_at, updated_at)
-values (@lot_id, @credential_kind, sqlc.narg(ticket_code_hash), sqlc.narg(employee_card_id), @status,
+values (@lot_id, @credential_kind, sqlc.narg(ticket_code_hash), sqlc.narg(employee_card_id), sqlc.narg(reservation_id), @status,
         @tariff_version_id, sqlc.arg(now)::timestamptz, sqlc.narg(entered_at), sqlc.arg(now)::timestamptz)
 returning id, public_id;
 
@@ -54,8 +55,8 @@ for update;
 -- Lot scoping is the caller's: stay_id must come from a lot-scoped FOR UPDATE
 -- lookup (GetStayForUpdate and friends, design §8.2); the insert does not
 -- re-check the lot. A succeeded or refunded payment needs succeeded_at.
-insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, created_at, succeeded_at)
-values (@kind, @stay_id, @method, @amount_cents, @status, @idempotency_key, sqlc.narg(device_id),
+insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, device_id, user_id, created_at, succeeded_at)
+values (@kind, @stay_id, @method, @amount_cents, @status, @idempotency_key, sqlc.narg(device_id), sqlc.narg(user_id),
         sqlc.arg(now)::timestamptz, sqlc.narg(succeeded_at))
 returning id;
 
@@ -106,11 +107,13 @@ select pg_notify('lot_changed', sqlc.arg(lot_id)::bigint || ':' || sqlc.arg(vers
 -- name: VoidUnpassed :execrows
 -- Entries not passed within 60 s stop holding a space (M2C-30, design
 -- §12.5). Batches of 200; occupancy is untouched, so nothing is notified.
+-- Reservation stays are voided one by one with their reservation (M3B-60).
 update stays
 set status = 'voided', voided_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
 where id in (
     select id from stays
     where status = 'entry_pending' and accepted_at < sqlc.arg(now)::timestamptz - interval '60 seconds'
+      and credential_kind <> 'reservation'
     order by accepted_at
     limit 200
     for update skip locked
@@ -172,3 +175,56 @@ where lot_id = @lot_id and id = @id and status in ('active', 'paid');
 update stays
 set exit_authorized_at = null, updated_at = sqlc.arg(now)::timestamptz
 where lot_id = @lot_id and id = @id and status in ('active', 'paid');
+
+-- name: GetReservationStay :one
+-- The reservation's one stay (stays_reservation_key), unlocked: the QR entry
+-- decides from it under the lot and reservation locks, and locks it only
+-- after the slot loads (design 8.1). Lot-scoped (M2C-21).
+select sqlc.embed(s), r.user_id as reservation_user_id
+from stays s
+join reservations r on r.id = s.reservation_id
+where s.lot_id = @lot_id and s.reservation_id = @reservation_id;
+
+-- name: GetReservationStayForUpdate :one
+select sqlc.embed(s), r.user_id as reservation_user_id
+from stays s
+join reservations r on r.id = s.reservation_id
+where s.lot_id = @lot_id and s.reservation_id = @reservation_id
+for update of s;
+
+-- name: ReopenReservationStay :execrows
+-- A reservation QR re-presented after the void (M3B-24, M3B-60): the voided
+-- reservation stay is reused. voided_at is kept.
+update stays
+set status = 'entry_pending', accepted_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and credential_kind = 'reservation' and status = 'voided';
+
+-- name: RefreshStayAccepted :execrows
+-- A reservation QR re-presented while its stay waits for the barrier pass
+-- (M3B-24): the 60 s pending window starts again.
+update stays
+set accepted_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status = 'entry_pending';
+
+-- name: ReservationStaysToVoid :many
+-- Unlocked candidates of the reservation void (design 12.7 step 1); each is
+-- re-checked under its locks.
+select id, lot_id, reservation_id::bigint as reservation_id from stays
+where credential_kind = 'reservation' and status = 'entry_pending'
+  and accepted_at < sqlc.arg(now)::timestamptz - interval '60 seconds'
+order by accepted_at
+limit 200;
+
+-- name: GetReservationUserID :one
+-- The owner of a reservation stay's reservation, read without a lock: the
+-- user never changes (M3B-27 attributes the stay's payments to it).
+select user_id from reservations where id = @id;
+
+-- name: GetStayForUpdateByID :one
+select * from stays where lot_id = @lot_id and id = @id for update;
+
+-- name: VoidStay :execrows
+-- The reservation void (M3B-60): one locked entry_pending stay.
+update stays
+set status = 'voided', voided_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)::timestamptz
+where lot_id = @lot_id and id = @id and status = 'entry_pending';

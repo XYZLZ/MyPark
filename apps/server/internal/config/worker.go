@@ -36,6 +36,8 @@ type WorkerConfig struct {
 	smtpUsername secret.String
 	smtpPassword secret.String
 	smtpStartTLS bool
+
+	paymentSettings
 }
 
 // DatabaseURL returns the Postgres URL. It holds credentials: never log it.
@@ -78,10 +80,12 @@ func (c WorkerConfig) LogValue() slog.Value {
 		slog.Int("smtp_port", c.smtpPort),
 		slog.Bool("smtp_auth", c.smtpUsername != ""),
 		slog.Bool("smtp_starttls", c.smtpStartTLS),
+		slog.Group("payments", c.logAttrs()...),
 	)
 }
 
-// LoadWorker builds a WorkerConfig using getenv. DATABASE_URL, SMTP_HOST,
+// LoadWorker builds a WorkerConfig using getenv. APP_ENV only decides the
+// production rules of the payment settings. DATABASE_URL, SMTP_HOST,
 // SMTP_PORT and SMTP_FROM are required (compose supplies mailpit, 1025 and
 // "MyPark <no-reply@mypark.local>"). Every problem is reported at once, naming
 // the variable and never echoing a value.
@@ -133,6 +137,10 @@ func LoadWorker(getenv func(string) string) (WorkerConfig, error) {
 		}
 		c.smtpStartTLS = b
 	}
+
+	pay, payErrs := loadPaymentSettings(getenv, strings.TrimSpace(getenv(EnvAppEnv)) == "production")
+	errs = append(errs, payErrs...)
+	c.paymentSettings = pay
 
 	if err := errors.Join(errs...); err != nil {
 		return WorkerConfig{}, fmt.Errorf("invalid configuration: %w", err)

@@ -209,8 +209,13 @@ func TestPaymentsSchema_SuccessTime(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), "select id from stays").Scan(&stayID); err != nil {
 		t.Fatal(err)
 	}
-	const ins = `insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, succeeded_at)
-		values ('parking_fee', $1, 'cash', 100, $2, $3, $4)`
+	// M3 added payments_refunded_check and payments_failed_check, so the status-specific
+	// timestamps are supplied here; the check under test is succeeded_at alone.
+	const ins = `insert into payments (kind, stay_id, method, amount_cents, status, idempotency_key, succeeded_at,
+		refunded_at, failed_at, failure_code)
+		values ('parking_fee', $1, 'cash', 100, $2, $3, $4,
+			case when $2 = 'refunded' then now() end, case when $2 = 'failed' then now() end,
+			case when $2 = 'failed' then 'card_declined' end)`
 	for _, status := range []string{"succeeded", "refunded"} {
 		e := pgError(t, f.pool, ins, stayID, status, "k-"+status, nil)
 		if e == nil || e.Code != sqlStateCheckViolation || e.ConstraintName != "payments_succeeded_at_check" {

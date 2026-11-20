@@ -121,6 +121,8 @@ func runWith(ctx context.Context, getenv func(string) string, stdout io.Writer, 
 		Log:         events,
 		Ctx:         ctx,
 		Spaces:      simulator.PublicSpaces(&http.Client{Timeout: spacesTimeout}, cfg.APIURL()),
+		Drivers:     driverAPI(cfg, log),
+		Logger:      log,
 	})
 	ready := &apiReadiness{hc: &http.Client{Timeout: probeTimeout}, url: cfg.APIURL() + "/readyz", clk: timers}
 
@@ -140,6 +142,32 @@ func runWith(ctx context.Context, getenv func(string) string, stdout io.Writer, 
 
 	srv := httpserver.New(cfg.Addr(), httpserver.NewHandler(log, mux, nil), log)
 	return httpserver.Serve(ctx, log, srv, serviceName, "version", version)
+}
+
+// driverAPI returns the runner's Drivers: a DriverClient for the first lot,
+// built on first use because the API may still be starting when the simulator
+// is. The lot id is read from GET /v1/lots, never configured.
+func driverAPI(cfg config.SimulatorConfig, log *slog.Logger) func(context.Context) (simulator.DriverAPI, error) {
+	var (
+		mu     sync.Mutex
+		client *simulator.DriverClient
+	)
+	return func(ctx context.Context) (simulator.DriverAPI, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if client != nil {
+			return client, nil
+		}
+		hc := &http.Client{Timeout: spacesTimeout}
+		lot, err := simulator.PublicLotID(ctx, hc, cfg.APIURL())
+		if err != nil {
+			return nil, err
+		}
+		client = simulator.NewDriverClient(simulator.DriverClientConfig{
+			BaseURL: cfg.APIURL(), Fleet: cfg.FleetSecret(), Clock: clock.System{}, LotID: lot, Log: log,
+		})
+		return client, nil
+	}
 }
 
 // apiReadiness tracks when the API's /readyz last answered 200.

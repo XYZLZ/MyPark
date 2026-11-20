@@ -1,0 +1,8 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+El costo de la reserva, {{.amount_display}}, fue reembolsado por completo a la tarjeta con la que pagaste. El banco puede tardar unos días en mostrarlo.
+
+Recibes este mensaje porque tu reserva en MyPark no se llevó a cabo, por lo que se te devolvió su costo.
+
+-- 
+{{template "brand"}}

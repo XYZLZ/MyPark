@@ -11,6 +11,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
 	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/hashing"
 	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
 )
 
@@ -215,4 +216,97 @@ func mustB64(t *testing.T, s string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func driversSeedEnv(dbURL string) map[string]string {
+	return map[string]string{
+		"DATABASE_URL": dbURL, "SEED_SIMULATOR_DRIVERS": "true",
+		"SIMULATOR_FLEET_SECRET": config.DevSimulatorFleetSecret,
+	}
+}
+
+func TestSeed_SimDriversIdempotent(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	env := driversSeedEnv(db.AppURL)
+	var out bytes.Buffer
+	for range 2 {
+		if err := run(t.Context(), func(k string) string { return env[k] }, &out); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if _, err := db.Super.Exec(t.Context(), "update users set status = 'suspended' where email = $1", devicefleet.SimDriverEmail(3)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var users, vehicles, accepted int
+	err := db.App.QueryRow(t.Context(), `select count(*), (select count(*) from vehicles),
+		count(*) filter (where terms_version is not null and privacy_version is not null)
+		from users where email like 'sim-driver-%@mypark.test'`).Scan(&users, &vehicles, &accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if users != 20 || vehicles != 20 || accepted != 20 {
+		t.Errorf("users=%d vehicles=%d legal accepted=%d, want 20 each", users, vehicles, accepted)
+	}
+	var status, hash string
+	if err := db.App.QueryRow(t.Context(), "select status, password_hash from users where email = $1", devicefleet.SimDriverEmail(3)).Scan(&status, &hash); err != nil {
+		t.Fatal(err)
+	}
+	if status != "suspended" {
+		t.Errorf("re-running the seed reset a change: status = %q", status)
+	}
+	pw := devicefleet.SimDriverPassword(secret.Bytes(mustB64(t, config.DevSimulatorFleetSecret)), devicefleet.SimDriverEmail(3)).Reveal()
+	ok, _, err := hashing.NewArgon2id(hashing.DefaultParams, 1).Verify(t.Context(), hash, pw)
+	if err != nil || !ok || strings.Contains(hash, pw) {
+		t.Errorf("stored hash does not verify the derived password (ok=%v err=%v)", ok, err)
+	}
+	if strings.Contains(out.String(), pw) || strings.Contains(out.String(), config.DevSimulatorFleetSecret) {
+		t.Errorf("seed output leaks the password or the fleet secret")
+	}
+}
+
+func TestSeed_SimDriversRefuseDevSecretInProduction(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	env := driversSeedEnv(db.AppURL)
+	env["APP_ENV"] = "production"
+	if err := run(t.Context(), func(k string) string { return env[k] }, io.Discard); err == nil {
+		t.Fatal("run accepted the dev fleet secret in production")
+	}
+}
+
+func TestSeed_SimDriversRefusedInProductionWithCustomSecret(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	env := driversSeedEnv(db.AppURL)
+	env["APP_ENV"] = "production"
+	env["SIMULATOR_FLEET_SECRET"] = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	if err := run(t.Context(), func(k string) string { return env[k] }, io.Discard); err == nil {
+		t.Fatal("run seeded simulated drivers in production")
+	}
+	var n int
+	if err := db.App.QueryRow(t.Context(), "select count(*) from users").Scan(&n); err != nil || n != 0 {
+		t.Errorf("users = %d, %v, want 0", n, err)
+	}
+}
+
+func TestSeed_SimDriverEmailHeldByAnAdminGetsNoVehicle(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	email := devicefleet.SimDriverEmail(5)
+	if _, err := db.Super.Exec(t.Context(), `insert into users (email, password_hash, first_name, last_name, role, status, locale, email_verified_at)
+		values ($1, 'x', 'Some', 'Admin', 'admin', 'active', 'en', now())`, email); err != nil {
+		t.Fatal(err)
+	}
+	env := driversSeedEnv(db.AppURL)
+	var out bytes.Buffer
+	if err := run(t.Context(), func(k string) string { return env[k] }, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var vehicles int
+	if err := db.App.QueryRow(t.Context(), "select count(*) from vehicles v join users u on u.id = v.user_id where u.email = $1", email).Scan(&vehicles); err != nil || vehicles != 0 {
+		t.Errorf("vehicles on the admin account = %d, %v, want 0", vehicles, err)
+	}
+	if err := db.App.QueryRow(t.Context(), "select count(*) from vehicles").Scan(&vehicles); err != nil || vehicles != 19 {
+		t.Errorf("vehicles = %d, %v, want 19", vehicles, err)
+	}
+	if !strings.Contains(out.String(), "not a driver") || strings.Contains(out.String(), email) {
+		t.Errorf("want a warning without the email, got %s", out.String())
+	}
 }

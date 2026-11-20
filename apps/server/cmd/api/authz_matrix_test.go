@@ -34,9 +34,71 @@ import (
 type matrixEntry struct {
 	build func(f *fixture) *http.Request
 	owned bool
+	// reservation seeds a confirmed reservation of the owner (f.reservationID)
+	// before the run; notFound is the code of the owned 404 (default: a vehicle).
+	reservation bool
+	// unpaid seeds the reservation as pending_payment (still payable) instead of confirmed.
+	unpaid bool
+	// payment seeds the reservation and a succeeded fee payment of the owner (f.paymentID).
+	payment  bool
+	notFound errcodes.Code
 }
 
 func vehiclePath(f *fixture) string { return "/v1/vehicles/" + f.vehicleID.String() }
+
+func reservationPath(f *fixture) string { return "/v1/reservations/" + f.reservationID.String() }
+
+func paymentPath(f *fixture) string { return "/v1/payments/" + f.paymentID.String() }
+
+// seedReservation gives the owner a confirmed reservation of its vehicle (or a
+// payable pending_payment one when unpaid), with the arrival an hour ahead,
+// straight into the database.
+func (f *fixture) seedReservation(unpaid bool) {
+	f.env.t.Helper()
+	lotID := testsupport.SeedPilotLot(f.env.t, f.env.db)
+	now := f.env.clk.Now()
+	err := f.env.db.Super.QueryRow(f.env.t.Context(),
+		`insert into reservations (user_id, vehicle_id, lot_id, arrival_at, hold_window, status, fee_cents,
+		                           tariff_version_id, policy_version_id, payment_due_at, created_at, updated_at,
+		                           confirmed_at, qr_nonce)
+		 select $1, v.id, $2, $3::timestamptz, tstzrange($3::timestamptz - interval '15 minutes', $3::timestamptz + interval '20 minutes', '[)'),
+		        case when $6 then 'pending_payment' else 'confirmed' end, 15000,
+		        (select id from tariff_versions where lot_id = $2 order by effective_from desc limit 1),
+		        (select id from policy_versions where lot_id = $2 order by effective_from desc limit 1),
+		        case when $6 then $4::timestamptz + interval '10 minutes' else $4::timestamptz end, $4::timestamptz, $4::timestamptz,
+		        case when $6 then null else $4::timestamptz end, case when $6 then null else decode(md5(random()::text), 'hex') end
+		 from vehicles v where v.public_id = $5
+		 returning public_id`,
+		f.owner.userID, lotID, now.Add(time.Hour), now, f.vehicleID, unpaid).Scan(&f.reservationID)
+	if err != nil {
+		f.env.t.Fatalf("seed fixture reservation: %v", err)
+	}
+}
+
+// holdSlots gives the seeded reservation its slot holds, as a created one has.
+func (f *fixture) holdSlots() {
+	f.env.t.Helper()
+	_, err := f.env.db.Super.Exec(f.env.t.Context(),
+		`insert into reservation_slot_loads (lot_id, slot_start, held)
+		 select r.lot_id, s, 1 from reservations r,
+		   generate_series(lower(r.hold_window), upper(r.hold_window) - interval '5 minutes', interval '5 minutes') s
+		 where r.public_id = $1
+		 on conflict (lot_id, slot_start) do update set held = 1`, f.reservationID)
+	if err != nil {
+		f.env.t.Fatalf("hold slots: %v", err)
+	}
+}
+
+// pilotLotPublicID seeds the pilot lot (idempotent) and returns its public id.
+func pilotLotPublicID(f *fixture) string {
+	f.env.t.Helper()
+	lotID := testsupport.SeedPilotLot(f.env.t, f.env.db)
+	var pub uuid.UUID
+	if err := f.env.db.App.QueryRow(f.env.t.Context(), "select public_id from lots where id = $1", lotID).Scan(&pub); err != nil {
+		f.env.t.Fatal(err)
+	}
+	return pub.String()
+}
 
 const streamPattern = "GET /v1/lots/{id}/availability/stream"
 
@@ -130,6 +192,49 @@ var matrix = map[string]matrixEntry{
 	"DELETE /v1/vehicles/{id}": {owned: true, build: func(f *fixture) *http.Request {
 		return jsonReq("DELETE", vehiclePath(f), nil)
 	}},
+
+	"POST /v1/reservations/quote": {build: func(f *fixture) *http.Request {
+		return jsonReq("POST", "/v1/reservations/quote", map[string]any{
+			"lot_id": pilotLotPublicID(f), "arrival_at": "2026-11-21T15:00:00Z",
+		})
+	}},
+	// The vehicle belongs to the owner: another driver's id is a 404 like a missing one.
+	"POST /v1/reservations": {owned: true, build: func(f *fixture) *http.Request {
+		return jsonReq("POST", "/v1/reservations", map[string]any{
+			"lot_id": pilotLotPublicID(f), "vehicle_id": f.vehicleID.String(), "arrival_at": "2026-11-21T15:00:00Z",
+		})
+	}},
+
+	"GET /v1/reservations": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/reservations", nil) }},
+	"GET /v1/reservations/{id}": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f), nil) }},
+	// The same vehicle is a no-op 200; another driver reaches the reservation lookup first.
+	"PATCH /v1/reservations/{id}": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request {
+			return jsonReq("PATCH", reservationPath(f), map[string]any{"vehicle_id": f.vehicleID.String()})
+		}},
+	// The owner pays a payable reservation with the simulator's success card.
+	"POST /v1/reservations/{id}/pay": {owned: true, reservation: true, unpaid: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request {
+			req := jsonReq("POST", reservationPath(f)+"/pay", map[string]any{
+				"card_number": "4242 4242 4242 4242", "exp_month": 12, "exp_year": 2030, "cvc": "123",
+			})
+			req.Header.Set("Idempotency-Key", "matrix-key-0001")
+			return req
+		}},
+	// The owner cancels a payable (pending_payment) reservation, whose slots the
+	// seed row does not hold, so the build holds them first.
+	"POST /v1/reservations/{id}/cancel": {owned: true, reservation: true, unpaid: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request {
+			f.holdSlots()
+			return jsonReq("POST", reservationPath(f)+"/cancel", nil)
+		}},
+	"GET /v1/reservations/{id}/qr": {owned: true, reservation: true, notFound: errcodes.ReservationNotFound,
+		build: func(f *fixture) *http.Request { return jsonReq("GET", reservationPath(f)+"/qr", nil) }},
+
+	"GET /v1/payments": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/payments", nil) }},
+	"GET /v1/payments/{id}": {owned: true, payment: true, notFound: errcodes.PaymentNotFound,
+		build: func(f *fixture) *http.Request { return jsonReq("GET", paymentPath(f), nil) }},
 
 	"GET /v1/admin/admins": {build: func(*fixture) *http.Request { return jsonReq("GET", "/v1/admin/admins", nil) }},
 
@@ -236,11 +341,17 @@ func TestAuthzMatrix(t *testing.T) {
 		entry := matrix[rt.Pattern]
 		t.Run(rt.Pattern, func(t *testing.T) {
 			f := e.newFixture()
+			if entry.payment {
+				f.seedPayment()
+			}
+			if entry.reservation {
+				f.seedReservation(entry.unpaid)
+			}
 			for _, r := range rows {
 				want := expected(rt.Policy, r)
 				if entry.owned && r.name == "other-driver" {
 					// Not yours and not there look the same (spec section 8).
-					want = outcome{http.StatusNotFound, string(errcodes.VehicleNotFound)}
+					want = outcome{http.StatusNotFound, string(entry.notFoundCode())}
 				}
 				rec := e.serve(entry.build(f), r.token(f))
 				body := decodeBody(t, rec)
@@ -297,6 +408,8 @@ func assertSameAsMissing(t *testing.T, e *apiEnv, f *fixture, entry matrixEntry,
 	t.Helper()
 	missing := *f
 	missing.vehicleID = uuid.New()
+	missing.reservationID = uuid.New()
+	missing.paymentID = uuid.New()
 	rec := e.serve(entry.build(&missing), f.owner.token)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing resource: got %d %s, want 404", rec.Code, rec.Body)
@@ -401,34 +514,44 @@ var specPolicy = map[string]struct {
 	// deviceLimits are the rules a device route consults, in order.
 	deviceLimits []ratelimit.Rule
 }{
-	"GET /v1/legal/current":            {access: "public"},
-	"GET /v1/lots":                     {access: "public", limit: &ratelimit.PublicReadIP},
-	"GET /v1/lots/{id}":                {access: "public", limit: &ratelimit.PublicReadIP},
-	"GET /v1/lots/{id}/availability":   {access: "public", limit: &ratelimit.PublicReadIP},
-	"GET /v1/lots/{id}/spaces":         {access: "public", limit: &ratelimit.PublicReadIP},
-	"GET /v1/lots/{id}/tariff":         {access: "public", limit: &ratelimit.PublicReadIP},
-	streamPattern:                      {access: "public", limit: &ratelimit.SSEConnectIP},
-	"POST /v1/auth/register":           {access: "public", limit: &ratelimit.RegisterIP},
-	"POST /v1/auth/verify":             {access: "public", limit: &ratelimit.CodeSubmitIP},
-	"POST /v1/auth/verify/resend":      {access: "public", limit: &ratelimit.CodeRequestIP},
-	"POST /v1/auth/password/forgot":    {access: "public", limit: &ratelimit.CodeRequestIP},
-	"POST /v1/auth/password/reset":     {access: "public", limit: &ratelimit.CodeSubmitIP},
-	"POST /v1/auth/invitations/accept": {access: "public", limit: &ratelimit.CodeSubmitIP},
-	"POST /v1/auth/login":              {access: "public"},
-	"POST /v1/auth/refresh":            {access: "public", limit: &ratelimit.RefreshIP},
-	"POST /v1/auth/logout":             {access: "any", legalExempt: true},
-	"POST /v1/auth/logout-all":         {access: "any", legalExempt: true},
-	"GET /v1/me":                       {access: "any", legalExempt: true},
-	"PATCH /v1/me":                     {access: "any"},
-	"DELETE /v1/me":                    {access: "driver", legalExempt: true, limit: &ratelimit.DeleteAccountUser},
-	"POST /v1/me/legal-acceptance":     {access: "driver", legalExempt: true},
-	"GET /v1/vehicles":                 {access: "driver"},
-	"POST /v1/vehicles":                {access: "driver", limit: &ratelimit.VehicleWriteUser},
-	"GET /v1/vehicles/{id}":            {access: "driver"},
-	"PATCH /v1/vehicles/{id}":          {access: "driver", limit: &ratelimit.VehicleWriteUser},
-	"DELETE /v1/vehicles/{id}":         {access: "driver", limit: &ratelimit.VehicleWriteUser},
-	"GET /v1/admin/admins":             {access: "admin"},
-	"POST /v1/admin/admins":            {access: "admin"},
+	"GET /v1/legal/current":             {access: "public"},
+	"GET /v1/lots":                      {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}":                 {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}/availability":    {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}/spaces":          {access: "public", limit: &ratelimit.PublicReadIP},
+	"GET /v1/lots/{id}/tariff":          {access: "public", limit: &ratelimit.PublicReadIP},
+	streamPattern:                       {access: "public", limit: &ratelimit.SSEConnectIP},
+	"POST /v1/auth/register":            {access: "public", limit: &ratelimit.RegisterIP},
+	"POST /v1/auth/verify":              {access: "public", limit: &ratelimit.CodeSubmitIP},
+	"POST /v1/auth/verify/resend":       {access: "public", limit: &ratelimit.CodeRequestIP},
+	"POST /v1/auth/password/forgot":     {access: "public", limit: &ratelimit.CodeRequestIP},
+	"POST /v1/auth/password/reset":      {access: "public", limit: &ratelimit.CodeSubmitIP},
+	"POST /v1/auth/invitations/accept":  {access: "public", limit: &ratelimit.CodeSubmitIP},
+	"POST /v1/auth/login":               {access: "public"},
+	"POST /v1/auth/refresh":             {access: "public", limit: &ratelimit.RefreshIP},
+	"POST /v1/auth/logout":              {access: "any", legalExempt: true},
+	"POST /v1/auth/logout-all":          {access: "any", legalExempt: true},
+	"GET /v1/me":                        {access: "any", legalExempt: true},
+	"PATCH /v1/me":                      {access: "any"},
+	"DELETE /v1/me":                     {access: "driver", legalExempt: true, limit: &ratelimit.DeleteAccountUser},
+	"POST /v1/me/legal-acceptance":      {access: "driver", legalExempt: true},
+	"GET /v1/vehicles":                  {access: "driver"},
+	"POST /v1/vehicles":                 {access: "driver", limit: &ratelimit.VehicleWriteUser},
+	"GET /v1/vehicles/{id}":             {access: "driver"},
+	"PATCH /v1/vehicles/{id}":           {access: "driver", limit: &ratelimit.VehicleWriteUser},
+	"DELETE /v1/vehicles/{id}":          {access: "driver", limit: &ratelimit.VehicleWriteUser},
+	"POST /v1/reservations/quote":       {access: "driver"},
+	"POST /v1/reservations":             {access: "driver", limit: &ratelimit.ReservationWriteUser},
+	"GET /v1/reservations":              {access: "driver"},
+	"GET /v1/reservations/{id}":         {access: "driver"},
+	"PATCH /v1/reservations/{id}":       {access: "driver", limit: &ratelimit.ReservationWriteUser},
+	"POST /v1/reservations/{id}/pay":    {access: "driver", limit: &ratelimit.ReservationPayUser},
+	"POST /v1/reservations/{id}/cancel": {access: "driver", limit: &ratelimit.ReservationWriteUser},
+	"GET /v1/reservations/{id}/qr":      {access: "driver"},
+	"GET /v1/payments":                  {access: "driver"},
+	"GET /v1/payments/{id}":             {access: "driver"},
+	"GET /v1/admin/admins":              {access: "admin"},
+	"POST /v1/admin/admins":             {access: "admin"},
 	// A device route declares no Policy.Limit: the router applies DeviceIP
 	// before DeviceAuth and the per-device rule after it.
 	"POST /v1/devices/events": {access: "device", deviceLimits: []ratelimit.Rule{
@@ -521,4 +644,29 @@ func ruleName(r *ratelimit.Rule) string {
 		return "none"
 	}
 	return r.Name
+}
+
+// notFoundCode is the code another driver's resource answers with.
+func (m matrixEntry) notFoundCode() errcodes.Code {
+	if m.notFound != "" {
+		return m.notFound
+	}
+	return errcodes.VehicleNotFound
+}
+
+// seedPayment gives the owner a completed reservation with a succeeded fee
+// payment (f.paymentID), straight into the database.
+func (f *fixture) seedPayment() {
+	f.env.t.Helper()
+	f.seedReservation(false)
+	err := f.env.db.Super.QueryRow(f.env.t.Context(),
+		`insert into payments (kind, method, amount_cents, status, idempotency_key, reservation_id, user_id, client_key,
+		                       request_fingerprint, card_brand, card_last4, provider_ref, succeeded_at, created_at)
+		 select 'reservation_fee', 'gateway_sim', 15000, 'succeeded', 'rsv-fee:'||r.public_id::text, r.id, r.user_id,
+		        'key-'||r.public_id::text, decode(repeat('00', 32), 'hex'), 'visa', '4242', 'prov-matrix', $2, $2
+		 from reservations r where r.public_id = $1
+		 returning public_id`, f.reservationID, f.env.clk.Now()).Scan(&f.paymentID)
+	if err != nil {
+		f.env.t.Fatalf("seed fixture payment: %v", err)
+	}
 }

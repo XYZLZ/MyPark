@@ -2,8 +2,12 @@
 // outbox over SMTP every 2 s, voids entries not passed within 60 s (every
 // 15 s) and purges expired rate-limit counters (every minute), expired auth
 // data (hourly), old outbox rows and device events past retention (daily). It
-// also serves the health probes on WORKER_HEALTH_ADDR (default :8091), /healthz
-// for liveness and /readyz for the database and migrations.
+// also reconciles pending fee payments with the gateway (every 15 s), sends
+// queued refunds (every 10 s), expires unpaid and no-show reservations (every
+// 30 s), publishes hold-window openings and closings (every 30 s), queues
+// reservation reminders (every minute), and it serves the health probes on
+// WORKER_HEALTH_ADDR (default :8091), /healthz for liveness and /readyz for
+// the database and migrations.
 //
 // With -healthcheck it does not serve: it probes GET /readyz on the local
 // WORKER_HEALTH_ADDR port and exits 0 only on a 2xx answer.
@@ -11,6 +15,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,15 +32,23 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/gate"
+	gatepg "github.com/XYZLZ/MyPark/apps/server/internal/features/gate/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/health"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
+	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/email"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/jobs"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/paymentsim"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/ratelimit"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/healthprobe"
 	"github.com/XYZLZ/MyPark/apps/server/internal/transport/http/httpserver"
@@ -60,6 +73,11 @@ const (
 	authPurgeEvery      = time.Hour
 	outboxPurgeEvery    = 24 * time.Hour
 	voidEvery           = 15 * time.Second
+	reconcileEvery      = 15 * time.Second
+	refundEvery         = 10 * time.Second
+	expireEvery         = 30 * time.Second
+	boundaryEvery       = 30 * time.Second
+	remindEvery         = time.Minute
 	deviceEventsEvery   = 24 * time.Hour
 	// purgeBatch is the rows one purge call deletes, so a backlog never holds
 	// one long transaction.
@@ -137,6 +155,11 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 	})
 	dispatcher := notifications.NewDispatcher(pool, sender, clk, cfg.SMTPFrom(), log)
 	authPurger := auth.NewPurger(pool, clk)
+	reconciler := newReconciler(pool, cfg, clk, log)
+	refunds := newRefundProcessor(pool, clk, log)
+	voider := newReservationVoider(pool, clk, log)
+	expiry := newReservationExpiry(pool, clk, log)
+	boundary := reservations.NewHoldBoundary(pool, log)
 	return []jobs.Job{
 		{Name: "outbox-dispatch", Every: dispatchEvery, Run: func(ctx context.Context) error {
 			_, err := dispatcher.Tick(ctx)
@@ -148,9 +171,58 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 		}},
 		{Name: "auth-purge", Every: authPurgeEvery, Run: authPurger.Purge},
 		{Name: "void_unpassed_entries", Every: voidEvery, Run: func(ctx context.Context) error {
-			n, err := gate.VoidUnpassedEntries(ctx, pool, clk.Now())
+			now := clk.Now()
+			// Both run every tick: a failing M2 batch must not hold back the
+			// reservation stays.
+			n, batchErr := gate.VoidUnpassedEntries(ctx, pool, now)
+			r, rsvErr := voider.Run(ctx, pool, now)
 			if n > 0 {
 				log.InfoContext(ctx, "voided unpassed entries", "count", n)
+			}
+			if r > 0 {
+				log.InfoContext(ctx, "voided unpassed reservation entries", "count", r)
+			}
+			return errors.Join(batchErr, rsvErr)
+		}},
+		{Name: "payment_reconcile", Every: reconcileEvery, Run: func(ctx context.Context) error {
+			n, err := reconciler.Run(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "reconciled pending payments", "count", n)
+			}
+			return err
+		}},
+		{Name: "expire_unpaid_reservations", Every: expireEvery, Run: func(ctx context.Context) error {
+			n, err := expiry.ExpireUnpaid(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "expired unpaid reservations", "count", n)
+			}
+			return err
+		}},
+		{Name: "expire_no_shows", Every: expireEvery, Run: func(ctx context.Context) error {
+			n, err := expiry.ExpireNoShows(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "expired no-show reservations", "count", n)
+			}
+			return err
+		}},
+		{Name: "hold_boundary_notify", Every: boundaryEvery, Run: func(ctx context.Context) error {
+			n, err := boundary.Tick(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "published hold changes", "lots", n)
+			}
+			return err
+		}},
+		{Name: "reservation_reminders", Every: remindEvery, Run: func(ctx context.Context) error {
+			n, err := expiry.Reminders(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "queued reservation reminders", "count", n)
+			}
+			return err
+		}},
+		{Name: "refund_processing", Every: refundEvery, Run: func(ctx context.Context) error {
+			n, err := refunds.Run(ctx, clk.Now())
+			if n > 0 {
+				log.InfoContext(ctx, "refunded payments", "count", n)
 			}
 			return err
 		}},
@@ -172,4 +244,59 @@ func workerJobs(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, lo
 			return err
 		}},
 	}
+}
+
+// newReconciler builds the payment reconcile job. It re-queries the simulated
+// gateway by key and applies the answer through the reservations service, the
+// same code the pay request runs.
+func newReconciler(pool *pgxpool.Pool, cfg config.WorkerConfig, clk clock.Clock, log *slog.Logger) *payments.Reconciler {
+	tx := database.NewTxRunner(pool)
+	fees := paymentspg.NewRepo(pool)
+	return &payments.Reconciler{
+		Tx:      tx,
+		Fees:    fees,
+		Gateway: paymentsim.New(pool, paymentsim.Config{Clock: clk}),
+		Outcomes: reservations.NewService(reservations.Deps{
+			Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
+			Fees: fees, Notify: notificationspg.NewNotifier(clk), Alerts: alertspg.NewRecorder(),
+			QRKey: cfg.QRHMACKey(), ChargeTimeout: cfg.PaymentChargeTimeout(), Rand: rand.Reader,
+		}),
+		ChargeTimeout: cfg.PaymentChargeTimeout(),
+		Log:           log,
+	}
+}
+
+// newRefundProcessor builds the refund job. The reservations service sends the
+// refund_succeeded email in the same transaction that finalizes the refund.
+func newRefundProcessor(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *payments.RefundProcessor {
+	tx := database.NewTxRunner(pool)
+	return &payments.RefundProcessor{
+		Tx:      tx,
+		Refunds: paymentspg.NewRefundRepo(pool),
+		Gateway: paymentsim.New(pool, paymentsim.Config{Clock: clk}),
+		Alerts:  alertspg.NewRecorder(),
+		Notice: reservations.NewService(reservations.Deps{
+			Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
+			Fees: paymentspg.NewRepo(pool), Notify: notificationspg.NewNotifier(clk),
+		}),
+		Log: log,
+	}
+}
+
+// newReservationVoider builds the reservation-stay part of the void job
+// (design 12.7, M3B-60). It only touches reservations through the gate port,
+// so the service needs no gateway, mailer or QR key.
+func newReservationVoider(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *gate.ReservationVoider {
+	tx := database.NewTxRunner(pool)
+	svc := reservations.NewService(reservations.Deps{Tx: tx, Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log})
+	return &gate.ReservationVoider{Tx: tx, Repo: gatepg.NewRepo(), Reservations: reservations.NewGateAccess(svc), Log: log}
+}
+
+// newReservationExpiry builds the unpaid and no-show expiry jobs (design 12).
+// They never charge or refund, so the service needs no gateway or QR key.
+func newReservationExpiry(pool *pgxpool.Pool, clk clock.Clock, log *slog.Logger) *reservations.Jobs {
+	return reservations.NewJobs(reservations.Deps{
+		Tx: database.NewTxRunner(pool), Repo: reservationspg.NewRepo(pool), Clock: clk, Log: log,
+		Fees: paymentspg.NewRepo(pool), Notify: notificationspg.NewNotifier(clk),
+	})
 }

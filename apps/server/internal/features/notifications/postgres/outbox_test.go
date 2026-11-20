@@ -185,3 +185,26 @@ func TestEnqueue_AvailableAtComesFromClock(t *testing.T) {
 		t.Errorf("available_at = %v, want the fake now %v", at, fixedNow)
 	}
 }
+
+func TestScrubPendingForUser_RemovesQRToken(t *testing.T) {
+	db := testsupport.NewTestDB(t)
+	uid := insertUserEmail(t, db, "a@x.do")
+	other := insertUserEmail(t, db, "b@x.do")
+	const ins = `insert into outbox_messages (kind, template, locale, to_address, user_id, payload, dedupe_key, status)
+		values ('email', 'reservation_confirmed', 'en', 'a@x.do', $1, '{"qr_token":"tok","plate_display":"A1"}', $2, $3)`
+	for _, r := range []struct {
+		uid         int64
+		key, status string
+	}{{uid, "p", "pending"}, {uid, "sent", "sent"}, {other, "other", "pending"}} {
+		if _, err := db.Super.Exec(t.Context(), ins, r.uid, r.key, r.status); err != nil {
+			t.Fatalf("seed %s: %v", r.key, err)
+		}
+	}
+	if err := database.NewTxRunner(db.App).InTx(t.Context(), func(ctx context.Context) error {
+		return notifier().ScrubPendingForUser(ctx, uid)
+	}); err != nil {
+		t.Fatalf("Scrub: %v", err)
+	}
+	assertCount(t, db, `dedupe_key = 'p' and payload = '{"plate_display":"A1"}'::jsonb`, 1)
+	assertCount(t, db, `dedupe_key in ('sent','other') and (payload ? 'qr_token')`, 2)
+}

@@ -145,6 +145,8 @@ func TestLoad_Overrides(t *testing.T) {
 		"SECRETBOX_KEY":     "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"CARD_UID_PEPPER":   "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"RATE_LIMIT_PEPPER": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"QR_HMAC_KEY":       "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"PAYMENT_GATEWAY":   "simulated",
 		"HTTP_ADDR":         ":9000",
 		"DATABASE_URL":      "postgres://y",
 		"DB_MAX_CONNS":      "25",

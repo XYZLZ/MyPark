@@ -15,8 +15,8 @@ const (
 	ScenarioWeekendPeak         Scenario = "weekend_peak"
 	ScenarioFillToFull          Scenario = "fill_to_full"
 	ScenarioSensorDrift         Scenario = "sensor_drift"
-	ScenarioReservationArrivals Scenario = "reservation_arrivals" // not in M2
-	ScenarioNoShow              Scenario = "no_show"              // not in M2
+	ScenarioReservationArrivals Scenario = "reservation_arrivals"
+	ScenarioNoShow              Scenario = "no_show"
 )
 
 // lotZone is the pilot lot's time zone. Santo Domingo has no daylight saving,
@@ -45,7 +45,25 @@ var weekendRates = [24]float64{
 }
 
 // followsWeekday reports whether s shares the weekday profile.
-func (s Scenario) followsWeekday() bool { return s == ScenarioWeekday || s == ScenarioSensorDrift }
+func (s Scenario) followsWeekday() bool {
+	switch s {
+	case ScenarioWeekday, ScenarioSensorDrift, ScenarioReservationArrivals, ScenarioNoShow:
+		return true
+	}
+	return false
+}
+
+// ReservedPerHour is the expected reserved cars per virtual hour (M3B-58),
+// on top of the drive-up traffic. A reserved car books against the server.
+func ReservedPerHour(s Scenario) float64 {
+	switch s {
+	case ScenarioReservationArrivals:
+		return 8
+	case ScenarioNoShow:
+		return 4
+	}
+	return 0
+}
 
 // ArrivalsPerHour is the expected arrivals in the given hour of day (0-23).
 func ArrivalsPerHour(s Scenario, hour int) float64 {
@@ -76,10 +94,19 @@ func Dwell(r *rand.Rand, s Scenario) time.Duration {
 // piecewise constant, so thinning at the boundary is exact). It must only be
 // called for a scenario that has arrivals.
 func nextArrival(r *rand.Rand, s Scenario, from time.Time) time.Time {
+	return nextAt(r, func(hour int) float64 { return ArrivalsPerHour(s, hour) }, from)
+}
+
+// nextReserved is nextArrival for the scenario's reserved cars.
+func nextReserved(r *rand.Rand, s Scenario, from time.Time) time.Time {
+	return nextAt(r, func(int) float64 { return ReservedPerHour(s) }, from)
+}
+
+func nextAt(r *rand.Rand, perHour func(hour int) float64, from time.Time) time.Time {
 	for {
 		local := from.In(lotZone)
 		boundary := time.Date(local.Year(), local.Month(), local.Day(), local.Hour()+1, 0, 0, 0, lotZone)
-		rate := ArrivalsPerHour(s, local.Hour())
+		rate := perHour(local.Hour())
 		if rate > 0 {
 			gap := time.Duration(r.ExpFloat64() / rate * float64(time.Hour))
 			if at := from.Add(gap); at.Before(boundary) {

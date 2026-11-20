@@ -53,6 +53,7 @@ func TestWriteError_KindToStatus(t *testing.T) {
 		{apperr.Forbidden(errcodes.AuthForbidden), 403},
 		{apperr.NotFound(errcodes.HTTPNotFound), 404},
 		{apperr.Conflict(errcodes.UserEmailTaken), 409},
+		{apperr.PaymentRequired(errcodes.PaymentDeclined), 402},
 		{apperr.New(apperr.KindTooLarge, errcodes.HTTPPayloadTooLarge), 413},
 		{apperr.New(apperr.KindUnsupportedMedia, errcodes.HTTPUnsupportedMediaType), 415},
 		{apperr.Invalid(errcodes.ValidationFailed), 422},

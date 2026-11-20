@@ -14,6 +14,8 @@ import (
 	"syscall"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/config"
+	"github.com/XYZLZ/MyPark/apps/server/internal/devicefleet"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/secret"
 	auditpg "github.com/XYZLZ/MyPark/apps/server/internal/features/audit/postgres"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/auth"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/devices"
@@ -21,6 +23,7 @@ import (
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/legal"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/lots"
 	"github.com/XYZLZ/MyPark/apps/server/internal/features/tariffs"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/vehicles"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/clock"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
 	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database/dbgen"
@@ -42,7 +45,7 @@ func main() {
 }
 
 // run seeds the pilot lot, the legal documents, the tariff, the simulator
-// fleet (SEED_SIMULATOR_FLEET) and the first admin in one
+// fleet (SEED_SIMULATOR_FLEET), the simulated drivers (SEED_SIMULATOR_DRIVERS) and the first admin in one
 // transaction and logs the lot id. The admin variables are validated before
 // anything is written, and the password is never logged.
 func run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
@@ -55,6 +58,10 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		return err
 	}
 	fleet, err := config.LoadSeedFleet(getenv)
+	if err != nil {
+		return err
+	}
+	drivers, err := config.LoadSeedDrivers(getenv)
 	if err != nil {
 		return err
 	}
@@ -86,6 +93,7 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	adminCreated := false
 	var fleetResult devices.SeedResult
 	cardsInserted := 0
+	driversSeeded := 0
 	err = database.NewTxRunner(pool).InTx(ctx, func(ctx context.Context) error {
 		tx, err := database.MustTx(ctx)
 		if err != nil {
@@ -108,6 +116,11 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 				return err
 			}
 		}
+		if drivers.Enabled() {
+			if driversSeeded, err = seedSimDrivers(ctx, log, deps, drivers.FleetSecret()); err != nil {
+				return err
+			}
+		}
 		if !withAdmin {
 			return nil
 		}
@@ -125,6 +138,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		log.Info("simulator fleet seeded", "inserted", fleetResult.Inserted, "resealed", fleetResult.Resealed)
 		log.Info("employee cards seeded", "inserted", cardsInserted)
 	}
+	if drivers.Enabled() {
+		log.Info("simulated drivers seeded", "created", driversSeeded)
+	}
 	switch {
 	case !withAdmin:
 	case adminCreated:
@@ -133,4 +149,39 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		log.Info("admin seed skipped: an admin already exists")
 	}
 	return nil
+}
+
+// seedSimDrivers creates the simulated drivers and their one vehicle each
+// (M3B-44) and returns how many drivers were new. Passwords derive from the
+// fleet secret and only their hashes are stored.
+func seedSimDrivers(ctx context.Context, log *slog.Logger, deps auth.SeedDeps, fleet secret.Bytes) (int, error) {
+	created := 0
+	for n := 1; n <= devicefleet.SimDriverCount; n++ {
+		email := devicefleet.SimDriverEmail(n)
+		isNew, err := auth.SeedDriver(ctx, deps, auth.SeedDriverInput{
+			Email: email, FirstName: "Sim", LastName: fmt.Sprintf("Driver %02d", n),
+			Password:     devicefleet.SimDriverPassword(fleet, email),
+			TermsVersion: legal.InitialVersion, PrivacyVersion: legal.InitialVersion,
+		})
+		if err != nil {
+			return created, fmt.Errorf("seed simulated driver %d: %w", n, err)
+		}
+		if isNew {
+			created++
+		}
+		ownerID, isDriver, err := auth.SeedDriverID(ctx, email)
+		if err != nil {
+			return created, err
+		}
+		if !isDriver {
+			// A live non-driver account holds the address: leave it alone. No email in the log.
+			log.Warn("simulated driver skipped: its address is held by an account that is not a driver", "driver", n)
+			continue
+		}
+		err = vehicles.SeedVehicle(ctx, ownerID, devicefleet.SimDriverPlate(n), "Toyota", "Corolla", "Gris", deps.Clock.Now())
+		if err != nil {
+			return created, err
+		}
+	}
+	return created, nil
 }

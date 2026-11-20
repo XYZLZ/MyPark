@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/XYZLZ/MyPark/apps/server/internal/domain/authz"
+	"github.com/XYZLZ/MyPark/apps/server/internal/domain/errcodes"
 )
 
 // Handler handles one decoded device event. It must run inside the
@@ -91,6 +92,31 @@ type Repo interface {
 	// ClearExitAuthorization cancels the locked active or paid stay's exit
 	// authorization.
 	ClearExitAuthorization(ctx context.Context, lotID, stayID int64, now time.Time) error
+
+	// ReservationStay reads the reservation's stay without a row lock, or
+	// returns ErrNotFound. The QR entry decides from it under the lot and
+	// reservation locks (design 8.1 puts stays after slot loads).
+	ReservationStay(ctx context.Context, lotID, reservationID int64) (Stay, error)
+	// ReservationStayForUpdate locks the reservation's stay, or returns
+	// ErrNotFound.
+	ReservationStayForUpdate(ctx context.Context, lotID, reservationID int64) (Stay, error)
+	// ReservationUserID is the user who owns the reservation, read without a
+	// lock. The gate attributes a reservation stay's payments to it (M3B-27).
+	ReservationUserID(ctx context.Context, reservationID int64) (int64, error)
+	// ReopenReservationStay moves the locked voided reservation stay back to
+	// entry_pending accepted at now, keeping voided_at (M3B-24).
+	ReopenReservationStay(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// RefreshAccepted sets the locked entry_pending stay's accepted_at to now.
+	RefreshAccepted(ctx context.Context, lotID, stayID int64, now time.Time) error
+
+	// StayForUpdateByID locks the lot's stay with this id, or returns
+	// ErrNotFound.
+	StayForUpdateByID(ctx context.Context, lotID, stayID int64) (Stay, error)
+	// VoidStay moves the locked entry_pending stay to voided at now (M3B-60).
+	VoidStay(ctx context.Context, lotID, stayID int64, now time.Time) error
+	// SetTxLimits applies the device lock and statement timeouts (M3B-55) to
+	// the current transaction.
+	SetTxLimits(ctx context.Context) error
 }
 
 // ErrNotFound means the lot has no matching row.
@@ -111,11 +137,12 @@ type Card struct {
 }
 
 // NewStay is an accepted entry. TicketCodeHash is set for a ticket,
-// EmployeeCardID for an employee card.
+// EmployeeCardID for an employee card, ReservationID for a reservation QR.
 type NewStay struct {
 	LotID           int64
 	TicketCodeHash  []byte
 	EmployeeCardID  int64
+	ReservationID   int64
 	TariffVersionID int64
 	AcceptedAt      time.Time
 }
@@ -130,6 +157,7 @@ type Stay struct {
 	Status          Status
 	EmployeeCardID  int64
 	TariffVersionID int64
+	AcceptedAt      time.Time
 	EnteredAt       time.Time
 	// PaidAt is the latest payment time: every payment moves it (design
 	// §10.3), and an overstay is billed from it (M2C-35).
@@ -137,15 +165,88 @@ type Stay struct {
 	ExitDeadlineAt   time.Time
 	ExitAuthorizedAt time.Time
 	LostTicket       bool
+	// ReservationID is 0 unless the stay belongs to a reservation;
+	// ReservationUserID is set only by the reservation stay lookups.
+	ReservationID     int64
+	ReservationUserID int64
 }
 
 // NewPayment is a succeeded payment of a stay (design §5.4). DeviceID is the
 // pay station.
 type NewPayment struct {
-	StayID         int64
+	StayID int64
+	// UserID is the reservation's user for a reservation stay, else 0 (M3B-27).
+	UserID         int64
 	Method         string
 	AmountCents    int64
 	IdempotencyKey string
 	DeviceID       int64
 	SucceededAt    time.Time
+}
+
+// ReservationRef is a reservation resolved from a QR token before any lock.
+// Nonce is the token's, re-checked under the reservation lock.
+type ReservationRef struct {
+	ID       int64
+	PublicID uuid.UUID
+	Nonce    [16]byte
+}
+
+// ReservationEntry is a reservation locked for an entry decision.
+type ReservationEntry struct {
+	ID, UserID, LotID, TariffVersionID int64
+	PublicID                           uuid.UUID
+	Status                             string
+	WindowStart, WindowEnd             time.Time
+}
+
+// QRAction is what the entry barrier does with a reservation QR (design 11.1).
+type QRAction int
+
+// The QR actions; they mirror the reservations decision.
+const (
+	QRDeny QRAction = iota
+	QRCheckIn
+	QRReopen
+	QRRefresh
+	QRPhysicallyFull
+)
+
+// QRDecisionInput is what the QR decision reads under the locks. StayStatus
+// is "" when the reservation has no stay.
+// StayAcceptedAt is when that stay was last accepted.
+type QRDecisionInput struct {
+	Reservation                          ReservationEntry
+	Now                                  time.Time
+	Occupied, Pending, EffectiveCapacity int
+	StayStatus                           Status
+	StayAcceptedAt                       time.Time
+}
+
+// QRDecision is the QR decision; Reason is set only for QRDeny.
+type QRDecision struct {
+	Action QRAction
+	Reason errcodes.Code
+}
+
+// Reservations is the gate's view of reservations (design 5.1), implemented
+// by reservations.GateAccess. Every method but Resolve and Decide runs on the
+// device transaction in ctx, under the lot lock.
+type Reservations interface {
+	// Resolve verifies the token and finds the reservation in the lot,
+	// without locks. Bad token, other lot, unknown or nonce mismatch →
+	// ErrNotFound. The token never reaches an error or a log.
+	Resolve(ctx context.Context, lotID int64, token string) (ReservationRef, error)
+	// LockForEntry locks the reservation FOR UPDATE (after LockLotOccupancy)
+	// and re-checks the nonce; a mismatch is ErrNotFound.
+	LockForEntry(ctx context.Context, lotID int64, ref ReservationRef) (ReservationEntry, error)
+	// Decide is the design 11.1 table.
+	Decide(in QRDecisionInput) QRDecision
+	// LockSlots locks the reservation's slot loads (design 8.1: before stays).
+	LockSlots(ctx context.Context, r ReservationEntry) error
+	CheckIn(ctx context.Context, r ReservationEntry, now time.Time) error                   // confirmed → checked_in, slots −1
+	CancelUnadmitted(ctx context.Context, r ReservationEntry, now time.Time) error          // design 11.5 steps 1–5
+	RestoreAfterVoid(ctx context.Context, reservationID int64, now time.Time) (bool, error) // S6.2
+	LateEntryPass(ctx context.Context, reservationID int64, now time.Time) (bool, error)    // S6.2
+	Complete(ctx context.Context, reservationID int64, now time.Time) error                 // S6.3; no-op unless checked_in
 }

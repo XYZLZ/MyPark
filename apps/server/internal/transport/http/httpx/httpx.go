@@ -4,6 +4,7 @@ package httpx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -68,8 +69,15 @@ func DecodeJSON[T any](r *http.Request, v *validation.Validator) (T, error) {
 // Validate runs v on s and maps a failure to a 422 validation.failed apperr
 // whose details list the failed fields. Handlers that normalize a decoded
 // body before validating it call this after DecodeJSON[T](r, nil).
-func Validate(v *validation.Validator, s any) error {
-	err := v.Struct(s)
+func Validate(v *validation.Validator, s any) error { return mapValidation(v.Struct(s)) }
+
+// ValidateCtx is Validate for rules that need the context, such as the ones
+// reading the business time (validation.WithNow).
+func ValidateCtx(ctx context.Context, v *validation.Validator, s any) error {
+	return mapValidation(v.StructCtx(ctx, s))
+}
+
+func mapValidation(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -107,6 +115,8 @@ func statusOf(k apperr.Kind) (int, string) {
 		return http.StatusBadRequest, "malformed request"
 	case apperr.KindUnauthenticated:
 		return http.StatusUnauthorized, "authentication required"
+	case apperr.KindPaymentRequired:
+		return http.StatusPaymentRequired, "payment required"
 	case apperr.KindForbidden:
 		return http.StatusForbidden, "forbidden"
 	case apperr.KindNotFound:

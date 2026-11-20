@@ -6,10 +6,10 @@ on conflict (dedupe_key) do nothing;
 
 -- name: ScrubPendingOutboxCodesForUser :exec
 update outbox_messages
-set payload = payload - 'code'
+set payload = payload - 'code' - 'qr_token'
 where user_id = @user_id
   and status in ('pending', 'sending')
-  and payload ? 'code';
+  and payload ?| array['code', 'qr_token'];
 
 -- name: ClaimOutboxBatch :many
 -- Leases up to @batch due rows: they become 'sending' until @lease_until. A
@@ -30,7 +30,7 @@ returning id, template, locale, to_address, payload, dedupe_key, attempts;
 -- Fenced on the claim (status and attempts): a worker whose lease expired and
 -- was reclaimed matches 0 rows and changes nothing.
 update outbox_messages
-set status = 'sent', sent_at = @now, last_error = null, payload = payload - 'code'
+set status = 'sent', sent_at = @now, last_error = null, payload = payload - 'code' - 'qr_token'
 where id = @id and status = 'sending' and attempts = @attempts;
 
 -- name: MarkOutboxRetry :execrows
@@ -40,7 +40,7 @@ where id = @id and status = 'sending' and attempts = @attempts;
 
 -- name: MarkOutboxDead :execrows
 update outbox_messages
-set status = 'dead', last_error = @last_error, payload = payload - 'code'
+set status = 'dead', last_error = @last_error, payload = payload - 'code' - 'qr_token'
 where id = @id and status = 'sending' and attempts = @attempts;
 
 -- name: PurgeOutbox :execrows

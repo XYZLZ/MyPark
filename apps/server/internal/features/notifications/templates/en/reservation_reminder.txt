@@ -1,0 +1,12 @@
+Hello{{with .first_name}} {{.}}{{end}},
+
+A reminder: your reservation starts soon.
+
+Arrival: {{.arrival_at}}
+Entry window: {{.window}}
+(Santo Domingo time)
+
+Show the QR code from your confirmation email, or the one in the app, at the entry barrier.
+
+-- 
+{{template "brand"}}

@@ -26,6 +26,7 @@ const (
 	KindBadRequest
 	KindTooLarge
 	KindUnsupportedMedia
+	KindPaymentRequired
 )
 
 // Error is an application error with a stable code.
@@ -60,6 +61,9 @@ func Unauthenticated(code errcodes.Code) *Error { return New(KindUnauthenticated
 func Forbidden(code errcodes.Code) *Error       { return New(KindForbidden, code) }
 func NotFound(code errcodes.Code) *Error        { return New(KindNotFound, code) }
 func Conflict(code errcodes.Code) *Error        { return New(KindConflict, code) }
+
+// PaymentRequired builds a 402 error: the payment was declined.
+func PaymentRequired(code errcodes.Code) *Error { return New(KindPaymentRequired, code) }
 
 // RateLimited builds a 429 error whose details.retry_after_seconds is
 // retryAfter rounded up to whole seconds, minimum 1.

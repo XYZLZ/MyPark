@@ -1,0 +1,10 @@
+Hello{{with .first_name}} {{.}}{{end}},
+
+Your reservation was cancelled.
+{{if eq .refund_status "pending"}}
+{{if eq .refund_reason "facility_unavailable"}}We could not keep your space. {{end}}The full reservation fee is being refunded to the card you paid with. The bank may take a few days to show it.
+{{else}}
+The reservation fee is not refundable once the arrival time has passed.
+{{end}}
+-- 
+{{template "brand"}}

@@ -1,0 +1,13 @@
+Hola{{with .first_name}} {{.}}{{end}},
+
+Tu reserva está confirmada.
+
+Vehículo: {{.plate_display}}
+Llegada: {{.arrival_at}}
+Ventana de entrada: {{.window}}
+(hora de Santo Domingo)
+
+Muestra el código QR de este correo, o el de la app, en la barrera de entrada.
+
+-- 
+{{template "brand"}}

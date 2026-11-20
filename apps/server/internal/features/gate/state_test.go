@@ -12,6 +12,7 @@ func TestCanTransition_FullTable(t *testing.T) {
 		{gate.StatusEntryPending, gate.StatusActive}: true,
 		{gate.StatusEntryPending, gate.StatusVoided}: true,
 		{gate.StatusVoided, gate.StatusActive}:       true, // late entry pass (M2C-31)
+		{gate.StatusVoided, gate.StatusEntryPending}: true, // reservation QR re-presented (M3B-24)
 		{gate.StatusActive, gate.StatusPaid}:         true,
 		{gate.StatusPaid, gate.StatusActive}:         true, // overstay or lost ticket
 		{gate.StatusPaid, gate.StatusExited}:         true,
@@ -28,10 +29,21 @@ func TestCanTransition_FullTable(t *testing.T) {
 			}
 		}
 	}
-	if n != 6 {
-		t.Fatalf("allowed pairs = %d, want 6", n)
+	if n != 7 {
+		t.Fatalf("allowed pairs = %d, want 7", n)
 	}
 	if gate.CanTransition("", gate.StatusActive) || gate.CanTransition(gate.StatusActive, "parked") {
 		t.Error("an unknown status must never transition")
+	}
+}
+
+// A voided reservation stay is reused when its reservation, back to
+// confirmed after the void (M3B-60), is checked in again (design 10.4).
+func TestCanTransition_VoidedToEntryPending(t *testing.T) {
+	if !gate.CanTransition(gate.StatusVoided, gate.StatusEntryPending) {
+		t.Error("voided -> entry_pending must be allowed")
+	}
+	if gate.CanTransition(gate.StatusExited, gate.StatusEntryPending) || gate.CanTransition(gate.StatusActive, gate.StatusEntryPending) {
+		t.Error("only a voided stay may return to entry_pending")
 	}
 }

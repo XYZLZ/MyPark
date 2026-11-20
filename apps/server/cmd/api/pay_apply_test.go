@@ -1,0 +1,647 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	alertspg "github.com/XYZLZ/MyPark/apps/server/internal/features/alerts/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/notifications"
+	notificationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/notifications/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/payments"
+	paymentspg "github.com/XYZLZ/MyPark/apps/server/internal/features/payments/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/features/reservations"
+	reservationspg "github.com/XYZLZ/MyPark/apps/server/internal/features/reservations/postgres"
+	"github.com/XYZLZ/MyPark/apps/server/internal/infrastructure/database"
+	"github.com/XYZLZ/MyPark/apps/server/internal/testsupport"
+)
+
+// applyFixture is a reservation with a pending fee attempt, as the pay flow
+// leaves it when the charge answer is applied later (reconcile, late success).
+type applyFixture struct {
+	svc       *reservations.Service
+	rsvID     string
+	rsvRow    int64
+	paymentID int64
+	driver    testsupport.Driver
+}
+
+// pendingAttempt reserves for a fresh driver and records a pending fee
+// attempt through the same port the pay flow uses.
+func (e *feeEnv) pendingAttempt(arrival string) applyFixture {
+	e.t.Helper()
+	d := testsupport.SeedDrivers(e.t, e.db, 1)[0]
+	f := applyFixture{rsvID: e.reserve(d, arrival), driver: d}
+	tx := database.NewTxRunner(e.db.App)
+	fees := paymentspg.NewRepo(e.db.App)
+	f.svc = reservations.NewService(reservations.Deps{
+		Tx: tx, Repo: reservationspg.NewRepo(e.db.App), Clock: e.clk, Log: slogOf(e.logs),
+		Fees: fees, Notify: notificationspg.NewNotifier(e.clk), Alerts: alertspg.NewRecorder(), QRKey: e.cfg.QRHMACKey(),
+	})
+	var pub = f.rsvID
+	if err := e.db.App.QueryRow(e.t.Context(), `select id from reservations where public_id = $1`, pub).Scan(&f.rsvRow); err != nil {
+		e.t.Fatal(err)
+	}
+	err := tx.InTx(e.t.Context(), func(ctx context.Context) error {
+		a, _, err := fees.StartAttempt(ctx, payments.AttemptInput{
+			ReservationID: f.rsvRow, UserID: d.UserID, AmountCents: 15000, ClientKey: "key-apply-0001",
+			Fingerprint: make([]byte, 32), Brand: "visa", Last4: "4242", Now: e.clk.Now(),
+		})
+		f.paymentID = a.ID
+		return err
+	})
+	if err != nil {
+		e.t.Fatalf("start attempt: %v", err)
+	}
+	return f
+}
+
+var succeeded = payments.ChargeResult{Outcome: payments.ChargeSucceeded, ProviderRef: "sim_ch_TESTREF"}
+
+func (e *feeEnv) version() int64 {
+	e.t.Helper()
+	var v int64
+	if err := e.db.App.QueryRow(e.t.Context(), `select version from lot_occupancy where lot_id = $1`, e.lotID).Scan(&v); err != nil {
+		e.t.Fatal(err)
+	}
+	return v
+}
+
+// M3B-10: a charge that succeeds after the hold window closed expires the
+// reservation and refunds the fee in full; it never bumps the lot version.
+func TestPay_LateSuccessExpiresAndRefunds(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	before := e.version()
+	e.clk.Set(time.Date(2026, 12, 1, 15, 25, 0, 0, time.UTC)) // upper(window)
+
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	var status, reason string
+	if err := e.db.App.QueryRow(t.Context(), `select status, refund_reason from reservations where id = $1`, f.rsvRow).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "expired_unpaid" || reason != "facility_unavailable" {
+		t.Errorf("reservation = %s/%s, want expired_unpaid/facility_unavailable", status, reason)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded' and provider_ref = 'sim_ch_TESTREF'`, f.paymentID); n != 1 {
+		t.Error("payment must be succeeded with its provider ref")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and status = 'pending' and amount_cents = 15000
+	                 and reason = 'facility_unavailable' and idempotency_key = 'refund:' || public_id`, f.paymentID); n != 1 {
+		t.Error("want exactly one pending full refund, facility_unavailable")
+	}
+	if n := e.count(`select count(*) from reservation_slot_loads where held > 0`); n != 0 {
+		t.Errorf("slots still held: %d rows", n)
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = $1 and dedupe_key = $2`,
+		string(notifications.TplReservationCancelled), "reservation_cancelled:"+f.rsvID); n != 1 {
+		t.Errorf("reservation_cancelled messages = %d, want 1", n)
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = $1`, string(notifications.TplReservationConfirmed)); n != 0 {
+		t.Error("a late success must not send the confirmation")
+	}
+	if got := e.version(); got != before {
+		t.Errorf("version = %d, want unchanged %d", got, before)
+	}
+	if !strings.Contains(e.logs.String(), "level=WARN") {
+		t.Error("late success must be logged at warn")
+	}
+	// Applying the same result again changes nothing.
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`select count(*) from refunds`); n != 1 {
+		t.Errorf("refunds after a repeated Apply = %d, want 1", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// M3B-10 step 5: a success on a reservation that cannot be confirmed is kept
+// as a succeeded payment with a refund queued, and logged at error.
+func TestPay_DefensiveSuccessRefunds(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	// Cancel by hand, releasing the slots like the cancel flow does.
+	if _, err := e.db.Super.Exec(t.Context(),
+		`update reservations set status = 'cancelled', cancelled_at = $2, cancelled_by = 'driver' where id = $1`, f.rsvRow, rsvNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Super.Exec(t.Context(), `update reservation_slot_loads set held = held - 1 where held > 0`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.status(f.rsvID); got != "cancelled" {
+		t.Errorf("reservation = %s, want cancelled (unchanged)", got)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded'`, f.paymentID); n != 1 {
+		t.Error("payment must be succeeded")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and status = 'pending' and amount_cents = 15000`, f.paymentID); n != 1 {
+		t.Error("want one pending full refund")
+	}
+	if !strings.Contains(e.logs.String(), "level=ERROR") {
+		t.Error("the defensive branch must be logged at error")
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+func TestApply_DeclineFailsThePaymentOnly(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	res := payments.ChargeResult{Outcome: payments.ChargeDeclined, DeclineCode: "card_declined"}
+	for range 2 { // idempotent
+		if err := f.svc.Apply(t.Context(), f.paymentID, res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'failed' and failure_code = 'card_declined' and failed_at is not null`, f.paymentID); n != 1 {
+		t.Error("payment must be failed with its code")
+	}
+	if got := e.status(f.rsvID); got != "pending_payment" {
+		t.Errorf("reservation = %s, want pending_payment", got)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+func slogOf(w *testsupport.SyncBuffer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
+
+// F2: a success that meets an already succeeded or refunded payment is a quiet
+// no-op; one that meets a failed payment is loud (error log, public ids only) and returns
+// payments.ErrSuccessAfterFinal.
+func TestApply_SuccessMeetingAFinalPayment(t *testing.T) {
+	t.Run("already succeeded is quiet", func(t *testing.T) {
+		e := newFeeEnv(t)
+		f := e.pendingAttempt(arrival1502)
+		for range 2 {
+			if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+				t.Fatalf("apply = %v, want nil", err)
+			}
+		}
+		if strings.Contains(e.logs.String(), "level=ERROR") {
+			t.Errorf("a repeated success logged an error: %s", e.logs.String())
+		}
+		if n := e.count(`select count(*) from refunds`); n != 0 {
+			t.Errorf("refunds = %d, want 0", n)
+		}
+		if got := e.status(f.rsvID); got != "confirmed" {
+			t.Errorf("status = %s, want confirmed", got)
+		}
+	})
+	t.Run("already refunded is quiet", func(t *testing.T) {
+		e := newFeeEnv(t)
+		f := e.pendingAttempt(arrival1502)
+		if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.db.Super.Exec(t.Context(),
+			`update payments set status = 'refunded', refunded_at = $2 where id = $1`, f.paymentID, e.clk.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+			t.Fatalf("apply = %v, want nil", err)
+		}
+		if strings.Contains(e.logs.String(), "level=ERROR") {
+			t.Errorf("a success on a refunded payment logged an error: %s", e.logs.String())
+		}
+		if n := e.count(`select count(*) from payments where id = $1 and status = 'refunded'`, f.paymentID); n != 1 {
+			t.Error("the refunded payment must stay refunded")
+		}
+	})
+	t.Run("already failed is loud", func(t *testing.T) {
+		e := newFeeEnv(t)
+		f := e.pendingAttempt(arrival1502)
+		declined := payments.ChargeResult{Outcome: payments.ChargeDeclined, DeclineCode: "card_declined"}
+		if err := f.svc.Apply(t.Context(), f.paymentID, declined); err != nil {
+			t.Fatal(err)
+		}
+		err := f.svc.Apply(t.Context(), f.paymentID, succeeded)
+		if !errors.Is(err, payments.ErrSuccessAfterFinal) {
+			t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+		}
+		logs := e.logs.String()
+		if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, f.rsvID) {
+			t.Errorf("want an error log naming the reservation, got %q", logs)
+		}
+		if strings.Contains(logs, "sim_ch_TESTREF") {
+			t.Error("the log must not carry the provider ref")
+		}
+		if got := e.status(f.rsvID); got != "pending_payment" {
+			t.Errorf("status = %s, want pending_payment (unchanged)", got)
+		}
+	})
+}
+
+// The confirmation email carries what its template shows (design 12.6), in lot time.
+func TestApply_ConfirmEmailPayload(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	var plate string
+	var fee int64
+	if err := e.db.App.QueryRow(t.Context(), `select v.plate_display, r.fee_cents from reservations r
+		join vehicles v on v.id = r.vehicle_id where r.id = $1`, f.rsvRow).Scan(&plate, &fee); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	var raw []byte
+	if err := e.db.Super.QueryRow(t.Context(), `select payload from outbox_messages where dedupe_key = $1`,
+		"reservation_confirmed:"+f.rsvID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"reservation_id": f.rsvID, "arrival_at": "2026-12-01 11:05", "window": "2026-12-01 10:50 - 2026-12-01 11:25",
+		"plate_display": plate, "fee_cents": strconv.FormatInt(fee, 10),
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("payload[%s] = %q, want %q", k, got[k], v)
+		}
+	}
+	if got["qr_token"] == "" || len(got) != len(want)+1 {
+		t.Errorf("payload = %v, want the five keys plus qr_token", got)
+	}
+}
+
+// Risk review: the pay request stalls past the reconcile cutoff, the job marks
+// the attempt not_submitted, then the charge lands at the gateway. The success
+// must not be kept without a refund, and the reservation must not be confirmed.
+func TestApply_LateChargeAfterNotSubmitted(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	rec, _ := e.reconciler()
+	e.clk.Advance(61 * time.Second)
+	if n, err := rec.Run(t.Context(), e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Run = %d, %v; want 1 (not_submitted)", n, err)
+	}
+	var key string
+	if err := e.db.App.QueryRow(t.Context(), `select idempotency_key from payments where id = $1`, f.paymentID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	// The stalled pay request finally charges.
+	res, err := e.gw.inner.Charge(t.Context(), payments.ChargeRequest{
+		IdempotencyKey: key, AmountCents: 15000,
+		Card: &payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "123"},
+	})
+	if err != nil || res.Outcome != payments.ChargeSucceeded {
+		t.Fatalf("late charge = %+v, %v", res, err)
+	}
+
+	if err := f.svc.Apply(t.Context(), f.paymentID, res); err != nil {
+		t.Fatalf("apply = %v, want nil (handled)", err)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded' and provider_ref = $2
+	                 and succeeded_at = $3 and failed_at is null and failure_code is null`, f.paymentID, res.ProviderRef, e.clk.Now()); n != 1 {
+		t.Error("payment must be succeeded with the provider ref and no failure fields")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and status = 'pending' and amount_cents = 15000
+	                 and reason = 'facility_unavailable'`, f.paymentID); n != 1 {
+		t.Error("want exactly one pending full refund, facility_unavailable")
+	}
+	if n := e.count(`select count(*) from outbox_messages where dedupe_key = $1`, "reservation_cancelled:"+f.rsvID); n != 1 {
+		t.Errorf("reservation_cancelled messages = %d, want 1", n)
+	}
+	if got := e.status(f.rsvID); got != "expired_unpaid" {
+		t.Errorf("reservation = %s, want expired_unpaid (never confirmed, and the live-fee index must free up)", got)
+	}
+	if !strings.Contains(e.logs.String(), "level=WARN") || strings.Contains(e.logs.String(), res.ProviderRef) {
+		t.Error("want a warn log without the provider ref")
+	}
+	if n := e.count(`select count(*) from outbox_messages where dedupe_key = $1`, "reservation_cancelled:"+f.rsvID); n != 1 {
+		t.Errorf("reservation_cancelled messages = %d, want 1", n)
+	}
+	if err := f.svc.Apply(t.Context(), f.paymentID, res); err != nil {
+		t.Fatalf("second apply = %v, want nil", err)
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1`, f.paymentID); n != 1 {
+		t.Errorf("refunds after a second Apply = %d, want 1", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// Ruling: when the driver already paid again (key B) and the reservation is
+// confirmed, a late charge for the not_submitted attempt A cannot become
+// succeeded (one live fee per reservation). It stays loud and queues no refund;
+// the driver pays twice and an admin alert opens for the manual refund.
+func TestApply_LateChargeWhileRepaid(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502) // attempt A
+	rec, _ := e.reconciler()
+	e.clk.Advance(61 * time.Second)
+	if n, err := rec.Run(t.Context(), e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Run = %d, %v; want 1 (not_submitted)", n, err)
+	}
+	var keyA string
+	if err := e.db.App.QueryRow(t.Context(), `select idempotency_key from payments where id = $1`, f.paymentID).Scan(&keyA); err != nil {
+		t.Fatal(err)
+	}
+
+	// The driver pays again with key B and the reservation confirms.
+	var userID int64
+	if err := e.db.App.QueryRow(t.Context(), `select user_id from reservations where id = $1`, f.rsvRow).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	var paymentB int64
+	if err := database.NewTxRunner(e.db.App).InTx(t.Context(), func(ctx context.Context) error {
+		a, _, err := paymentspg.NewRepo(e.db.App).StartAttempt(ctx, payments.AttemptInput{
+			ReservationID: f.rsvRow, UserID: userID, AmountCents: 15000, ClientKey: "key-apply-0002",
+			Fingerprint: make([]byte, 32), Brand: "visa", Last4: "4242", Now: e.clk.Now(),
+		})
+		paymentB = a.ID
+		return err
+	}); err != nil {
+		t.Fatalf("second attempt: %v", err)
+	}
+	if err := f.svc.Apply(t.Context(), paymentB, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.status(f.rsvID); got != "confirmed" {
+		t.Fatalf("reservation = %s, want confirmed", got)
+	}
+
+	// The stalled request for A finally charges.
+	res, err := e.gw.inner.Charge(t.Context(), payments.ChargeRequest{
+		IdempotencyKey: keyA, AmountCents: 15000,
+		Card: &payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "123"},
+	})
+	if err != nil || res.Outcome != payments.ChargeSucceeded {
+		t.Fatalf("late charge = %+v, %v", res, err)
+	}
+	err = f.svc.Apply(t.Context(), f.paymentID, res)
+	if !errors.Is(err, payments.ErrSuccessAfterFinal) {
+		t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'failed' and failure_code = 'not_submitted'`, f.paymentID); n != 1 {
+		t.Error("payment A must stay failed/not_submitted")
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded'`, paymentB); n != 1 {
+		t.Error("payment B must stay succeeded")
+	}
+	if n := e.count(`select count(*) from refunds`); n != 0 {
+		t.Errorf("refunds = %d, want none (manual refund)", n)
+	}
+	if got := e.status(f.rsvID); got != "confirmed" {
+		t.Errorf("reservation = %s, want confirmed", got)
+	}
+	logs := e.logs.String()
+	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, f.rsvID) || strings.Contains(logs, res.ProviderRef) || strings.Contains(logs, keyA) {
+		t.Errorf("want an error log naming the reservation and no provider ref or key, got %q", logs)
+	}
+	var kind, reason, rsvPub, payPub string
+	if err := e.db.App.QueryRow(t.Context(),
+		`select a.kind, a.details->>'reason', a.details->>'reservation_id', a.details->>'payment_id'
+		 from reconciliation_alerts a where a.lot_id = $1 and a.resolved_at is null`, e.lotID).Scan(&kind, &reason, &rsvPub, &payPub); err != nil {
+		t.Fatalf("want one open alert: %v", err)
+	}
+	if kind != "refund_failed" || reason != "duplicate_charge" || rsvPub != f.rsvID || e.alertDetail("live_fee_status") != "succeeded" {
+		t.Errorf("alert = %s %s %s, want refund_failed duplicate_charge for the reservation", kind, reason, rsvPub)
+	}
+	if n := e.count(`select count(*) from reconciliation_alerts where details::text like '%' || $1 || '%' or details::text like '%' || $2 || '%'`, res.ProviderRef, keyA); n != 0 {
+		t.Error("the alert must carry public ids only, no provider ref or gateway key")
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// The job already expired the reservation before the late charge arrived: only
+// the payment transition and the refund happen, with no second cancellation email.
+func TestApply_LateChargeOnAnExpiredReservation(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	rec, svc := e.reconciler()
+	e.clk.Advance(61 * time.Second)
+	if n, err := rec.Run(t.Context(), e.clk.Now()); err != nil || n != 1 {
+		t.Fatalf("Run = %d, %v; want 1 (not_submitted)", n, err)
+	}
+	var key string
+	if err := e.db.App.QueryRow(t.Context(), `select idempotency_key from payments where id = $1`, f.paymentID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	// The expiry job (outside this task) is stood in for by the same transition.
+	if _, err := e.db.Super.Exec(t.Context(),
+		`update reservations set status = 'expired_unpaid', expired_at = $2, updated_at = $2 where id = $1`, f.rsvRow, e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Super.Exec(t.Context(),
+		`update reservation_slot_loads set held = held - 1 where lot_id = $1 and held > 0`, e.lotID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.gw.inner.Charge(t.Context(), payments.ChargeRequest{
+		IdempotencyKey: key, AmountCents: 15000,
+		Card: &payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "123"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Apply(t.Context(), f.paymentID, res); err != nil {
+		t.Fatalf("apply = %v, want nil", err)
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded'`, f.paymentID); n != 1 {
+		t.Error("payment must be succeeded")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and status = 'pending'`, f.paymentID); n != 1 {
+		t.Error("want exactly one pending refund")
+	}
+	if got := e.status(f.rsvID); got != "expired_unpaid" {
+		t.Errorf("reservation = %s, want expired_unpaid", got)
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = $1`, string(notifications.TplReservationCancelled)); n != 0 {
+		t.Errorf("cancellation emails = %d, want none (the job sends its own)", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// alertDetail reads one detail of the only alert of the lot ("" when absent).
+func (e *feeEnv) alertDetail(key string) string {
+	e.t.Helper()
+	var v *string
+	if err := e.db.App.QueryRow(e.t.Context(),
+		`select details->>$2 from reconciliation_alerts where lot_id = $1`, e.lotID, key).Scan(&v); err != nil {
+		e.t.Fatalf("alert detail %s: %v", key, err)
+	}
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+// markNotSubmitted runs the reconcile job so the pending attempt becomes failed/not_submitted.
+func (e *feeEnv) markNotSubmitted() {
+	e.t.Helper()
+	rec, _ := e.reconciler()
+	e.clk.Advance(61 * time.Second)
+	if n, err := rec.Run(e.t.Context(), e.clk.Now()); err != nil || n != 1 {
+		e.t.Fatalf("Run = %d, %v; want 1 (not_submitted)", n, err)
+	}
+}
+
+// F4: the alert names what happened. A late success next to another live fee
+// that is still pending is an orphan charge, not a duplicate.
+func TestApply_AlertReasonOrphanCharge(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	e.markNotSubmitted()
+	var userID int64
+	if err := e.db.App.QueryRow(t.Context(), `select user_id from reservations where id = $1`, f.rsvRow).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.NewTxRunner(e.db.App).InTx(t.Context(), func(ctx context.Context) error {
+		_, _, err := paymentspg.NewRepo(e.db.App).StartAttempt(ctx, payments.AttemptInput{
+			ReservationID: f.rsvRow, UserID: userID, AmountCents: 15000, ClientKey: "key-apply-0002",
+			Fingerprint: make([]byte, 32), Brand: "visa", Last4: "4242", Now: e.clk.Now(),
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); !errors.Is(err, payments.ErrSuccessAfterFinal) {
+		t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+	}
+	if got, live := e.alertDetail("reason"), e.alertDetail("live_fee_status"); got != "orphan_charge" || live != "pending" {
+		t.Errorf("alert = %s / live %s, want orphan_charge / pending", got, live)
+	}
+}
+
+// F4: a payment the gateway declined that later reports success is a gateway inconsistency.
+func TestApply_AlertReasonGatewayInconsistent(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	if err := f.svc.Apply(t.Context(), f.paymentID, payments.ChargeResult{Outcome: payments.ChargeDeclined, DeclineCode: "card_declined"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Apply(t.Context(), f.paymentID, succeeded); !errors.Is(err, payments.ErrSuccessAfterFinal) {
+		t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+	}
+	if got := e.alertDetail("reason"); got != "gateway_inconsistent" {
+		t.Errorf("reason = %s, want gateway_inconsistent", got)
+	}
+}
+
+// cancelAfterRefusal cancels the context the moment a transaction fails with
+// ErrSuccessAfterFinal, like a pay request whose finish budget the refused
+// transaction used up.
+type cancelAfterRefusal struct {
+	database.TxRunnerPort
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterRefusal) InTx(ctx context.Context, fn func(context.Context) error) error {
+	err := c.TxRunnerPort.InTx(ctx, fn)
+	if errors.Is(err, payments.ErrSuccessAfterFinal) {
+		c.cancel()
+	}
+	return err
+}
+
+// F2: the alert is written on its own budget, so it survives the context of
+// the refused apply being over.
+func TestApply_AlertSurvivesAnExpiredContext(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	if err := f.svc.Apply(t.Context(), f.paymentID, payments.ChargeResult{Outcome: payments.ChargeDeclined, DeclineCode: "card_declined"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	svc := reservations.NewService(reservations.Deps{
+		Tx: cancelAfterRefusal{TxRunnerPort: database.NewTxRunner(e.db.App), cancel: cancel}, Repo: reservationspg.NewRepo(e.db.App),
+		Clock: e.clk, Log: slogOf(e.logs), Fees: paymentspg.NewRepo(e.db.App), Notify: notificationspg.NewNotifier(e.clk),
+		Alerts: alertspg.NewRecorder(), QRKey: e.cfg.QRHMACKey(),
+	})
+	if err := svc.Apply(ctx, f.paymentID, succeeded); !errors.Is(err, payments.ErrSuccessAfterFinal) {
+		t.Fatalf("apply = %v, want ErrSuccessAfterFinal", err)
+	}
+	if n := e.count(`select count(*) from reconciliation_alerts`); n != 1 {
+		t.Errorf("alerts = %d, want 1 even though the request context ended", n)
+	}
+}
+
+// F1 (accepted behaviour): the driver cancels while the charge of a
+// not_submitted attempt is still in flight. The cancel is a 200 with no
+// refund; the charge then lands and is refunded in full by the late-charge
+// path, which does not touch the reservation and sends no cancellation email.
+func TestApply_LateChargeAfterCancel(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	e.markNotSubmitted()
+	var key string
+	if err := e.db.App.QueryRow(t.Context(), `select idempotency_key from payments where id = $1`, f.paymentID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	e.clk.Advance(time.Second)
+	if code, body := e.cancel(e.token(f.driver), f.rsvID); code != http.StatusOK {
+		t.Fatalf("cancel = %d %v, want 200", code, body)
+	}
+	res, err := e.gw.inner.Charge(t.Context(), payments.ChargeRequest{
+		IdempotencyKey: key, AmountCents: 15000,
+		Card: &payments.Card{Number: "4242424242424242", ExpMonth: 12, ExpYear: 2030, CVC: "123"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Apply(t.Context(), f.paymentID, res); err != nil {
+		t.Fatalf("apply = %v, want nil", err)
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and status = 'pending' and amount_cents = 15000
+	                 and reason = 'facility_unavailable'`, f.paymentID); n != 1 {
+		t.Error("want exactly one pending full refund, facility_unavailable")
+	}
+	if n := e.count(`select count(*) from refunds`); n != 1 {
+		t.Errorf("refund rows = %d, want 1", n)
+	}
+	if got := e.status(f.rsvID); got != "cancelled" {
+		t.Errorf("reservation = %s, want cancelled", got)
+	}
+	if n := e.count(`select count(*) from reservations where id = $1 and refund_reason is null`, f.rsvRow); n != 1 {
+		t.Error("refund_reason must stay null")
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = $1`, string(notifications.TplReservationCancelled)); n != 0 {
+		t.Errorf("cancellation emails = %d, want none", n)
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}
+
+// M4: the confirm-or-late decision uses the time the locks were won. The
+// first read (lot-lock decision) is just inside the window, the next ones at
+// its end: the success is late, so the reservation expires and is refunded.
+func TestApply_LateDecidedAfterTheLocks(t *testing.T) {
+	e := newFeeEnv(t)
+	f := e.pendingAttempt(arrival1502)
+	end := time.Date(2026, 12, 1, 15, 25, 0, 0, time.UTC) // upper(window)
+	svc := reservations.NewService(reservations.Deps{
+		Tx: database.NewTxRunner(e.db.App), Repo: reservationspg.NewRepo(e.db.App),
+		Clock: &tickClock{times: []time.Time{end.Add(-time.Second), end}}, Log: slogOf(e.logs),
+		Fees: paymentspg.NewRepo(e.db.App), Notify: notificationspg.NewNotifier(e.clk), Alerts: alertspg.NewRecorder(),
+		QRKey: e.cfg.QRHMACKey(),
+	})
+	if err := svc.Apply(t.Context(), f.paymentID, succeeded); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`select count(*) from reservations where id = $1 and status = 'expired_unpaid' and expired_at = $2`, f.rsvRow, end); n != 1 {
+		t.Errorf("reservation %s, want expired_unpaid at the window end", e.status(f.rsvID))
+	}
+	if n := e.count(`select count(*) from payments where id = $1 and status = 'succeeded' and succeeded_at = $2`, f.paymentID, end); n != 1 {
+		t.Error("want the payment succeeded at the time under the locks")
+	}
+	if n := e.count(`select count(*) from refunds where payment_id = $1 and reason = 'facility_unavailable'`, f.paymentID); n != 1 {
+		t.Error("want one facility_unavailable refund")
+	}
+	if n := e.count(`select count(*) from outbox_messages where template = $1`, string(notifications.TplReservationConfirmed)); n != 0 {
+		t.Error("a late success must not send the confirmation")
+	}
+	testsupport.AssertSlotInvariant(t, e.db.App, e.lotID)
+}

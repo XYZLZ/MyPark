@@ -73,6 +73,13 @@ func (s *Service) lateEntryPass(ctx context.Context, d authz.Device, stay Stay, 
 			return rejected(errcodes.GateCredentialInUse), nil
 		}
 	}
+	// A reservation stay: its reservation, locked after the stay under the
+	// lot lock (design 8.1), is checked in again if it is still confirmed.
+	if stay.ReservationID != 0 {
+		if _, err := s.reservations.LateEntryPass(ctx, stay.ReservationID, now); err != nil {
+			return Result{}, err
+		}
+	}
 	res, err := s.activate(ctx, d.LotID, stay, now)
 	if err != nil {
 		return Result{}, err

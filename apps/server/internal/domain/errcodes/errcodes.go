@@ -65,6 +65,26 @@ const (
 	SimulatorScenarioUnavailable Code = "simulator.scenario_unavailable"
 	SimulatorCarNotFound         Code = "simulator.car_not_found"
 
+	// M3: reservations and payments. ReservationTooEarly and
+	// ReservationWindowClosed are only ever a device `reason`, never an HTTP error.
+	ReservationNotFound            Code = "reservation.not_found"
+	ReservationCapacityReached     Code = "reservation.capacity_reached"
+	ReservationActiveExists        Code = "reservation.active_exists"
+	ReservationBlockedNoShows      Code = "reservation.blocked_no_shows"
+	ReservationLotClosed           Code = "reservation.lot_closed"
+	ReservationNoSpaceNow          Code = "reservation.no_space_now"
+	ReservationArrivalInPast       Code = "reservation.arrival_in_past"
+	ReservationBeyondHorizon       Code = "reservation.beyond_horizon"
+	ReservationInvalidState        Code = "reservation.invalid_state"
+	ReservationPaymentExpired      Code = "reservation.payment_expired"
+	ReservationVehicleChangeClosed Code = "reservation.vehicle_change_closed"
+	ReservationTooEarly            Code = "reservation.too_early"
+	ReservationWindowClosed        Code = "reservation.window_closed"
+	PaymentDeclined                Code = "payment.declined"
+	PaymentInProgress              Code = "payment.in_progress"
+	PaymentNotFound                Code = "payment.not_found"
+	IdempotencyKeyReused           Code = "idempotency.key_reused"
+
 	// Returned by the web BFF only.
 	SessionLogoutUnconfirmed Code = "session.logout_unconfirmed"
 )
@@ -118,6 +138,23 @@ var catalog = []Code{
 	SimulatorScenarioUnavailable,
 	SimulatorCarNotFound,
 	SessionLogoutUnconfirmed,
+	ReservationNotFound,
+	ReservationCapacityReached,
+	ReservationActiveExists,
+	ReservationBlockedNoShows,
+	ReservationLotClosed,
+	ReservationNoSpaceNow,
+	ReservationArrivalInPast,
+	ReservationBeyondHorizon,
+	ReservationInvalidState,
+	ReservationPaymentExpired,
+	ReservationVehicleChangeClosed,
+	ReservationTooEarly,
+	ReservationWindowClosed,
+	PaymentDeclined,
+	PaymentInProgress,
+	PaymentNotFound,
+	IdempotencyKeyReused,
 }
 
 // All returns every known code, sorted ascending. The returned slice is a

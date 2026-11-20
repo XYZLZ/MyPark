@@ -546,7 +546,7 @@ func TestCash_AmountChangedSinceScan(t *testing.T) {
 func TestOverstay_BilledFromStayPaidAtWithoutSucceededPayment(t *testing.T) {
 	e := newPayEnv(t)
 	first := e.payAt(90*time.Minute, 7500)
-	if _, err := e.db.Super.Exec(t.Context(), `update payments set status = 'refunded'`); err != nil {
+	if _, err := e.db.Super.Exec(t.Context(), `update payments set status = 'refunded', refunded_at = now()`); err != nil {
 		t.Fatalf("refund: %v", err)
 	}
 
