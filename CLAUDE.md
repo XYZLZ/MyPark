@@ -30,7 +30,9 @@ Dates and scope per milestone: `docs/spec.md` §8.
 ### M3 leftovers (human or follow-up)
 
 - Both developers approve the contract changes made after the S1 handoff (policies §2.2): `SimulatorEvent` gained optional `credential` and `credential_ref`; `VALIDATION_RULES` gained `luhn`, `number`, `card_expiry`, `cursor`, `numeric` and `idempotency_key`.
-- Final whole-branch review of `feat/m3-backend` is pending. Then the user decides on merge or push.
+- Final whole-branch review of `feat/m3-backend` is done and its fix wave is merged into the branch. The user decides on merge or push.
+- Product decision: account deletion has no guard for active reservations, pending fees or queued refunds. M3 only skips the emails of a deleted account so money changes still commit. Decide whether deletion is blocked or cancels and refunds first.
+- Final-review follow-ups (not fixed): the reminder job re-reads a deleted owner's reservation every tick for 30 minutes; a transient `apply_failed` alert stays open after a later success; a gateway *failed* outcome whose apply keeps failing is not moved to the back of the reconcile batch; no index on alerts `details->>'payment_id'`.
 - Track B (web + mobile): reservation screens, pay form with the three test cards, the decline (`402`) and timeout (`202` poll) paths, QR screen, receipts. Add the m3 zod schemas over the S1 fixtures.
 - Live `no_show` takes up to 25 real minutes (design R1); the demo uses a CI run or starts it first.
 - M4 hooks: lot closure (FR-RES-15, `facility_closed`), the reconciliation job and views, admin refund and cancel override. The admin refund also settles late-charge alerts (`refund_failed`, `details.reason` `duplicate_charge`, `orphan_charge`, `gateway_inconsistent`). The admin tariff and policy forms must validate `max_active_per_user = 1`, `slot_min = 5` and a reservation fee above zero (M3B-48, M3B-49).
